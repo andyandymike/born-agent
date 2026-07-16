@@ -1,72 +1,95 @@
 import type { ResponseStreamEvent } from "openai/resources/responses/responses";
 import { describe, expect, it } from "vitest";
 
+import type {
+  ModelContinuation,
+  ModelTurnRequest,
+  ModelTurnSignal,
+} from "../../src/model/model-turn-types.js";
 import {
-  mapOpenAIStreamEvent,
   OpenAIStreamingChatClient,
   type OpenAIStreamingRequestBody,
   type OpenAIStreamingSdkFactory,
   type OpenAIStreamingSdkOptions,
 } from "../../src/providers/openai/openai-streaming-chat-client.js";
 
-const request = {
+const baseRequest: ModelTurnRequest = {
+  input: { kind: "user_prompt", text: "hello" },
   instructions: "system instructions",
   model: "gpt-test",
-  prompt: "hello",
   timeoutMs: 12_345,
+  tools: [],
+};
+
+const tool = {
+  description: "Read one file",
+  name: "read_file",
+  parameters: {
+    additionalProperties: false,
+    properties: { path: { type: "string" } },
+    required: ["path"],
+    type: "object",
+  },
+  strict: true as const,
 };
 
 function sdkEvent(value: unknown): ResponseStreamEvent {
   return value as ResponseStreamEvent;
 }
 
-async function collect(client: OpenAIStreamingChatClient) {
-  const signals = [];
-  for await (const signal of client.stream(
-    request,
-    new AbortController().signal,
-  )) {
-    signals.push(signal);
+async function collect(
+  client: OpenAIStreamingChatClient,
+  request: ModelTurnRequest = baseRequest,
+  signal = new AbortController().signal,
+): Promise<ModelTurnSignal[]> {
+  const signals: ModelTurnSignal[] = [];
+  for await (const item of client.streamTurn(request, signal)) {
+    signals.push(item);
   }
   return signals;
 }
 
-describe("OpenAIStreamingChatClient", () => {
-  it("maps typed text events and ignores created", () => {
-    expect(
-      mapOpenAIStreamEvent(
-        sdkEvent({ type: "response.created", response: {} }),
-      ),
-    ).toEqual([]);
-    expect(
-      mapOpenAIStreamEvent(
-        sdkEvent({ type: "response.output_text.delta", delta: "first" }),
-      ),
-    ).toEqual([{ delta: "first", type: "text_delta" }]);
-    expect(
-      mapOpenAIStreamEvent(
-        sdkEvent({ type: "response.output_text.delta", delta: "" }),
-      ),
-    ).toEqual([]);
+function completedEvent(
+  output: readonly unknown[] = [],
+  id = "resp_done",
+): ResponseStreamEvent {
+  return sdkEvent({
+    type: "response.completed",
+    response: {
+      id,
+      output,
+      status: "completed",
+      usage: {
+        input_tokens: 7,
+        input_tokens_details: { cached_tokens: 2 },
+        output_tokens: 5,
+        total_tokens: 12,
+      },
+    },
   });
+}
 
-  it("extracts usage before the completed response id", () => {
-    const mapped = mapOpenAIStreamEvent(
-      sdkEvent({
-        type: "response.completed",
-        response: {
-          id: "resp_done",
-          status: "completed",
-          usage: {
-            input_tokens: 7,
-            input_tokens_details: { cached_tokens: 2 },
-            output_tokens: 5,
-            total_tokens: 12,
-          },
-        },
-      }),
+describe("OpenAIStreamingChatClient model turns", () => {
+  it("maps text, usage, response id, and an opaque continuation", async () => {
+    const factory: OpenAIStreamingSdkFactory = () => ({
+      responses: {
+        create: async () =>
+          (async function* () {
+            yield sdkEvent({ type: "response.created", response: {} });
+            yield sdkEvent({
+              type: "response.output_text.delta",
+              delta: "first",
+            });
+            yield completedEvent();
+          })(),
+      },
+    });
+    const signals = await collect(
+      new OpenAIStreamingChatClient({ apiKey: "test-key" }, factory),
     );
-    expect(mapped).toEqual([
+
+    expect(signals.slice(0, 2)).toEqual([
+      { delta: "first", type: "text_delta" },
       {
         type: "usage",
         usage: {
@@ -76,51 +99,204 @@ describe("OpenAIStreamingChatClient", () => {
           totalTokens: 12,
         },
       },
-      { providerResponseId: "resp_done", type: "completed" },
     ]);
+    expect(signals[2]).toMatchObject({
+      providerResponseId: "resp_done",
+      type: "turn_completed",
+    });
+    expect(JSON.stringify((signals[2] as { continuation: ModelContinuation }).continuation)).toBe("{}");
   });
 
-  it("rejects failed, incomplete, and non-success completed events", () => {
-    const events = [
-      sdkEvent({
-        type: "response.failed",
-        response: { error: { code: "server_error" } },
-      }),
-      sdkEvent({ type: "response.incomplete", response: {} }),
-      sdkEvent({
-        type: "response.completed",
-        response: { id: "resp_bad", status: "failed" },
-      }),
-    ];
-    for (const event of events) {
-      expect(mapOpenAIStreamEvent(event)[0]).toMatchObject({ type: "failed" });
+  it("maps one completed function call and verifies argument deltas", async () => {
+    const call = {
+      arguments: '{"path":"README.md"}',
+      call_id: "call_1",
+      id: "fc_1",
+      name: "read_file",
+      status: "completed",
+      type: "function_call",
+    };
+    const factory: OpenAIStreamingSdkFactory = () => ({
+      responses: {
+        create: async () =>
+          (async function* () {
+            yield sdkEvent({
+              delta: '{"path":"README.md"}',
+              item_id: "fc_1",
+              type: "response.function_call_arguments.delta",
+            });
+            yield sdkEvent({
+              arguments: call.arguments,
+              item_id: "fc_1",
+              name: call.name,
+              type: "response.function_call_arguments.done",
+            });
+            yield sdkEvent({
+              item: call,
+              type: "response.output_item.done",
+            });
+            yield completedEvent([call]);
+          })(),
+      },
+    });
+
+    const signals = await collect(
+      new OpenAIStreamingChatClient({ apiKey: "test-key" }, factory),
+      { ...baseRequest, tools: [tool] },
+    );
+    expect(signals[0]).toEqual({
+      call: {
+        argumentsJson: call.arguments,
+        callId: "call_1",
+        name: "read_file",
+      },
+      type: "tool_call",
+    });
+    expect(signals.at(-1)).toMatchObject({ type: "turn_completed" });
+  });
+
+  it("accepts Ollama's argument-done event without its redundant tool name", async () => {
+    const call = {
+      arguments: '{"query":"PROJECT_CODE"}',
+      call_id: "call_ollama",
+      id: "fc_ollama_0",
+      name: "search",
+      status: "completed",
+      type: "function_call",
+    };
+    const factory: OpenAIStreamingSdkFactory = () => ({
+      responses: {
+        create: async () =>
+          (async function* () {
+            yield sdkEvent({
+              delta: call.arguments,
+              item_id: call.id,
+              type: "response.function_call_arguments.delta",
+            });
+            yield sdkEvent({
+              arguments: call.arguments,
+              item_id: call.id,
+              type: "response.function_call_arguments.done",
+            });
+            yield sdkEvent({
+              item: call,
+              type: "response.output_item.done",
+            });
+            yield completedEvent([call]);
+          })(),
+      },
+    });
+
+    const signals = await collect(
+      new OpenAIStreamingChatClient(
+        {
+          apiKey: "ollama",
+          includeEncryptedReasoning: false,
+          includeStore: false,
+          providerName: "Ollama",
+        },
+        factory,
+      ),
+      { ...baseRequest, tools: [tool] },
+    );
+
+    expect(signals[0]).toMatchObject({
+      call: { callId: "call_ollama", name: "search" },
+      type: "tool_call",
+    });
+    expect(signals.at(-1)).toMatchObject({ type: "turn_completed" });
+  });
+
+  it("fails closed for mismatched arguments and multiple calls", async () => {
+    for (const events of [
+      [
+        sdkEvent({
+          delta: "{}",
+          item_id: "fc_1",
+          type: "response.function_call_arguments.delta",
+        }),
+        sdkEvent({
+          item: {
+            arguments: '{"path":"README.md"}',
+            call_id: "call_1",
+            id: "fc_1",
+            name: "read_file",
+            type: "function_call",
+          },
+          type: "response.output_item.done",
+        }),
+      ],
+      [
+        sdkEvent({
+          item: {
+            arguments: "{}",
+            call_id: "call_1",
+            id: "fc_1",
+            name: "read_file",
+            type: "function_call",
+          },
+          type: "response.output_item.done",
+        }),
+        sdkEvent({
+          item: {
+            arguments: "{}",
+            call_id: "call_2",
+            id: "fc_2",
+            name: "search",
+            type: "function_call",
+          },
+          type: "response.output_item.done",
+        }),
+      ],
+    ]) {
+      const factory: OpenAIStreamingSdkFactory = () => ({
+        responses: {
+          create: async () =>
+            (async function* () {
+              yield* events;
+            })(),
+        },
+      });
+      await expect(
+        collect(new OpenAIStreamingChatClient({ apiKey: "key" }, factory)),
+      ).resolves.toContainEqual({
+        error: expect.objectContaining({ category: "protocol" }),
+        type: "failed",
+      });
     }
   });
 
-  it("sends a stateless streaming request and preserves delta order", async () => {
+  it("sends strict stateless tools and preserves reasoning in tool continuation", async () => {
+    const bodies: OpenAIStreamingRequestBody[] = [];
     let factoryOptions: OpenAIStreamingSdkOptions | undefined;
-    let body: OpenAIStreamingRequestBody | undefined;
-    let forwardedSignal: AbortSignal | undefined;
+    const reasoning = {
+      encrypted_content: "encrypted",
+      id: "rs_1",
+      summary: [],
+      type: "reasoning",
+    };
+    const call = {
+      arguments: '{"path":"README.md"}',
+      call_id: "call_1",
+      id: "fc_1",
+      name: "read_file",
+      status: "completed",
+      type: "function_call",
+    };
+    let requestNumber = 0;
     const factory: OpenAIStreamingSdkFactory = (options) => {
       factoryOptions = options;
       return {
         responses: {
-          create: async (requestBody, requestOptions) => {
-            body = requestBody;
-            forwardedSignal = requestOptions.signal;
+          create: async (body) => {
+            bodies.push(body);
+            requestNumber += 1;
             return (async function* () {
-              yield sdkEvent({
-                type: "response.output_text.delta",
-                delta: "one",
-              });
-              yield sdkEvent({
-                type: "response.output_text.delta",
-                delta: "two",
-              });
-              yield sdkEvent({
-                type: "response.completed",
-                response: { id: "resp_order", status: "completed" },
-              });
+              if (requestNumber === 1) {
+                yield completedEvent([reasoning, call], "resp_tool");
+              } else {
+                yield completedEvent([], "resp_final");
+              }
             })();
           },
         },
@@ -130,71 +306,85 @@ describe("OpenAIStreamingChatClient", () => {
       { apiKey: "test-key" },
       factory,
     );
+    const first = await collect(client, { ...baseRequest, tools: [tool] });
+    const continuation = (
+      first.find((signal) => signal.type === "turn_completed") as Extract<
+        ModelTurnSignal,
+        { type: "turn_completed" }
+      >
+    ).continuation;
+    await collect(client, {
+      ...baseRequest,
+      input: {
+        callId: "call_1",
+        continuation,
+        kind: "tool_result",
+        output: '{"ok":true}',
+      },
+    });
 
-    await expect(collect(client)).resolves.toEqual([
-      { delta: "one", type: "text_delta" },
-      { delta: "two", type: "text_delta" },
-      { providerResponseId: "resp_order", type: "completed" },
-    ]);
     expect(factoryOptions).toEqual({ apiKey: "test-key", maxRetries: 0 });
-    expect(body).toEqual({
-      input: request.prompt,
-      instructions: request.instructions,
-      model: request.model,
+    expect(bodies[0]).toMatchObject({
+      include: ["reasoning.encrypted_content"],
+      input: "hello",
+      parallel_tool_calls: false,
       store: false,
       stream: true,
+      tool_choice: "auto",
+      tools: [
+        {
+          description: tool.description,
+          name: tool.name,
+          parameters: tool.parameters,
+          strict: true,
+          type: "function",
+        },
+      ],
     });
-    expect(Object.keys(body ?? {}).sort()).toEqual([
-      "input",
-      "instructions",
-      "model",
-      "store",
-      "stream",
+    expect(bodies[1]).not.toHaveProperty("tools");
+    expect(bodies[1]?.input).toEqual([
+      { content: "hello", role: "user", type: "message" },
+      reasoning,
+      call,
+      {
+        call_id: "call_1",
+        output: '{"ok":true}',
+        type: "function_call_output",
+      },
     ]);
-    expect(forwardedSignal).toBeInstanceOf(AbortSignal);
   });
 
-  it("supports Ollama base URL without sending store", async () => {
+  it("supports Ollama without OpenAI-only store or encrypted reasoning fields", async () => {
     let body: OpenAIStreamingRequestBody | undefined;
-    let factoryOptions: OpenAIStreamingSdkOptions | undefined;
-    const factory: OpenAIStreamingSdkFactory = (options) => {
-      factoryOptions = options;
-      return {
-        responses: {
-          create: async (requestBody) => {
-            body = requestBody;
-            return (async function* () {
-              yield sdkEvent({
-                type: "response.completed",
-                response: { id: "resp_local", status: "completed" },
-              });
-            })();
-          },
+    const factory: OpenAIStreamingSdkFactory = () => ({
+      responses: {
+        create: async (requestBody) => {
+          body = requestBody;
+          return (async function* () {
+            yield completedEvent();
+          })();
         },
-      };
-    };
+      },
+    });
     const client = new OpenAIStreamingChatClient(
       {
         apiKey: "ollama",
         baseURL: "http://localhost:11434/v1",
+        includeEncryptedReasoning: false,
         includeStore: false,
         providerName: "Ollama",
       },
       factory,
     );
-
-    await collect(client);
-    expect(factoryOptions).toEqual({
-      apiKey: "ollama",
-      baseURL: "http://localhost:11434/v1",
-      maxRetries: 0,
-    });
+    await collect(client, { ...baseRequest, tools: [tool] });
     expect(body).not.toHaveProperty("store");
+    expect(body).not.toHaveProperty("include");
+    expect(body).toMatchObject({ parallel_tool_calls: false, tools: [expect.any(Object)] });
   });
 
-  it("stops iteration after AbortSignal and does not emit a provider failure", async () => {
+  it("stops after abort and fails closed for unknown runtime events", async () => {
     const controller = new AbortController();
-    const factory: OpenAIStreamingSdkFactory = () => ({
+    const abortFactory: OpenAIStreamingSdkFactory = () => ({
       responses: {
         create: async () =>
           (async function* () {
@@ -210,35 +400,25 @@ describe("OpenAIStreamingChatClient", () => {
           })(),
       },
     });
-    const client = new OpenAIStreamingChatClient(
-      { apiKey: "test-key" },
-      factory,
-    );
-    const signals = [];
-    for await (const signal of client.stream(request, controller.signal)) {
-      signals.push(signal);
-    }
-    expect(signals).toEqual([{ delta: "visible", type: "text_delta" }]);
-  });
+    await expect(
+      collect(
+        new OpenAIStreamingChatClient({ apiKey: "key" }, abortFactory),
+        baseRequest,
+        controller.signal,
+      ),
+    ).resolves.toEqual([{ delta: "visible", type: "text_delta" }]);
 
-  it("fails closed for an unknown runtime stream event", async () => {
-    const factory: OpenAIStreamingSdkFactory = () => ({
+    const unknownFactory: OpenAIStreamingSdkFactory = () => ({
       responses: {
         create: async () =>
           (async function* () {
-            yield sdkEvent({
-              type: "response.output_text.future_delta",
-              delta: "must not be ignored",
-            });
+            yield sdkEvent({ type: "response.output_text.future_delta" });
           })(),
       },
     });
-    const client = new OpenAIStreamingChatClient(
-      { apiKey: "test-key" },
-      factory,
-    );
-
-    await expect(collect(client)).resolves.toEqual([
+    await expect(
+      collect(new OpenAIStreamingChatClient({ apiKey: "key" }, unknownFactory)),
+    ).resolves.toEqual([
       {
         error: expect.objectContaining({ category: "protocol" }),
         type: "failed",

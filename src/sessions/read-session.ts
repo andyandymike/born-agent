@@ -8,6 +8,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function readSession(path: string): Promise<RunEvent[]> {
+  // PHASE2: reader 负责“单行是否合法”，包括完整换行、JSON 语法、版本和 Zod schema。
+  // 跨行顺序与终态不变量由 reconstructSession 负责，两层职责不要混在一起。
   const text = await readFile(path, "utf8");
   if (text.length > 0 && !text.endsWith("\n")) {
     throw new Error("session does not end with a complete JSONL line");

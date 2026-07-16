@@ -1,23 +1,30 @@
-import type {
-  ChatStreamSignal,
-  StreamingChatClient,
-} from "../../src/chat/stream-types.js";
-import type { ChatRequest } from "../../src/chat/types.js";
+import {
+  ModelContinuation,
+  type ModelTurnClient,
+  type ModelTurnRequest,
+  type ModelTurnSignal,
+} from "../../src/model/model-turn-types.js";
+
+export class FakeContinuation extends ModelContinuation {
+  constructor(readonly label = "fake") {
+    super();
+  }
+}
 
 export type FakeStreamBehavior = (
-  request: ChatRequest,
+  request: ModelTurnRequest,
   signal: AbortSignal,
-) => AsyncIterable<ChatStreamSignal>;
+) => AsyncIterable<ModelTurnSignal>;
 
-export class FakeStreamingChatClient implements StreamingChatClient {
-  readonly calls: Array<{ request: ChatRequest; signal: AbortSignal }> = [];
+export class FakeStreamingChatClient implements ModelTurnClient {
+  readonly calls: Array<{ request: ModelTurnRequest; signal: AbortSignal }> = [];
 
   constructor(private readonly behavior: FakeStreamBehavior) {}
 
-  stream(
-    request: ChatRequest,
+  streamTurn(
+    request: ModelTurnRequest,
     signal: AbortSignal,
-  ): AsyncIterable<ChatStreamSignal> {
+  ): AsyncIterable<ModelTurnSignal> {
     this.calls.push({ request, signal });
     return this.behavior(request, signal);
   }
@@ -34,12 +41,16 @@ export function fixedStream(
       type: "usage",
       usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
     };
-    yield { providerResponseId: "resp_fake", type: "completed" };
+    yield {
+      continuation: new FakeContinuation(),
+      providerResponseId: "resp_fake",
+      type: "turn_completed",
+    };
   };
 }
 
 export function failedStream(
-  error: Extract<ChatStreamSignal, { type: "failed" }>["error"],
+  error: Extract<ModelTurnSignal, { type: "failed" }>["error"],
 ): FakeStreamBehavior {
   return async function* () {
     yield { error, type: "failed" };
@@ -64,10 +75,10 @@ export function waitForAbort(): FakeStreamBehavior {
 export function createControlledStream(): {
   readonly behavior: FakeStreamBehavior;
   end(): void;
-  push(signal: ChatStreamSignal): void;
+  push(signal: ModelTurnSignal): void;
   waitUntilStarted(): Promise<void>;
 } {
-  const queue: ChatStreamSignal[] = [];
+  const queue: ModelTurnSignal[] = [];
   const waiters: Array<() => void> = [];
   let ended = false;
   let markStarted: (() => void) | undefined;

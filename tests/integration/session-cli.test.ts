@@ -49,7 +49,7 @@ describe("real JSONL session CLI integration", () => {
       memory.io,
       createRuntime({
         createSessionWriter: JsonlSessionWriter.create,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new FakeStreamingChatClient(waitForAbort()),
         cwd,
         onCancel: (listener) => {
@@ -96,7 +96,7 @@ describe("real JSONL session CLI integration", () => {
       memory.io,
       createRuntime({
         createSessionWriter: JsonlSessionWriter.create,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new OpenAIStreamingChatClient({ apiKey: secret }, factory),
         cwd,
         env: { OPENAI_API_KEY: secret },

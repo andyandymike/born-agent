@@ -28,6 +28,7 @@ export class JsonlSessionWriter implements SessionWriter {
     const directory = join(workspace, ".bornagent", "sessions");
     await mkdir(directory, { recursive: true });
     const path = join(directory, `${sessionId}.jsonl`);
+    // PHASE2: "wx" 只创建新文件，UUID 意外碰撞时失败，不会覆盖旧 session。
     const handle = await open(path, "wx");
     return new JsonlSessionWriter(handle, path);
   }
@@ -36,6 +37,8 @@ export class JsonlSessionWriter implements SessionWriter {
     if (this.closed) {
       throw new Error("session writer is closed");
     }
+    // PHASE2: JSONL = 一行一个完整 JSON 事件。尾部换行让 reader 能识别完整写入的行；
+    // Phase 2 对崩溃留下的不完整尾行选择报错，恢复策略留给后续阶段。
     await this.handle.write(`${JSON.stringify(event)}\n`, undefined, "utf8");
   }
 

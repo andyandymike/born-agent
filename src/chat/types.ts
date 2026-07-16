@@ -29,6 +29,7 @@ export interface ChatCommandOptions {
   readonly prompt: string;
   readonly provider: string | undefined;
   readonly timeoutMs: string | undefined;
+  readonly toolsEnabled?: boolean;
   readonly verbose: boolean;
 }
 
@@ -38,5 +39,6 @@ export interface ResolvedChatConfig {
   readonly prompt: string;
   readonly provider: ChatProvider;
   readonly timeoutMs: number;
+  readonly toolsEnabled: boolean;
   readonly verbose: boolean;
 }

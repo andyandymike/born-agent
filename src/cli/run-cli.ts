@@ -24,15 +24,16 @@ export async function runCli(
 
   program
     .command("chat")
-    .description("Stream one text response and save a local session event log.")
+    .description("Stream a response with at most one read-only tool call.")
     .argument("<prompt>", "text prompt to send; do not paste API keys")
     .option("--provider <provider>", "model provider: openai or ollama")
     .option("--model <model>", "override the provider model")
     .option("--timeout-ms <milliseconds>", "request timeout in milliseconds")
+    .option("--no-tools", "disable read-only workspace tools")
     .option("--verbose", "write response metadata to stderr", false)
     .addHelpText(
       "after",
-      "\nSecurity: prompts are saved locally in .bornagent/sessions; do not paste secrets.\n",
+      "\nSecurity: prompts and allowed tool observations are saved locally in .bornagent/sessions; do not paste secrets.\n",
     )
     .action(
       async (
@@ -41,6 +42,7 @@ export async function runCli(
           model?: string;
           provider?: string;
           timeoutMs?: string;
+          tools: boolean;
           verbose: boolean;
         },
       ) => {
@@ -50,6 +52,7 @@ export async function runCli(
             prompt,
             provider: options.provider,
             timeoutMs: options.timeoutMs,
+            toolsEnabled: options.tools,
             verbose: options.verbose,
           },
           runtime,

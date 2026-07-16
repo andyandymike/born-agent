@@ -8,6 +8,41 @@ import {
   FakeStreamingChatClient,
   fixedStream,
 } from "./fakes/fake-chat-client.js";
+import type {
+  ToolExecution,
+  ToolInvocation,
+  ToolRegistryLike,
+} from "../src/tools/tool-types.js";
+
+export class FakeToolRegistry implements ToolRegistryLike {
+  readonly calls: ToolInvocation[] = [];
+  readonly modelDefinitions = [
+    {
+      description: "fake read",
+      name: "read_file",
+      parameters: {
+        additionalProperties: false,
+        properties: {},
+        required: [],
+        type: "object",
+      },
+      strict: true as const,
+    },
+  ];
+
+  constructor(
+    private readonly result: ToolExecution = {
+      ok: true,
+      output: JSON.stringify({ ok: true, value: "fake tool result" }),
+      truncated: false,
+    },
+  ) {}
+
+  async execute(invocation: ToolInvocation): Promise<ToolExecution> {
+    this.calls.push(invocation);
+    return this.result;
+  }
+}
 
 export class InMemorySessionWriter implements SessionWriter {
   readonly events: RunEvent[] = [];
@@ -60,8 +95,9 @@ export function createRuntime(
       clearTimeout(handle as ReturnType<typeof setTimeout>),
     createSessionWriter: async (_workspace, sessionId) =>
       new InMemorySessionWriter(`memory://${sessionId}.jsonl`),
-    createStreamingChatClient: () =>
+    createModelTurnClient: () =>
       new FakeStreamingChatClient(fixedStream()),
+    createToolRegistry: async () => new FakeToolRegistry(),
     cwd: resolve("fixture-workspace"),
     env: { OPENAI_API_KEY: "test-api-key" },
     isReadableDirectory: async () => true,

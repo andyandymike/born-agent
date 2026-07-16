@@ -5,7 +5,7 @@ import type { CliIO } from "../../src/cli/types.js";
 import type { RunEvent } from "../../src/events/run-event.js";
 import {
   createControlledStream,
-  failedStream,
+  FakeContinuation,
   FakeStreamingChatClient,
   fixedStream,
   waitForAbort,
@@ -56,7 +56,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new FakeStreamingChatClient(controlled.behavior),
       }),
     );
@@ -77,7 +77,11 @@ describe("born chat streaming", () => {
       type: "usage",
       usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
     });
-    controlled.push({ providerResponseId: "resp_delayed", type: "completed" });
+    controlled.push({
+      continuation: new FakeContinuation(),
+      providerResponseId: "resp_delayed",
+      type: "turn_completed",
+    });
     controlled.end();
 
     await expect(promise).resolves.toBe(0);
@@ -94,7 +98,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: (selected) => {
+        createModelTurnClient: (selected) => {
           configuration = selected;
           return new FakeStreamingChatClient(fixedStream(["local answer"]));
         },
@@ -118,24 +122,22 @@ describe("born chat streaming", () => {
     const writer = new InMemorySessionWriter();
     const client = new FakeStreamingChatClient(async function* () {
       yield { delta: "partial", type: "text_delta" };
-      yield* failedStream({
-        category: "rate_limit",
-        code: "rate_limit_exceeded",
-        message: "OpenAI rate limit exceeded",
-        retryable: true,
-      })({
-        instructions: "",
-        model: "",
-        prompt: "",
-        timeoutMs: 1,
-      }, new AbortController().signal);
+      yield {
+        error: {
+          category: "rate_limit" as const,
+          code: "rate_limit_exceeded",
+          message: "OpenAI rate limit exceeded",
+          retryable: true,
+        },
+        type: "failed" as const,
+      };
     });
     const exitCode = await runCli(
       ["chat", "hello"],
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () => client,
+        createModelTurnClient: () => client,
       }),
     );
 
@@ -174,7 +176,7 @@ describe("born chat streaming", () => {
         memory.io,
         createRuntime({
           createSessionWriter: async () => writer,
-          createStreamingChatClient: () => client,
+          createModelTurnClient: () => client,
           onCancel: (listener) => {
             if (scenario === "cancelled") {
               queueMicrotask(listener);
@@ -214,7 +216,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new FakeStreamingChatClient(fixedStream(["must not render"])),
       }),
     );

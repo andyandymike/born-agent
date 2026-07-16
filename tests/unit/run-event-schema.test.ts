@@ -29,6 +29,30 @@ describe("RunEvent v1 schema", () => {
     {
       ...envelope,
       data: {
+        arguments_json: '{"path":"README.md"}',
+        call_id: "call_1",
+        provider_response_id: "resp_1",
+        step: 1,
+        tool_name: "read_file",
+      },
+      type: "tool.call.requested",
+    },
+    {
+      ...envelope,
+      data: {
+        call_id: "call_1",
+        duration_ms: 2,
+        output: '{"ok":true}',
+        status: "success",
+        step: 1,
+        tool_name: "read_file",
+        truncated: false,
+      },
+      type: "tool.call.completed",
+    },
+    {
+      ...envelope,
+      data: {
         cached_input_tokens: 1,
         input_tokens: 2,
         output_tokens: 3,
@@ -79,6 +103,30 @@ describe("RunEvent v1 schema", () => {
       timestamp: "2026-07-16T09:00:00+09:00",
       data: { delta: "hi" },
       type: "text.delta",
+    },
+    {
+      ...envelope,
+      data: {
+        arguments_json: "x".repeat(16 * 1024 + 1),
+        call_id: "call_1",
+        step: 1,
+        tool_name: "read_file",
+      },
+      type: "tool.call.requested",
+    },
+    {
+      ...envelope,
+      data: {
+        call_id: "call_1",
+        duration_ms: 1,
+        error_code: "missing_category",
+        output: '{"ok":false}',
+        status: "error",
+        step: 1,
+        tool_name: "read_file",
+        truncated: false,
+      },
+      type: "tool.call.completed",
     },
   ])("rejects an invalid v1 event", (event) => {
     expect(runEventSchema.safeParse(event).success).toBe(false);

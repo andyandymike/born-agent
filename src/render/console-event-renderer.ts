@@ -16,6 +16,8 @@ export class ConsoleEventRenderer implements RunEventRenderer {
   ) {}
 
   render(event: RunEvent): void {
+    // PHASE2: renderer 只决定“事件怎么显示”，不决定事件是否合法或是否保存。
+    // 文本走 stdout，诊断/元数据走 stderr，方便 shell 分别重定向两类输出。
     switch (event.type) {
       case "run.started":
         if (this.verbose) {
@@ -36,7 +38,19 @@ export class ConsoleEventRenderer implements RunEventRenderer {
               ? ""
               : ` cached_input_tokens=${event.data.cached_input_tokens}`;
           this.io.stderr.write(
-            `input_tokens=${event.data.input_tokens} output_tokens=${event.data.output_tokens} total_tokens=${event.data.total_tokens}${cached}\n`,
+            `input_tokens=${event.data.input_tokens} output_tokens=${event.data.output_tokens} total_tokens=${event.data.total_tokens}${cached}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.usage_incomplete === true ? " usage_incomplete=true" : ""}\n`,
+          );
+        }
+        return;
+      case "tool.call.requested":
+        if (this.verbose) {
+          this.io.stderr.write(`tool=${event.data.tool_name} requested\n`);
+        }
+        return;
+      case "tool.call.completed":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `tool=${event.data.tool_name} status=${event.data.status} duration_ms=${event.data.duration_ms}${event.data.truncated ? " truncated=true" : ""}\n`,
           );
         }
         return;
@@ -54,7 +68,7 @@ export class ConsoleEventRenderer implements RunEventRenderer {
               ? ""
               : ` response_id=${oneLine(event.data.provider_response_id)}`;
           this.io.stderr.write(
-            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}\n`,
+            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.tool_calls === undefined ? "" : ` tool_calls=${event.data.tool_calls}`}\n`,
           );
         }
         return;

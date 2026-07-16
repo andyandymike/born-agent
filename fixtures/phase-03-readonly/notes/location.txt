@@ -1,0 +1,2 @@
+The canonical project code is defined in the fixture's source directory.
+Do not copy the code into this note; the read-only agent must inspect source.

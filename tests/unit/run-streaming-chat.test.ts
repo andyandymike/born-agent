@@ -49,7 +49,7 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new FakeStreamingChatClient(fixedStream(["hel", "lo"])),
         now: () => times.shift() ?? 142,
       }),
@@ -84,7 +84,7 @@ describe("runStreamingChat", () => {
       { ...options, provider: "ollama" },
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: (selected) => {
+        createModelTurnClient: (selected) => {
           configuration = selected;
           return new FakeStreamingChatClient(fixedStream());
         },
@@ -137,7 +137,7 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () =>
+        createModelTurnClient: () =>
           new FakeStreamingChatClient(
             failedStream({
               category: "rate_limit",
@@ -178,7 +178,7 @@ describe("runStreamingChat", () => {
         createRuntime({
           clearTimer,
           createSessionWriter: async () => writer,
-          createStreamingChatClient: () => client,
+          createModelTurnClient: () => client,
           onCancel: (listener) => {
             if (scenario === "cancelled") {
               queueMicrotask(listener);
@@ -221,7 +221,7 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createStreamingChatClient: () => client,
+        createModelTurnClient: () => client,
       }),
       renderer,
     );

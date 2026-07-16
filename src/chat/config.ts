@@ -133,6 +133,7 @@ export function resolveChatConfig(
       prompt: options.prompt,
       provider: provider.value,
       timeoutMs: timeout.value,
+      toolsEnabled: options.toolsEnabled ?? true,
       verbose: options.verbose,
     },
   };

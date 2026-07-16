@@ -119,4 +119,59 @@ describe("EventPublisher", () => {
     );
     expect(render).not.toHaveBeenCalled();
   });
+
+  it("pairs tool requests and results before allowing a completed run", async () => {
+    const { publisher } = createPublisher();
+    await publisher.publish(started);
+    await publisher.publish({
+      data: {
+        arguments_json: "{}",
+        call_id: "call_1",
+        step: 1,
+        tool_name: "read_file",
+      },
+      type: "tool.call.requested",
+    });
+    await expect(
+      publisher.publish({
+        data: {
+          duration_ms: 1,
+          output_chars: 0,
+          tool_calls: 0,
+        },
+        type: "run.completed",
+      }),
+    ).rejects.toThrow("interrupted");
+    await expect(
+      publisher.publish({
+        data: {
+          call_id: "other",
+          duration_ms: 1,
+          output: "{}",
+          status: "success",
+          step: 1,
+          tool_name: "read_file",
+          truncated: false,
+        },
+        type: "tool.call.completed",
+      }),
+    ).rejects.toThrow("pending");
+    await publisher.publish({
+      data: {
+        call_id: "call_1",
+        duration_ms: 1,
+        output: '{"ok":true}',
+        status: "success",
+        step: 1,
+        tool_name: "read_file",
+        truncated: false,
+      },
+      type: "tool.call.completed",
+    });
+    expect(publisher.completedToolCalls).toBe(1);
+    await publisher.publish({
+      data: { duration_ms: 2, output_chars: 0, tool_calls: 1 },
+      type: "run.completed",
+    });
+  });
 });

@@ -1,21 +1,33 @@
 import type {
   ChatClientConfiguration,
   ChatCommandOptions,
+  ChatUsage,
   ResolvedChatConfig,
 } from "./types.js";
-import type {
-  ProviderFailure,
-  StreamingChatClient,
-} from "./stream-types.js";
+import type { ProviderFailure } from "./stream-types.js";
 import { resolveChatConfig } from "./config.js";
-import { SYSTEM_INSTRUCTIONS } from "./system-instructions.js";
+import {
+  READONLY_SYSTEM_INSTRUCTIONS,
+  SYSTEM_INSTRUCTIONS,
+} from "./system-instructions.js";
 import {
   EventPersistenceError,
   EventPublisher,
   type RunEventRenderer,
 } from "../events/event-publisher.js";
 import type { RunEventDraft } from "../events/run-event.js";
+import type {
+  ModelContinuation,
+  ModelToolCall,
+  ModelTurnClient,
+  ModelTurnRequest,
+} from "../model/model-turn-types.js";
+import { redactSensitiveText } from "../security/redact.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import type {
+  ToolExecution,
+  ToolRegistryLike,
+} from "../tools/tool-types.js";
 
 type CancellationReason = "cancelled" | "timeout";
 export type StreamingChatExitCode = 0 | 1 | 2 | 4 | 5 | 6 | 130;
@@ -29,19 +41,37 @@ export interface StreamingChatRuntime {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   clearTimer(handle: unknown): void;
+  createModelTurnClient(
+    configuration: ChatClientConfiguration,
+  ): ModelTurnClient;
   createSessionWriter(
     workspace: string,
     sessionId: string,
   ): Promise<SessionWriter>;
-  createStreamingChatClient(
-    configuration: ChatClientConfiguration,
-  ): StreamingChatClient;
+  createToolRegistry(
+    workspace: string,
+    secrets: readonly (string | undefined)[],
+  ): Promise<ToolRegistryLike>;
   now(): number;
   onCancel(listener: () => void): () => void;
   randomUUID(): string;
   setTimer(listener: () => void, delayMs: number): unknown;
   timestamp(): string;
 }
+
+interface CompletedTurn {
+  readonly call?: ModelToolCall;
+  readonly continuation: ModelContinuation;
+  readonly kind: "completed";
+  readonly providerResponseId?: string;
+  readonly sawNonWhitespaceText: boolean;
+  readonly usage?: ChatUsage;
+}
+
+type TurnResult =
+  | CompletedTurn
+  | { readonly error: ProviderFailure; readonly kind: "failed" }
+  | { readonly kind: "aborted" };
 
 function durationMs(runtime: StreamingChatRuntime, startedAt: number): number {
   return Math.max(0, Math.round(runtime.now() - startedAt));
@@ -81,6 +111,15 @@ function failureDraft(
   };
 }
 
+function protocolFailure(code: string, message: string): ProviderFailure {
+  return {
+    category: "protocol",
+    code,
+    message,
+    retryable: false,
+  };
+}
+
 function exitCodeForProviderFailure(error: ProviderFailure): StreamingChatExitCode {
   if (error.category === "auth") {
     return 4;
@@ -95,6 +134,8 @@ async function publishCancellation(
   runtime: StreamingChatRuntime,
   startedAt: number,
 ): Promise<StreamingChatExitCode> {
+  // PHASE2: timeout 和 Ctrl+C 都会 abort 同一个请求，但它们是不同的业务事实：
+  // 用户取消写 run.cancelled/130；超时写 run.failed/6。
   const duration = durationMs(runtime, startedAt);
   if (reason === "cancelled") {
     await publisher.publish({
@@ -103,7 +144,6 @@ async function publishCancellation(
     });
     return 130;
   }
-
   await publisher.publish({
     data: {
       category: "timeout",
@@ -117,77 +157,284 @@ async function publishCancellation(
   return 6;
 }
 
-async function consumeProviderStream(
-  client: StreamingChatClient,
-  config: ResolvedChatConfig,
+async function consumeModelTurn(
+  client: ModelTurnClient,
+  request: ModelTurnRequest,
   controller: AbortController,
   publisher: EventPublisher,
-  runtime: StreamingChatRuntime,
-  startedAt: number,
   cancellationReason: () => CancellationReason | undefined,
-): Promise<StreamingChatExitCode> {
-  for await (const signal of client.stream(
-    {
-      instructions: SYSTEM_INSTRUCTIONS,
-      model: config.model,
-      prompt: config.prompt,
-      timeoutMs: config.timeoutMs,
-    },
-    controller.signal,
-  )) {
-    if (cancellationReason() !== undefined) {
-      break;
-    }
+): Promise<TurnResult> {
+  // PHASE2/3: provider-neutral 主事件泵。text delta 立即走 persist-before-render；
+  // tool call、usage 和 opaque continuation 只在当前 model turn 内聚合。
+  let call: ModelToolCall | undefined;
+  let usage: ChatUsage | undefined;
+  let sawNonWhitespaceText = false;
 
+  for await (const signal of client.streamTurn(request, controller.signal)) {
+    if (cancellationReason() !== undefined) {
+      return { kind: "aborted" };
+    }
     switch (signal.type) {
       case "text_delta":
         if (signal.delta.length > 0) {
+          sawNonWhitespaceText ||= signal.delta.trim().length > 0;
           await publisher.publish({
             data: { delta: signal.delta },
             type: "text.delta",
           });
         }
         break;
-      case "usage":
-        await publisher.publish({
-          data: {
-            ...(signal.usage.cachedInputTokens === undefined
-              ? {}
-              : {
-                  cached_input_tokens: signal.usage.cachedInputTokens,
-                }),
-            input_tokens: signal.usage.inputTokens,
-            output_tokens: signal.usage.outputTokens,
-            total_tokens: signal.usage.totalTokens,
-          },
-          type: "usage",
-        });
+      case "tool_call":
+        if (call !== undefined) {
+          return {
+            error: protocolFailure(
+              "multiple_tool_calls",
+              "provider returned more than one tool call",
+            ),
+            kind: "failed",
+          };
+        }
+        call = signal.call;
         break;
-      case "completed": {
-        await publisher.publish({
-          data: {
-            duration_ms: durationMs(runtime, startedAt),
-            output_chars: publisher.outputLength,
-            ...(signal.providerResponseId === undefined
-              ? {}
-              : { provider_response_id: signal.providerResponseId }),
-          },
-          type: "run.completed",
-        });
-        return 0;
-      }
+      case "usage":
+        if (usage !== undefined) {
+          return {
+            error: protocolFailure(
+              "duplicate_turn_usage",
+              "provider returned usage more than once in one model turn",
+            ),
+            kind: "failed",
+          };
+        }
+        usage = signal.usage;
+        break;
       case "failed":
-        await publisher.publish(
-          failureDraft(signal.error, durationMs(runtime, startedAt)),
-        );
-        return exitCodeForProviderFailure(signal.error);
+        return { error: signal.error, kind: "failed" };
+      case "turn_completed":
+        return {
+          ...(call === undefined ? {} : { call }),
+          continuation: signal.continuation,
+          kind: "completed",
+          ...(signal.providerResponseId === undefined
+            ? {}
+            : { providerResponseId: signal.providerResponseId }),
+          sawNonWhitespaceText,
+          ...(usage === undefined ? {} : { usage }),
+        };
     }
   }
+  return cancellationReason() === undefined
+    ? {
+        error: protocolFailure(
+          "stream_ended_without_terminal",
+          "provider stream ended without a terminal event",
+        ),
+        kind: "failed",
+      }
+    : { kind: "aborted" };
+}
 
-  const reason = cancellationReason();
-  if (reason !== undefined) {
+function aggregateUsage(usages: readonly (ChatUsage | undefined)[]):
+  | {
+      readonly usage: ChatUsage;
+      readonly usageIncomplete: boolean;
+    }
+  | undefined {
+  const known = usages.filter((usage) => usage !== undefined);
+  if (known.length === 0) {
+    return undefined;
+  }
+  const cached = known
+    .map((usage) => usage.cachedInputTokens)
+    .filter((value) => value !== undefined);
+  return {
+    usage: {
+      ...(cached.length === 0
+        ? {}
+        : { cachedInputTokens: cached.reduce((sum, value) => sum + value, 0) }),
+      inputTokens: known.reduce((sum, usage) => sum + usage.inputTokens, 0),
+      outputTokens: known.reduce((sum, usage) => sum + usage.outputTokens, 0),
+      totalTokens: known.reduce((sum, usage) => sum + usage.totalTokens, 0),
+    },
+    usageIncomplete: known.length !== usages.length,
+  };
+}
+
+async function publishUsage(
+  usages: readonly (ChatUsage | undefined)[],
+  publisher: EventPublisher,
+): Promise<void> {
+  const aggregate = aggregateUsage(usages);
+  if (aggregate === undefined) {
+    return;
+  }
+  await publisher.publish({
+    data: {
+      ...(aggregate.usage.cachedInputTokens === undefined
+        ? {}
+        : { cached_input_tokens: aggregate.usage.cachedInputTokens }),
+      input_tokens: aggregate.usage.inputTokens,
+      model_turns: usages.length,
+      output_tokens: aggregate.usage.outputTokens,
+      total_tokens: aggregate.usage.totalTokens,
+      ...(aggregate.usageIncomplete ? { usage_incomplete: true } : {}),
+    },
+    type: "usage",
+  });
+}
+
+async function publishCompleted(
+  modelTurns: number,
+  providerResponseId: string | undefined,
+  publisher: EventPublisher,
+  runtime: StreamingChatRuntime,
+  startedAt: number,
+): Promise<0> {
+  await publisher.publish({
+    data: {
+      duration_ms: durationMs(runtime, startedAt),
+      model_turns: modelTurns,
+      output_chars: publisher.outputLength,
+      ...(providerResponseId === undefined
+        ? {}
+        : { provider_response_id: providerResponseId }),
+      tool_calls: publisher.completedToolCalls,
+    },
+    type: "run.completed",
+  });
+  return 0;
+}
+
+async function publishProviderFailure(
+  error: ProviderFailure,
+  publisher: EventPublisher,
+  runtime: StreamingChatRuntime,
+  startedAt: number,
+): Promise<StreamingChatExitCode> {
+  await publisher.publish(failureDraft(error, durationMs(runtime, startedAt)));
+  return exitCodeForProviderFailure(error);
+}
+
+function toolCompletedDraft(
+  call: ModelToolCall,
+  execution: ToolExecution,
+  duration: number,
+): RunEventDraft {
+  return {
+    data: {
+      call_id: call.callId,
+      duration_ms: duration,
+      ...(execution.ok
+        ? {}
+        : {
+            error_category: execution.error.category,
+            error_code: execution.error.code,
+            retryable: execution.error.retryable,
+          }),
+      output: execution.output,
+      status: execution.ok ? "success" : "error",
+      step: 1,
+      tool_name: call.name,
+      truncated: execution.truncated,
+    },
+    type: "tool.call.completed",
+  };
+}
+
+async function runFixedToolRoundTrip(
+  config: ResolvedChatConfig,
+  client: ModelTurnClient,
+  tools: ToolRegistryLike | undefined,
+  controller: AbortController,
+  publisher: EventPublisher,
+  runtime: StreamingChatRuntime,
+  startedAt: number,
+  cancellationReason: () => CancellationReason | undefined,
+): Promise<StreamingChatExitCode> {
+  const first = await consumeModelTurn(
+    client,
+    {
+      input: { kind: "user_prompt", text: config.prompt },
+      instructions: config.toolsEnabled
+        ? READONLY_SYSTEM_INSTRUCTIONS
+        : SYSTEM_INSTRUCTIONS,
+      model: config.model,
+      timeoutMs: config.timeoutMs,
+      tools: tools?.modelDefinitions ?? [],
+    },
+    controller,
+    publisher,
+    cancellationReason,
+  );
+  if (first.kind === "aborted") {
+    const reason = cancellationReason();
+    if (reason === undefined) {
+      return publishProviderFailure(
+        protocolFailure("unexpected_abort", "model turn was aborted unexpectedly"),
+        publisher,
+        runtime,
+        startedAt,
+      );
+    }
+    return publishCancellation(reason, config, publisher, runtime, startedAt);
+  }
+  if (first.kind === "failed") {
+    return publishProviderFailure(first.error, publisher, runtime, startedAt);
+  }
+  if (first.call === undefined) {
+    if (!first.sawNonWhitespaceText) {
+      return publishProviderFailure(
+        protocolFailure("empty_model_output", "provider completed without text"),
+        publisher,
+        runtime,
+        startedAt,
+      );
+    }
+    await publishUsage([first.usage], publisher);
+    return publishCompleted(
+      1,
+      first.providerResponseId,
+      publisher,
+      runtime,
+      startedAt,
+    );
+  }
+  if (!config.toolsEnabled || tools === undefined) {
+    return publishProviderFailure(
+      protocolFailure("tools_disabled", "provider requested a disabled tool"),
+      publisher,
+      runtime,
+      startedAt,
+    );
+  }
+
+  const secrets = [runtime.env.OPENAI_API_KEY];
+  await publisher.publish({
+    data: {
+      arguments_json: redactSensitiveText(first.call.argumentsJson, secrets),
+      call_id: first.call.callId,
+      ...(first.providerResponseId === undefined
+        ? {}
+        : { provider_response_id: first.providerResponseId }),
+      step: 1,
+      tool_name: first.call.name,
+    },
+    type: "tool.call.requested",
+  });
+
+  const toolStartedAt = runtime.now();
+  const execution = await tools.execute(
+    {
+      argumentsJson: first.call.argumentsJson,
+      callId: first.call.callId,
+      name: first.call.name,
+    },
+    controller.signal,
+  );
+  const reasonAfterTool = cancellationReason();
+  if (reasonAfterTool !== undefined || (!execution.ok && execution.error.category === "cancelled")) {
     return publishCancellation(
-      reason,
+      reasonAfterTool ?? "cancelled",
       config,
       publisher,
       runtime,
@@ -195,17 +442,86 @@ async function consumeProviderStream(
     );
   }
 
-  await publisher.publish({
-    data: {
-      category: "protocol",
-      code: "stream_ended_without_terminal",
-      duration_ms: durationMs(runtime, startedAt),
-      message: "provider stream ended without a terminal event",
-      retryable: false,
+  await publisher.publish(
+    toolCompletedDraft(
+      first.call,
+      execution,
+      durationMs(runtime, toolStartedAt),
+    ),
+  );
+  if (!execution.ok && execution.error.category === "system") {
+    await publisher.publish({
+      data: {
+        category: "internal",
+        code: execution.error.code,
+        duration_ms: durationMs(runtime, startedAt),
+        message: execution.error.message,
+        retryable: execution.error.retryable,
+      },
+      type: "run.failed",
+    });
+    return 1;
+  }
+
+  const second = await consumeModelTurn(
+    client,
+    {
+      input: {
+        callId: first.call.callId,
+        continuation: first.continuation,
+        kind: "tool_result",
+        output: execution.output,
+      },
+      instructions: READONLY_SYSTEM_INSTRUCTIONS,
+      model: config.model,
+      timeoutMs: config.timeoutMs,
+      tools: [],
     },
-    type: "run.failed",
-  });
-  return 1;
+    controller,
+    publisher,
+    cancellationReason,
+  );
+  if (second.kind === "aborted") {
+    const reason = cancellationReason();
+    return reason === undefined
+      ? publishProviderFailure(
+          protocolFailure("unexpected_abort", "model turn was aborted unexpectedly"),
+          publisher,
+          runtime,
+          startedAt,
+        )
+      : publishCancellation(reason, config, publisher, runtime, startedAt);
+  }
+  if (second.kind === "failed") {
+    return publishProviderFailure(second.error, publisher, runtime, startedAt);
+  }
+  if (second.call !== undefined) {
+    return publishProviderFailure(
+      protocolFailure(
+        "tool_round_limit",
+        "model requested another tool after the Phase 3 tool limit",
+      ),
+      publisher,
+      runtime,
+      startedAt,
+    );
+  }
+  if (!second.sawNonWhitespaceText) {
+    return publishProviderFailure(
+      protocolFailure("empty_model_output", "provider completed without final text"),
+      publisher,
+      runtime,
+      startedAt,
+    );
+  }
+  await publishUsage([first.usage, second.usage], publisher);
+  return publishCompleted(
+    2,
+    second.providerResponseId,
+    publisher,
+    runtime,
+    startedAt,
+  );
 }
 
 export async function runStreamingChat(
@@ -213,6 +529,8 @@ export async function runStreamingChat(
   runtime: StreamingChatRuntime,
   renderer: StreamingRunRenderer,
 ): Promise<StreamingChatExitCode> {
+  // PHASE2/3 orchestration root：配置 -> session -> event publisher ->
+  // model turn -> 可选一次工具 -> model turn -> 唯一 terminal -> 清理关闭。
   const configResult = resolveChatConfig(options, runtime.env);
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
@@ -227,6 +545,7 @@ export async function runStreamingChat(
 
   const sessionId = runtime.randomUUID();
   const runId = runtime.randomUUID();
+  // PHASE2: 目前一个 session 只有一个 run，但 ID 仍分开，为未来多轮 session 保留语义。
   let writer: SessionWriter;
   try {
     writer = await runtime.createSessionWriter(runtime.cwd, sessionId);
@@ -244,6 +563,7 @@ export async function runStreamingChat(
     writer,
   });
   const controller = new AbortController();
+  // PHASE2: AbortSignal 只说明已中止；另存原因才能区分 timeout 与 Ctrl+C。
   let cancellationReason: CancellationReason | undefined;
   const startedAt = runtime.now();
   const timer = runtime.setTimer(() => {
@@ -261,6 +581,7 @@ export async function runStreamingChat(
   let exitCode: StreamingChatExitCode;
 
   try {
+    // PHASE2/3: run.started 是 session 第一条事实；无效配置不会创建 session。
     await publisher.publish({
       data: {
         command: "chat",
@@ -268,14 +589,24 @@ export async function runStreamingChat(
         model: config.model,
         provider: config.provider,
         timeout_ms: config.timeoutMs,
+        tools: config.toolsEnabled
+          ? ["list_files", "read_file", "search"]
+          : [],
+        tools_enabled: config.toolsEnabled,
         workspace: runtime.cwd,
       },
       type: "run.started",
     });
-    const client = runtime.createStreamingChatClient(connection);
-    exitCode = await consumeProviderStream(
-      client,
+    const tools = config.toolsEnabled
+      ? await runtime.createToolRegistry(runtime.cwd, [
+          runtime.env.OPENAI_API_KEY,
+        ])
+      : undefined;
+    const client = runtime.createModelTurnClient(connection);
+    exitCode = await runFixedToolRoundTrip(
       config,
+      client,
+      tools,
       controller,
       publisher,
       runtime,
@@ -283,6 +614,7 @@ export async function runStreamingChat(
       () => cancellationReason,
     );
   } catch (error) {
+    // PHASE2: 存储失败后 writer 不可信，不能再尝试补 terminal event。
     controller.abort();
     if (error instanceof EventPersistenceError) {
       renderer.renderStorageError();
@@ -326,11 +658,13 @@ export async function runStreamingChat(
       exitCode = 1;
     }
   } finally {
+    // PHASE2: 无论成功、失败还是取消，都撤销计时器和 SIGINT listener。
     runtime.clearTimer(timer);
     stopListening();
   }
 
   try {
+    // PHASE2: close 失败会把命令结果降级为内部错误。
     await writer.close();
   } catch {
     renderer.renderStorageError();
