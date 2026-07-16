@@ -134,6 +134,40 @@ describe("ToolRegistry", () => {
     expect(Buffer.byteLength(result.output, "utf8")).toBeLessThan(64 * 1024);
   });
 
+  it("keeps the read-tool cap unless one tool explicitly opts into a larger bound", async () => {
+    const largeDefinition = {
+      ...definition("run_command", async () => ({
+        ok: true,
+        truncated: false,
+        value: { stdout: "x".repeat(70 * 1024) },
+      })),
+      capability: "mutation" as const,
+      maxOutputBytes: 80 * 1024,
+    };
+    const registry = new ToolRegistry([erased(largeDefinition)]);
+
+    const result = await registry.execute(
+      {
+        argumentsJson: JSON.stringify({ path: null }),
+        callId: "call_1",
+        name: "run_command",
+        step: 1,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(Buffer.byteLength(result.output, "utf8")).toBeGreaterThan(
+      64 * 1024,
+    );
+    expect(
+      () =>
+        new ToolRegistry([
+          erased({ ...largeDefinition, maxOutputBytes: 1024 }),
+        ]),
+    ).toThrow("invalid output limit");
+  });
+
   it("returns cancellation before executing", async () => {
     const execute = vi.fn();
     const registry = new ToolRegistry([

@@ -56,6 +56,7 @@ export class PatchApprovalGate {
         ? "denied"
         : await this.options.prompt.request(
             {
+              actionKind: "apply_patch",
               addedLines: request.plan.addedLines,
               paths,
               planId: request.plan.planId,

@@ -44,14 +44,63 @@ interface PatchPlanState {
   readonly step: number;
 }
 
-interface ApprovalState extends PatchPlanState {
+interface ApprovalState {
+  readonly actionKind: "apply_patch" | "run_command";
+  readonly actionSha256: string;
+  readonly callId: string;
   decision?: "approved" | "cancelled" | "denied";
   readonly requestId: string;
+  readonly planId?: string;
+  readonly step: number;
 }
 
 interface PatchApplyState extends PatchPlanState {
   readonly approvalRequestId: string;
   completed: boolean;
+}
+
+interface PermissionState {
+  readonly actionSha256: string;
+  readonly effect: "allow" | "ask" | "deny";
+  readonly step: number;
+}
+
+interface CommandExecutionState {
+  readonly actionSha256: string;
+  readonly callId: string;
+  cleanupVerified?: boolean;
+  completed: boolean;
+  readonly executionId: string;
+  readonly step: number;
+  stderrBytes: number;
+  stderrChunks: number;
+  stdoutBytes: number;
+  stdoutChunks: number;
+  started: boolean;
+}
+
+function approvalActionSha256(
+  data: Extract<RunEvent, { type: "approval.requested" | "approval.decided" }>["data"],
+): string {
+  return data.action === "apply_patch"
+    ? (data.action_sha256 ?? data.plan_id)
+    : data.action_sha256;
+}
+
+const REGISTRY_PRE_EXECUTION_ERROR_CODES = new Set([
+  "arguments_schema_mismatch",
+  "arguments_too_large",
+  "invalid_arguments_json",
+  "tool_cancelled",
+]);
+
+function isPreExecutionToolError(
+  data: Extract<RunEvent, { type: "tool.call.completed" }>["data"],
+): boolean {
+  return data.status === "error" &&
+    (data.error_category === "permission" ||
+      (data.error_code !== undefined &&
+        REGISTRY_PRE_EXECUTION_ERROR_CODES.has(data.error_code)));
 }
 
 export class EventPublisher {
@@ -64,8 +113,11 @@ export class EventPublisher {
   private started = false;
   private terminal = false;
   private readonly toolCalls = new Map<string, ToolCallState>();
+  private readonly commandExecutions = new Map<string, CommandExecutionState>();
+  private readonly commandExecutionsByCall = new Map<string, string>();
   private readonly patchApplies = new Map<string, PatchApplyState>();
   private readonly patchPlans = new Map<string, PatchPlanState>();
+  private readonly permissions = new Map<string, PermissionState>();
   private usagePublished = false;
 
   constructor(private readonly options: EventPublisherOptions) {}
@@ -129,10 +181,15 @@ export class EventPublisher {
         draft.type === "agent.step.completed" ||
         draft.type === "approval.decided" ||
         draft.type === "approval.requested" ||
+        draft.type === "command.completed" ||
+        draft.type === "command.execution.requested" ||
+        draft.type === "command.output" ||
+        draft.type === "command.started" ||
         draft.type === "model.usage" ||
         draft.type === "patch.apply.completed" ||
         draft.type === "patch.apply.started" ||
         draft.type === "patch.plan.created" ||
+        draft.type === "permission.evaluated" ||
         draft.type === "run.budget_exceeded")
     ) {
       throw new Error("chat run cannot publish agent events");
@@ -159,6 +216,45 @@ export class EventPublisher {
         this.patchApplies.get(draft.data.call_id)?.completed !== true
       ) {
         throw new Error("successful apply_patch result requires completed apply evidence");
+      }
+      const permission = this.permissions.get(draft.data.call_id);
+      const executionId = this.commandExecutionsByCall.get(draft.data.call_id);
+      const execution =
+        executionId === undefined
+          ? undefined
+          : this.commandExecutions.get(executionId);
+      if (
+        requested.name === "run_command" &&
+        permission === undefined &&
+        !isPreExecutionToolError(draft.data)
+      ) {
+        throw new Error("run_command result requires permission evidence");
+      }
+      if (
+        requested.name === "run_command" &&
+        permission?.effect === "ask" &&
+        ![...this.approvals.values()].some(
+          (approval) =>
+            approval.callId === draft.data.call_id &&
+            approval.actionKind === "run_command" &&
+            approval.decision !== undefined,
+        )
+      ) {
+        throw new Error("run_command result requires an approval decision");
+      }
+      if (
+        requested.name === "run_command" &&
+        execution !== undefined &&
+        !execution.completed
+      ) {
+        throw new Error("run_command result cannot precede command completion");
+      }
+      if (
+        requested.name === "run_command" &&
+        draft.data.status === "success" &&
+        (execution?.completed !== true || execution.cleanupVerified !== true)
+      ) {
+        throw new Error("successful run_command result requires completed command evidence");
       }
     }
     if (
@@ -189,6 +285,14 @@ export class EventPublisher {
         draft.data.tool_calls !== this.completedToolCalls
       ) {
         throw new Error("run.completed tool_calls does not match tool events");
+      }
+      if (
+        [...this.commandExecutions.values()].some(
+          (execution) =>
+            !execution.completed || execution.cleanupVerified !== true,
+        )
+      ) {
+        throw new Error("completed run cannot contain an unknown command effect");
       }
     }
   }
@@ -277,17 +381,52 @@ export class EventPublisher {
       }
       return;
     }
-    if (draft.type === "approval.requested") {
-      const plan = this.patchPlans.get(draft.data.call_id);
+    if (draft.type === "permission.evaluated") {
+      const call = this.toolCalls.get(draft.data.call_id);
       if (
-        plan?.planId !== draft.data.plan_id ||
-        plan.step !== draft.data.step ||
-        this.approvals.has(draft.data.approval_request_id) ||
+        call?.name !== "run_command" ||
+        call.completed ||
+        call.step !== draft.data.step ||
+        this.permissions.has(draft.data.call_id)
+      ) {
+        throw new Error("permission evaluation must match one pending run_command call");
+      }
+      return;
+    }
+    if (draft.type === "approval.requested") {
+      if (this.approvals.has(draft.data.approval_request_id)) {
+        throw new Error("approval request id must be unique");
+      }
+      if (
         [...this.approvals.values()].some(
           (approval) => approval.callId === draft.data.call_id,
         )
       ) {
-        throw new Error("approval request must match one patch plan");
+        throw new Error("tool call can request approval only once");
+      }
+      if (draft.data.action === "apply_patch") {
+        const plan = this.patchPlans.get(draft.data.call_id);
+        if (
+          plan?.planId !== draft.data.plan_id ||
+          plan.step !== draft.data.step ||
+          (draft.data.action_sha256 !== undefined &&
+            draft.data.action_sha256 !== plan.planId)
+        ) {
+          throw new Error("approval request must match one patch plan");
+        }
+      } else {
+        const call = this.toolCalls.get(draft.data.call_id);
+        const permission = this.permissions.get(draft.data.call_id);
+        if (
+          call?.name !== "run_command" ||
+          call.completed ||
+          call.step !== draft.data.step ||
+          permission?.effect !== "ask" ||
+          permission.step !== draft.data.step ||
+          permission.actionSha256 !== draft.data.action_sha256
+        ) {
+          throw new Error("command approval request must match an ask decision");
+        }
       }
       return;
     }
@@ -296,11 +435,18 @@ export class EventPublisher {
       if (
         approval === undefined ||
         approval.decision !== undefined ||
+        approval.actionKind !== draft.data.action ||
         approval.callId !== draft.data.call_id ||
-        approval.planId !== draft.data.plan_id ||
+        approval.actionSha256 !== approvalActionSha256(draft.data) ||
         approval.step !== draft.data.step
       ) {
         throw new Error("approval decision must match one pending request");
+      }
+      if (
+        draft.data.action === "apply_patch" &&
+        approval.planId !== draft.data.plan_id
+      ) {
+        throw new Error("approval decision must match its patch plan");
       }
       return;
     }
@@ -327,6 +473,93 @@ export class EventPublisher {
         apply.step !== draft.data.step
       ) {
         throw new Error("patch completion must match one started apply");
+      }
+      return;
+    }
+    if (draft.type === "command.execution.requested") {
+      // PHASE6: this event must persist before spawn; failure after this point but before
+      // command.started is conservatively an unknown effect during cross-process replay.
+      const call = this.toolCalls.get(draft.data.call_id);
+      const permission = this.permissions.get(draft.data.call_id);
+      const approval = [...this.approvals.values()].find(
+        (candidate) =>
+          candidate.callId === draft.data.call_id &&
+          candidate.actionKind === "run_command",
+      );
+      const approvalMatches =
+        permission?.effect === "ask"
+          ? approval?.decision === "approved" &&
+            approval.requestId === draft.data.approval_request_id &&
+            approval.actionSha256 === draft.data.action_sha256
+          : draft.data.approval_request_id === undefined;
+      if (
+        call?.name !== "run_command" ||
+        call.completed ||
+        call.step !== draft.data.step ||
+        permission === undefined ||
+        permission.effect === "deny" ||
+        permission.step !== draft.data.step ||
+        permission.actionSha256 !== draft.data.action_sha256 ||
+        !approvalMatches ||
+        this.commandExecutions.has(draft.data.execution_id) ||
+        this.commandExecutionsByCall.has(draft.data.call_id)
+      ) {
+        throw new Error("command execution request lacks matching permission");
+      }
+      return;
+    }
+    if (draft.type === "command.started") {
+      const execution = this.commandExecutions.get(draft.data.execution_id);
+      if (
+        execution === undefined ||
+        execution.started ||
+        execution.completed ||
+        execution.callId !== draft.data.call_id ||
+        execution.step !== draft.data.step ||
+        execution.actionSha256 !== draft.data.action_sha256
+      ) {
+        throw new Error("command start must match one execution request");
+      }
+      return;
+    }
+    if (draft.type === "command.output") {
+      const execution = this.commandExecutions.get(draft.data.execution_id);
+      const expectedIndex =
+        draft.data.channel === "stdout"
+          ? execution?.stdoutChunks
+          : execution?.stderrChunks;
+      if (
+        execution === undefined ||
+        !execution.started ||
+        execution.completed ||
+        execution.callId !== draft.data.call_id ||
+        execution.step !== draft.data.step ||
+        execution.actionSha256 !== draft.data.action_sha256 ||
+        draft.data.chunk_index !== expectedIndex
+      ) {
+        throw new Error("command output must be contiguous for one active execution");
+      }
+      return;
+    }
+    if (draft.type === "command.completed") {
+      const execution = this.commandExecutions.get(draft.data.execution_id);
+      const completedBeforeStart =
+        execution?.started === false &&
+        (draft.data.termination === "spawn_error" ||
+          draft.data.termination === "cancelled") &&
+        draft.data.stdout_bytes === 0 &&
+        draft.data.stderr_bytes === 0;
+      if (
+        execution === undefined ||
+        (!execution.started && !completedBeforeStart) ||
+        execution.completed ||
+        execution.callId !== draft.data.call_id ||
+        execution.step !== draft.data.step ||
+        execution.actionSha256 !== draft.data.action_sha256 ||
+        execution.stdoutBytes !== draft.data.stdout_bytes ||
+        execution.stderrBytes !== draft.data.stderr_bytes
+      ) {
+        throw new Error("command completion must match one active execution and its bytes");
       }
       return;
     }
@@ -445,12 +678,22 @@ export class EventPublisher {
         planId: event.data.plan_id,
         step: event.data.step,
       });
+    } else if (event.type === "permission.evaluated") {
+      this.permissions.set(event.data.call_id, {
+        actionSha256: event.data.action_sha256,
+        effect: event.data.effect,
+        step: event.data.step,
+      });
     } else if (event.type === "approval.requested") {
       this.approvals.set(event.data.approval_request_id, {
+        actionKind: event.data.action,
+        actionSha256: approvalActionSha256(event.data),
         callId: event.data.call_id,
-        planId: event.data.plan_id,
         requestId: event.data.approval_request_id,
         step: event.data.step,
+        ...(event.data.action === "apply_patch"
+          ? { planId: event.data.plan_id }
+          : {}),
       });
     } else if (event.type === "approval.decided") {
       const approval = this.approvals.get(event.data.approval_request_id);
@@ -466,6 +709,43 @@ export class EventPublisher {
     } else if (event.type === "patch.apply.completed") {
       const apply = this.patchApplies.get(event.data.call_id);
       if (apply !== undefined) apply.completed = true;
+    } else if (event.type === "command.execution.requested") {
+      this.commandExecutions.set(event.data.execution_id, {
+        actionSha256: event.data.action_sha256,
+        callId: event.data.call_id,
+        completed: false,
+        executionId: event.data.execution_id,
+        step: event.data.step,
+        stderrBytes: 0,
+        stderrChunks: 0,
+        stdoutBytes: 0,
+        stdoutChunks: 0,
+        started: false,
+      });
+      this.commandExecutionsByCall.set(
+        event.data.call_id,
+        event.data.execution_id,
+      );
+    } else if (event.type === "command.started") {
+      const execution = this.commandExecutions.get(event.data.execution_id);
+      if (execution !== undefined) execution.started = true;
+    } else if (event.type === "command.output") {
+      const execution = this.commandExecutions.get(event.data.execution_id);
+      if (execution !== undefined) {
+        if (event.data.channel === "stdout") {
+          execution.stdoutBytes += event.data.bytes;
+          execution.stdoutChunks += 1;
+        } else {
+          execution.stderrBytes += event.data.bytes;
+          execution.stderrChunks += 1;
+        }
+      }
+    } else if (event.type === "command.completed") {
+      const execution = this.commandExecutions.get(event.data.execution_id);
+      if (execution !== undefined) {
+        execution.completed = true;
+        execution.cleanupVerified = event.data.cleanup_verified;
+      }
     }
     if (isTerminalRunEvent(event)) this.terminal = true;
   }

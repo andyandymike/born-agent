@@ -6,12 +6,17 @@ import {
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES,
   DEFAULT_AGENT_REQUEST_TIMEOUT_MS,
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
   resolveAgentConfig,
 } from "../../src/agent/agent-config.js";
 
 const options = {
+  commandApproval: undefined,
+  commandTimeoutMs: undefined,
   editApproval: undefined,
   maxDurationMs: undefined,
+  maxCommandOutputBytes: undefined,
   maxSteps: undefined,
   maxTokens: undefined,
   maxToolOutputBytes: undefined,
@@ -27,8 +32,11 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentConfig(options, {})).toEqual({
       ok: true,
       value: {
+        commandApproval: "ask",
+        commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
         editApproval: "ask",
         maxDurationMs: DEFAULT_AGENT_MAX_DURATION_MS,
+        maxCommandOutputBytes: DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
         maxSteps: DEFAULT_AGENT_MAX_STEPS,
         maxTokens: DEFAULT_AGENT_MAX_TOKENS,
         maxToolOutputBytes: DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES,
@@ -84,6 +92,9 @@ describe("resolveAgentConfig", () => {
     [{ ...options, maxTokens: "10000001" }, "max tokens"],
     [{ ...options, maxToolOutputBytes: "65535" }, "max tool output bytes"],
     [{ ...options, editApproval: "always" }, "edit approval"],
+    [{ ...options, commandApproval: "always" }, "command approval"],
+    [{ ...options, commandTimeoutMs: "999" }, "command timeout"],
+    [{ ...options, maxCommandOutputBytes: "16383" }, "max command output"],
   ])("rejects invalid input before a session is created", (input, message) => {
     const result = resolveAgentConfig(input, {});
     expect(result.ok).toBe(false);

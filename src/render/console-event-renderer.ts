@@ -105,6 +105,46 @@ export class ConsoleEventRenderer implements RunEventRenderer {
           );
         }
         return;
+      case "permission.evaluated":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `permission effect=${event.data.effect} rule=${event.data.rule_id} policy=${event.data.policy_version} action=${event.data.action_sha256.slice(0, 12)}${event.data.reason_code === undefined ? "" : ` reason=${event.data.reason_code}`}\n`,
+          );
+        }
+        return;
+      case "command.execution.requested":
+        // PHASE6: renderer only sees redacted argv after persistence; it never renders host executable paths or env values.
+        if (this.verbose) {
+          const args = event.data.redacted_argv
+            .map((argument) => JSON.stringify(oneLine(argument)))
+            .join(" ");
+          this.io.stderr.write(
+            `command=${args} cwd=${event.data.cwd} purpose=${event.data.purpose} execution=${event.data.execution_id}\n`,
+          );
+        }
+        return;
+      case "command.started":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `command execution=${event.data.execution_id} status=started\n`,
+          );
+        }
+        return;
+      case "command.output":
+        if (this.verbose) {
+          const suffix = event.data.chunk.endsWith("\n") ? "" : "\n";
+          this.io.stderr.write(
+            `command ${event.data.channel}[${event.data.chunk_index}] ${event.data.chunk}${suffix}`,
+          );
+        }
+        return;
+      case "command.completed":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `command execution=${event.data.execution_id} termination=${event.data.termination} exit_code=${event.data.exit_code === null ? "none" : event.data.exit_code} duration_ms=${event.data.duration_ms} stdout_bytes=${event.data.stdout_bytes} stderr_bytes=${event.data.stderr_bytes}${event.data.truncated ? " truncated=true" : ""}\n`,
+          );
+        }
+        return;
       case "patch.apply.started":
         if (this.verbose) {
           this.io.stderr.write(

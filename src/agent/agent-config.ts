@@ -15,6 +15,9 @@ export const DEFAULT_AGENT_REQUEST_TIMEOUT_MS = 120_000;
 export const DEFAULT_AGENT_MAX_TOKENS = 100_000;
 export const DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES = 262_144;
 export const DEFAULT_EDIT_APPROVAL = "ask" as const;
+export const DEFAULT_COMMAND_APPROVAL = "ask" as const;
+export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+export const DEFAULT_MAX_COMMAND_OUTPUT_BYTES = 131_072;
 
 // PHASE4: 所有预算统一采用 CLI > 环境变量 > 内置默认值，先在创建 session 前完成验证。
 type ConfigResult<T> =
@@ -75,6 +78,10 @@ export function resolveAgentConfig(
   if (editApproval !== "ask" && editApproval !== "deny") {
     return { error: "edit approval must be one of: ask, deny", ok: false };
   }
+  const commandApproval = options.commandApproval ?? DEFAULT_COMMAND_APPROVAL;
+  if (commandApproval !== "ask" && commandApproval !== "deny") {
+    return { error: "command approval must be one of: ask, deny", ok: false };
+  }
 
   const provider = resolveProvider(options.provider, env.BORN_PROVIDER);
   if (!provider.ok) {
@@ -120,6 +127,24 @@ export function resolveAgentConfig(
     { label: "max tool output bytes", maximum: 1_048_576, minimum: 65_536 },
   );
   if (!maxToolOutputBytes.ok) return maxToolOutputBytes;
+  const commandTimeoutMs = resolveInteger(
+    options.commandTimeoutMs,
+    env.BORN_COMMAND_TIMEOUT_MS,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    { label: "command timeout", maximum: 600_000, minimum: 1_000 },
+  );
+  if (!commandTimeoutMs.ok) return commandTimeoutMs;
+  const maxCommandOutputBytes = resolveInteger(
+    options.maxCommandOutputBytes,
+    env.BORN_MAX_COMMAND_OUTPUT_BYTES,
+    DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
+    {
+      label: "max command output bytes",
+      maximum: 1_048_576,
+      minimum: 16_384,
+    },
+  );
+  if (!maxCommandOutputBytes.ok) return maxCommandOutputBytes;
 
   const ollamaBaseURL =
     provider.value === "ollama"
@@ -132,8 +157,11 @@ export function resolveAgentConfig(
   return {
     ok: true,
     value: {
+      commandApproval,
+      commandTimeoutMs: commandTimeoutMs.value,
       editApproval,
       maxDurationMs: maxDurationMs.value,
+      maxCommandOutputBytes: maxCommandOutputBytes.value,
       maxSteps: maxSteps.value,
       maxTokens: maxTokens.value,
       maxToolOutputBytes: maxToolOutputBytes.value,

@@ -18,5 +18,6 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     options: AgentToolRegistryOptions,
   ): Promise<ToolRegistryLike>;
   createApprovalPrompt(io: CliIO): ApprovalPrompt;
+  readonly execPath: string;
   readonly version: string;
 }

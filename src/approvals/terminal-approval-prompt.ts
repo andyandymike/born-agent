@@ -13,18 +13,34 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
     signal: AbortSignal,
   ): Promise<ApprovalDecision> {
     // PHASE5: preview 和 prompt 只写 stderr；stdout 必须继续只承载模型最终文本。
-    this.options.output.write(
-      `Apply patch to ${preview.paths.length} file${preview.paths.length === 1 ? "" : "s"} (+${preview.addedLines} -${preview.removedLines})?\n`,
-    );
-    for (const target of preview.paths) {
-      this.options.output.write(`  ${target.kind} ${target.path}\n`);
-    }
-    this.options.output.write(`  plan ${preview.planId.slice(0, 12)}\n`);
-    if (preview.preview.length > 0) {
-      this.options.output.write(`${preview.preview}\n`);
-    }
-    if (preview.previewTruncated) {
-      this.options.output.write("  [diff preview truncated]\n");
+    if (preview.actionKind === "apply_patch") {
+      this.options.output.write(
+        `Apply patch to ${preview.paths.length} file${preview.paths.length === 1 ? "" : "s"} (+${preview.addedLines} -${preview.removedLines})?\n`,
+      );
+      for (const target of preview.paths) {
+        this.options.output.write(`  ${target.kind} ${target.path}\n`);
+      }
+      this.options.output.write(`  plan ${preview.planId.slice(0, 12)}\n`);
+      if (preview.preview.length > 0) {
+        this.options.output.write(`${preview.preview}\n`);
+      }
+      if (preview.previewTruncated) {
+        this.options.output.write("  [diff preview truncated]\n");
+      }
+    } else {
+      // PHASE6: argv 逐项显示，避免 shell-like display 把授权内容变成另一条命令。
+      this.options.output.write("Allow command?\n");
+      this.options.output.write(`  cwd: ${preview.cwd}\n`);
+      this.options.output.write(`  executable: ${preview.executable}\n`);
+      preview.args.forEach((argument, index) => {
+        this.options.output.write(`  argv[${index}]: ${argument}\n`);
+      });
+      preview.reviewLines.forEach((line) => {
+        this.options.output.write(`  reviewed: ${line}\n`);
+      });
+      this.options.output.write(`  purpose: ${preview.purpose}\n`);
+      this.options.output.write(`  action: ${preview.actionSha256.slice(0, 12)}\n`);
+      this.options.output.write(`  WARNING: ${preview.riskWarning}\n`);
     }
 
     if (!this.options.interactive) {
@@ -32,7 +48,11 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
       return "denied";
     }
     if (signal.aborted) return "cancelled";
-    this.options.output.write("Apply patch? [y/N] ");
+    this.options.output.write(
+      preview.actionKind === "apply_patch"
+        ? "Apply patch? [y/N] "
+        : "Allow command? [y/N] ",
+    );
     const answer = await this.options.readLine(signal);
     if (signal.aborted) return "cancelled";
     return answer?.trim().toLowerCase() === "y" ? "approved" : "denied";

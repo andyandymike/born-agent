@@ -47,6 +47,10 @@ try {
       },
       cwd: process.cwd(),
       env: process.env,
+      execPath: process.execPath,
+      killProcess: (processIdentity, signal) => {
+        process.kill(processIdentity, signal);
+      },
       nodeVersion: process.versions.node,
       onCancel: (listener) => {
         process.once("SIGINT", listener);

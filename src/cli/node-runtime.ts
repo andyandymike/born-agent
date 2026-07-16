@@ -1,20 +1,40 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
 import type { ApprovalLineReader } from "../approvals/approval-types.js";
 import { TerminalApprovalPrompt } from "../approvals/terminal-approval-prompt.js";
+import { createDefaultExecutableRegistry } from "../execution/executable-registry.js";
+import { ExecutionPreparer } from "../execution/execution-preparer.js";
+import {
+  createNodeSpawnAdapter,
+  LocalExecutor,
+} from "../execution/local-executor.js";
+import {
+  createTaskkillArgvRunner,
+  NodeProcessTreeCleanup,
+} from "../execution/process-tree-cleanup.js";
+import { PermissionEngine } from "../permissions/permission-engine.js";
+import { localFreeOnlyPermissionPolicy } from "../permissions/local-free-policy.js";
+import { createTrustedLocalFixturePermissionContext } from "../permissions/trusted-local-fixture-manifest.js";
 import { OpenAIStreamingChatClient } from "../providers/openai/openai-streaming-chat-client.js";
 import { JsonlSessionWriter } from "../sessions/jsonl-session-writer.js";
 import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
 import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
+import { redactSensitiveText } from "../security/redact.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly execPath: string;
+  readonly killProcess: (
+    processIdentity: number,
+    signal: NodeJS.Signals | 0,
+  ) => void;
   readonly nodeVersion: string;
   readonly onCancel: (listener: () => void) => () => void;
   readonly platform: NodeJS.Platform;
@@ -32,7 +52,64 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         ...options.approvalInput,
         output: io.stderr,
       }),
-    createAgentToolRegistry,
+    createAgentToolRegistry: async (registryOptions) => {
+      const executableRegistry = createDefaultExecutableRegistry({
+        execPath: options.execPath,
+        hostEnvironment: options.env,
+        platform: options.platform,
+      });
+      const executionPreparer = await ExecutionPreparer.create({
+        hostEnvironment: options.env,
+        platform: options.platform,
+        registry: executableRegistry,
+        workspace: registryOptions.workspace,
+      });
+      const timers = {
+        clearTimeout: (handle: unknown) =>
+          clearTimeout(handle as ReturnType<typeof setTimeout>),
+        setTimeout: (listener: () => void, delayMs: number) =>
+          setTimeout(listener, delayMs),
+      };
+      const isProcessAlive = (processIdentity: number): boolean => {
+        try {
+          options.killProcess(processIdentity, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const cleanup = new NodeProcessTreeCleanup({
+        isProcessAlive,
+        killProcess: options.killProcess,
+        platform: options.platform,
+        ...(options.platform === "win32"
+          ? { taskkill: createTaskkillArgvRunner(spawn) }
+          : {}),
+        timers,
+      });
+      const executor = new LocalExecutor({
+        clock: { now: () => performance.now() },
+        platform: options.platform,
+        processTreeCleanup: cleanup,
+        redact: (value) =>
+          redactSensitiveText(value, registryOptions.secrets ?? []),
+        spawn: createNodeSpawnAdapter(spawn),
+        timers,
+      });
+      const permissionEngine = new PermissionEngine(
+        localFreeOnlyPermissionPolicy,
+      );
+      return createAgentToolRegistry({
+        ...registryOptions,
+        executionPreparer,
+        executor,
+        permissionContext: (prepared) =>
+          createTrustedLocalFixturePermissionContext(
+            prepared.actionIdentity,
+          ) ?? {},
+        permissionEngine,
+      });
+    },
     createSessionWriter: JsonlSessionWriter.create,
     createModelTurnClient: (configuration) =>
       configuration.provider === "openai"
@@ -48,6 +125,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。
     createToolRegistry: createReadonlyToolRegistry,
     env: options.env,
+    execPath: options.execPath,
     isReadableDirectory,
     nodeVersion: options.nodeVersion,
     // PHASE4: duration budgets use a monotonic clock so wall-clock adjustments cannot

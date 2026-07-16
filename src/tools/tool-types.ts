@@ -30,7 +30,14 @@ export type ToolRawResult =
       readonly truncated: boolean;
       readonly value: Readonly<Record<string, unknown>>;
     }
-  | { readonly error: ToolError; readonly ok: false };
+  | {
+      readonly error: ToolError;
+      readonly ok: false;
+      // PHASE6: execution failures can still carry bounded stdout/stderr evidence;
+      // the Registry remains the single serializer/redactor for that observation.
+      readonly truncated?: boolean;
+      readonly value?: Readonly<Record<string, unknown>>;
+    };
 
 export type ToolExecution =
   // PHASE3: Registry 的最终 output 必须与 tool.call.completed 中记录、
@@ -44,7 +51,7 @@ export type ToolExecution =
       readonly error: ToolError;
       readonly ok: false;
       readonly output: string;
-      readonly truncated: false;
+      readonly truncated: boolean;
     };
 
 export interface ToolContext {
@@ -60,6 +67,9 @@ export interface ToolDefinition<TInput> {
   // PHASE3: inputSchema 是参数合同的唯一运行时真相，同时用于本地 Zod 校验和模型 JSON Schema。
   readonly description: string;
   readonly inputSchema: z.ZodType<TInput>;
+  // PHASE6: command observations may legitimately exceed the Phase 3 read-tool cap;
+  // each exceptional tool must opt in explicitly so read tools stay bounded at 64 KiB.
+  readonly maxOutputBytes?: number;
   readonly name: string;
   execute(input: TInput, context: ToolContext): Promise<ToolRawResult>;
 }
@@ -75,7 +85,11 @@ export class FatalToolExecutionError extends Error {
   readonly workspaceMayHaveChanged: boolean;
 
   constructor(
-    readonly kind: "ambiguous_patch_state" | "storage" | "user_cancelled",
+    readonly kind:
+      | "ambiguous_command_state"
+      | "ambiguous_patch_state"
+      | "storage"
+      | "user_cancelled",
     message: string,
     options: { readonly cause?: unknown; readonly workspaceMayHaveChanged: boolean },
   ) {

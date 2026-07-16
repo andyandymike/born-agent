@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TerminalApprovalPrompt } from "../../src/approvals/terminal-approval-prompt.js";
 
 const preview = {
+  actionKind: "apply_patch" as const,
   addedLines: 2,
   paths: [{ kind: "modify" as const, path: "src/math.ts" }],
   planId: "a".repeat(64),
@@ -65,5 +66,27 @@ describe("TerminalApprovalPrompt", () => {
       fixture.prompt.request(preview, controller.signal),
     ).resolves.toBe("cancelled");
     expect(fixture.readLine).not.toHaveBeenCalled();
+  });
+
+  it("renders command argv without inventing a shell command string", async () => {
+    const fixture = prompt({ answer: "n", interactive: true });
+    await expect(
+      fixture.prompt.request(
+        {
+          actionKind: "run_command",
+          actionSha256: "b".repeat(64),
+          args: ["scripts/pass.mjs", ";", "not-a-second-command"],
+          cwd: "fixtures/phase-06-command-execution",
+          executable: "node",
+          purpose: "inspect",
+          reviewLines: [],
+          riskWarning: "repository code may perform additional host side effects",
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toBe("denied");
+    expect(fixture.readOutput()).toContain("argv[1]: ;");
+    expect(fixture.readOutput()).toContain("repository code may perform");
+    expect(fixture.readOutput()).not.toContain("node scripts/pass.mjs ;");
   });
 });

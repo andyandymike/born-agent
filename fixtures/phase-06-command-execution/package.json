@@ -1,0 +1,10 @@
+{
+  "name": "bornagent-phase-06-offline-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pass": "node pass.mjs",
+    "fail": "node fail.mjs",
+    "mixed": "node mixed-output.mjs"
+  }
+}

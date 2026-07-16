@@ -81,16 +81,25 @@ export async function executeAgent(
     await publisher.publish({
       data: {
         command: "agent",
+        command_approval: config.commandApproval,
+        command_timeout_ms: config.commandTimeoutMs,
         edit_approval: config.editApproval,
         input: { role: "user", text: config.task },
         max_duration_ms: config.maxDurationMs,
+        max_command_output_bytes: config.maxCommandOutputBytes,
         max_steps: config.maxSteps,
         max_tokens: config.maxTokens,
         max_tool_output_bytes: config.maxToolOutputBytes,
         model: config.model,
         provider: config.provider,
         request_timeout_ms: config.requestTimeoutMs,
-        tools: ["apply_patch", "list_files", "read_file", "search"],
+        tools: [
+          "apply_patch",
+          "list_files",
+          "read_file",
+          "run_command",
+          "search",
+        ],
         tools_enabled: true,
         workspace: runtime.cwd,
       },
@@ -100,6 +109,9 @@ export async function executeAgent(
       approvalMode: config.editApproval,
       approvalPrompt: runtime.createApprovalPrompt(io),
       caseInsensitivePaths: runtime.platform === "win32",
+      commandApprovalMode: config.commandApproval,
+      commandTimeoutMs: config.commandTimeoutMs,
+      maxCommandOutputBytes: config.maxCommandOutputBytes,
       now: runtime.now,
       publisher,
       randomUUID: runtime.randomUUID,
@@ -164,14 +176,20 @@ export async function executeAgent(
         exitCode = 1;
       }
     } else if (error instanceof FatalToolExecutionError) {
+      const commandStateUnknown =
+        error.kind === "ambiguous_command_state";
       try {
         const snapshot = budget.snapshot();
         await publisher.publish({
           data: {
             category: "internal",
-            code: "ambiguous_patch_state",
+            code: commandStateUnknown
+              ? "ambiguous_command_state"
+              : "ambiguous_patch_state",
             duration_ms: snapshot.elapsedMs,
-            message: "workspace state is ambiguous; inspect the diff before continuing",
+            message: commandStateUnknown
+              ? "command effect or process cleanup is ambiguous; inspect the workspace and running processes before continuing"
+              : "workspace state is ambiguous; inspect the diff before continuing",
             output_chars: publisher.outputLength,
             retryable: false,
             steps: snapshot.steps,
@@ -183,7 +201,11 @@ export async function executeAgent(
         if (publishError instanceof EventPersistenceError) {
           renderer.renderStorageError();
         } else {
-          renderer.renderDiagnostic("workspace state is ambiguous");
+          renderer.renderDiagnostic(
+            commandStateUnknown
+              ? "command effect or process cleanup is ambiguous"
+              : "workspace state is ambiguous",
+          );
         }
       }
       exitCode = 1;

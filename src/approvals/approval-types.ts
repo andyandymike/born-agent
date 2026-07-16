@@ -7,7 +7,8 @@ export interface ApprovalPath {
   readonly path: string;
 }
 
-export interface ApprovalPreview {
+export interface PatchApprovalPreview {
+  readonly actionKind: "apply_patch";
   readonly addedLines: number;
   readonly paths: readonly ApprovalPath[];
   readonly planId: string;
@@ -15,6 +16,19 @@ export interface ApprovalPreview {
   readonly previewTruncated: boolean;
   readonly removedLines: number;
 }
+
+export interface CommandApprovalPreview {
+  readonly actionKind: "run_command";
+  readonly actionSha256: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly executable: string;
+  readonly purpose: "inspect" | "verify";
+  readonly reviewLines: readonly string[];
+  readonly riskWarning: string;
+}
+
+export type ApprovalPreview = CommandApprovalPreview | PatchApprovalPreview;
 
 export interface ApprovalPrompt {
   request(

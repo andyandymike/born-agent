@@ -50,6 +50,13 @@ export class ToolRegistry implements ToolRegistryLike {
       if (this.definitions.has(definition.name)) {
         throw new Error(`duplicate tool name: ${definition.name}`);
       }
+      if (
+        definition.maxOutputBytes !== undefined &&
+        (!Number.isSafeInteger(definition.maxOutputBytes) ||
+          definition.maxOutputBytes < MAX_TOOL_OUTPUT_BYTES)
+      ) {
+        throw new Error(`invalid output limit for tool: ${definition.name}`);
+      }
       this.definitions.set(definition.name, definition);
     }
 
@@ -151,7 +158,34 @@ export class ToolRegistry implements ToolRegistryLike {
       };
     }
     if (!result.ok) {
-      return serializeToolError(result.error, this.secrets);
+      if (result.value === undefined) {
+        return serializeToolError(result.error, this.secrets);
+      }
+      const safeError = {
+        ...result.error,
+        message: redactSensitiveText(result.error.message, this.secrets),
+      };
+      const output = redactSensitiveText(
+        JSON.stringify({ ...result.value, error: safeError, ok: false }),
+        this.secrets,
+      );
+      const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
+      if (Buffer.byteLength(output, "utf8") > outputLimit) {
+        return serializeToolError(
+          toolError(
+            "system",
+            "tool_output_too_large",
+            "tool output exceeded the safety limit",
+          ),
+          this.secrets,
+        );
+      }
+      return {
+        error: safeError,
+        ok: false,
+        output,
+        truncated: result.truncated ?? false,
+      };
     }
 
     const output = redactSensitiveText(
@@ -159,7 +193,8 @@ export class ToolRegistry implements ToolRegistryLike {
       JSON.stringify({ ...result.value, ok: true }),
       this.secrets,
     );
-    if (Buffer.byteLength(output, "utf8") > MAX_TOOL_OUTPUT_BYTES) {
+    const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
+    if (Buffer.byteLength(output, "utf8") > outputLimit) {
       return serializeToolError(
         toolError(
           "system",

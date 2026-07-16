@@ -104,6 +104,7 @@ export function createRuntime(
     createToolRegistry: async () => new FakeToolRegistry(),
     cwd: resolve("fixture-workspace"),
     env: { OPENAI_API_KEY: "test-api-key" },
+    execPath: "C:\\Program Files\\nodejs\\node.exe",
     isReadableDirectory: async () => true,
     nodeVersion: "22.16.0",
     now: Date.now,

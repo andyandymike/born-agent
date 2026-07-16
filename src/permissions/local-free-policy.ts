@@ -1,0 +1,153 @@
+import { evaluateHardDeny } from "./default-policy.js";
+import type {
+  CommandActionIdentity,
+  PermissionContext,
+  PermissionPolicy,
+  PolicyDecision,
+  Sha256Hex,
+} from "./permission-types.js";
+
+export const LOCAL_FREE_PERMISSION_POLICY_ID =
+  "bornagent.local-free-only-command-policy";
+export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "1";
+export const PHASE6_FIXTURE_CWD = "fixtures/phase-06-command-execution";
+
+export const LOCAL_FREE_PERMISSION_RULE_IDS = Object.freeze({
+  askReviewedFixture: "local-free.ask.reviewed-phase6-fixture.v1",
+  denyUnreviewedAction: "local-free.deny.unreviewed-action.v1",
+  denyUnsupportedShape: "local-free.deny.unsupported-command-shape.v1",
+} as const);
+
+export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
+  id: LOCAL_FREE_PERMISSION_POLICY_ID,
+  version: LOCAL_FREE_PERMISSION_POLICY_VERSION,
+  evaluate(
+    action: CommandActionIdentity,
+    context: PermissionContext,
+  ): PolicyDecision {
+    const hardDeny = evaluateHardDeny(action);
+    if (hardDeny !== null) {
+      return hardDeny;
+    }
+
+    if (!isPhase6ReviewedFixtureShape(action)) {
+      return {
+        effect: "deny",
+        reasonCode: "local_free_only_unsupported_command",
+        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.denyUnsupportedShape,
+      };
+    }
+
+    if (!containsReviewedDigest(context, action.actionSha256)) {
+      return {
+        effect: "deny",
+        reasonCode: "fixture_action_not_in_trusted_review_set",
+        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.denyUnreviewedAction,
+      };
+    }
+
+    // PHASE6: An argv review cannot prove what repository code will do transitively.
+    // The local-free gate therefore asks only for content-bound, pre-reviewed offline
+    // fixtures; a user click alone must never authorize an arbitrary or billable script.
+    return {
+      effect: "ask",
+      reasonCode: "reviewed_offline_fixture_requires_user_approval",
+      ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedFixture,
+    };
+  },
+});
+
+export function isPhase6ReviewedFixtureShape(
+  action: CommandActionIdentity,
+): boolean {
+  if (isFixtureNodeCommand(action)) {
+    return true;
+  }
+  return isFixturePackageTestCommand(action);
+}
+
+function isFixtureNodeCommand(action: CommandActionIdentity): boolean {
+  if (
+    action.logicalExecutable !== "node" ||
+    action.argv.length === 0 ||
+    action.packageManager !== null ||
+    action.lifecycleScripts !== null
+  ) {
+    return false;
+  }
+
+  const script = action.argv[0];
+  if (script === undefined || script.startsWith("-")) {
+    return false;
+  }
+  const normalizedScript = script.replaceAll("\\", "/");
+  const supportedExtension = /\.(?:cjs|js|mjs)$/u.test(normalizedScript);
+  if (!supportedExtension || normalizedScript.includes("../")) {
+    return false;
+  }
+
+  if (action.canonicalCwd === PHASE6_FIXTURE_CWD) {
+    return !normalizedScript.startsWith("/");
+  }
+  return (
+    action.canonicalCwd === "." &&
+    normalizedScript.startsWith(`${PHASE6_FIXTURE_CWD}/`)
+  );
+}
+
+function isFixturePackageTestCommand(
+  action: CommandActionIdentity,
+): boolean {
+  if (
+    action.canonicalCwd !== PHASE6_FIXTURE_CWD ||
+    action.packageManager === null ||
+    action.lifecycleScripts === null ||
+    action.lifecycleScripts.scriptName !== "test" ||
+    action.executionInputs.manifestSha256 === null
+  ) {
+    return false;
+  }
+
+  const executable = action.logicalExecutable;
+  if (executable === "pnpm" || executable === "npm") {
+    return (
+      action.packageManager.logicalName === executable &&
+      (arraysEqual(action.argv, ["test"]) ||
+        arraysEqual(action.argv, ["run", "test"]))
+    );
+  }
+
+  if (executable !== "corepack") {
+    return false;
+  }
+  const manager = action.packageManager.logicalName;
+  return (
+    (manager === "pnpm" || manager === "npm") &&
+    (arraysEqual(action.argv, [manager, "test"]) ||
+      arraysEqual(action.argv, [manager, "run", "test"]))
+  );
+}
+
+function containsReviewedDigest(
+  context: PermissionContext,
+  actionSha256: Sha256Hex,
+): boolean {
+  const reviewed = context.reviewedLocalActionSha256;
+  if (reviewed === undefined) {
+    return false;
+  }
+  if (Array.isArray(reviewed)) {
+    return reviewed.includes(actionSha256);
+  }
+  return (reviewed as ReadonlySet<Sha256Hex>).has(actionSha256);
+}
+
+function arraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}

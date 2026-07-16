@@ -12,6 +12,7 @@ const positiveInteger = z.number().int().positive();
 const toolNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u);
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const callIdSchema = z.string().min(1).max(200);
+const stableIdentifierSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/u);
 const utf8StringWithin = (maximumBytes: number) =>
   z
     .string()
@@ -25,6 +26,15 @@ const relativePathSchema = utf8StringWithin(4096).refine(
     !value.includes("\\") &&
     !value.split("/").includes(".."),
   "must be a normalized relative path",
+);
+const relativeCwdSchema = utf8StringWithin(4096).refine(
+  (value) =>
+    value === "." ||
+    (value.length > 0 &&
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..")),
+  "must be a normalized workspace-relative directory",
 );
 const commonEnvelope = {
   // PHASE2: 每种事件共享同一个 envelope，data 才是不同事件的载荷。
@@ -61,7 +71,11 @@ const agentRunStartedDataSchema = z
     command: z.literal("agent"),
     // PHASE5: optional preserves replay of schema v1 Phase 4 sessions; all new agent runs emit it.
     edit_approval: z.enum(["ask", "deny"]).optional(),
+    // PHASE6: command controls stay optional so schema v1 Phase 0-5 JSONL remains replayable.
+    command_approval: z.enum(["ask", "deny"]).optional(),
+    command_timeout_ms: positiveInteger.optional(),
     max_duration_ms: positiveInteger,
+    max_command_output_bytes: positiveInteger.optional(),
     max_steps: positiveInteger,
     max_tokens: positiveInteger,
     max_tool_output_bytes: positiveInteger,
@@ -295,7 +309,8 @@ const toolCallCompletedSchema = z
           ])
           .optional(),
         error_code: z.string().regex(/^[a-z0-9_]+$/u).optional(),
-        output: utf8StringWithin(64 * 1024),
+        // PHASE6: command observations can carry up to 1 MiB plus bounded JSON framing.
+        output: utf8StringWithin(1_114_112),
         retryable: z.boolean().optional(),
         status: z.enum(["error", "success"]),
         step: positiveInteger,
@@ -351,40 +366,92 @@ const patchPlanCreatedSchema = z
   })
   .strict();
 
+const legacyPatchApprovalRequestedDataSchema = z
+  .object({
+    action: z.literal("apply_patch"),
+    // PHASE6: action identity is optional only for legacy Phase 5 records; new producers should emit both fields.
+    action_kind: z.literal("apply_patch").optional(),
+    action_sha256: sha256Schema.optional(),
+    added_lines: nonnegativeInteger,
+    approval_request_id: uuidSchema,
+    call_id: callIdSchema,
+    paths: z.array(patchPathSchema).min(1).max(8),
+    plan_id: sha256Schema,
+    preview: utf8StringWithin(32 * 1024),
+    removed_lines: nonnegativeInteger,
+    step: positiveInteger,
+    truncated: z.boolean(),
+  })
+  .strict();
+
+const commandApprovalRequestedDataSchema = z
+  .object({
+    action: z.literal("run_command"),
+    action_kind: z.literal("run_command"),
+    action_sha256: sha256Schema,
+    approval_request_id: uuidSchema,
+    call_id: callIdSchema,
+    cwd: relativeCwdSchema,
+    executable: stableIdentifierSchema,
+    preview: utf8StringWithin(32 * 1024),
+    purpose: z.enum(["inspect", "verify"]),
+    redacted_argv: z.array(utf8StringWithin(4096)).min(1).max(65),
+    step: positiveInteger,
+    truncated: z.boolean(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.redacted_argv[0] !== value.executable) {
+      context.addIssue({
+        code: "custom",
+        message: "redacted argv must begin with executable",
+      });
+    }
+  });
+
 const approvalRequestedSchema = z
   .object({
     ...commonEnvelope,
-    data: z
-      .object({
-        action: z.literal("apply_patch"),
-        added_lines: nonnegativeInteger,
-        approval_request_id: uuidSchema,
-        call_id: callIdSchema,
-        paths: z.array(patchPathSchema).min(1).max(8),
-        plan_id: sha256Schema,
-        preview: utf8StringWithin(32 * 1024),
-        removed_lines: nonnegativeInteger,
-        step: positiveInteger,
-        truncated: z.boolean(),
-      })
-      .strict(),
+    data: z.discriminatedUnion("action", [
+      legacyPatchApprovalRequestedDataSchema,
+      commandApprovalRequestedDataSchema,
+    ]),
     type: z.literal("approval.requested"),
+  })
+  .strict();
+
+const legacyPatchApprovalDecidedDataSchema = z
+  .object({
+    action: z.literal("apply_patch"),
+    action_kind: z.literal("apply_patch").optional(),
+    action_sha256: sha256Schema.optional(),
+    approval_request_id: uuidSchema,
+    call_id: callIdSchema,
+    decision: z.enum(["approved", "cancelled", "denied"]),
+    plan_id: sha256Schema,
+    step: positiveInteger,
+  })
+  .strict();
+
+const commandApprovalDecidedDataSchema = z
+  .object({
+    action: z.literal("run_command"),
+    action_kind: z.literal("run_command"),
+    action_sha256: sha256Schema,
+    approval_request_id: uuidSchema,
+    call_id: callIdSchema,
+    decision: z.enum(["approved", "cancelled", "denied"]),
+    step: positiveInteger,
   })
   .strict();
 
 const approvalDecidedSchema = z
   .object({
     ...commonEnvelope,
-    data: z
-      .object({
-        action: z.literal("apply_patch"),
-        approval_request_id: uuidSchema,
-        call_id: callIdSchema,
-        decision: z.enum(["approved", "cancelled", "denied"]),
-        plan_id: sha256Schema,
-        step: positiveInteger,
-      })
-      .strict(),
+    data: z.discriminatedUnion("action", [
+      legacyPatchApprovalDecidedDataSchema,
+      commandApprovalDecidedDataSchema,
+    ]),
     type: z.literal("approval.decided"),
   })
   .strict();
@@ -437,6 +504,165 @@ const patchApplyCompletedSchema = z
   })
   .strict();
 
+const permissionEvaluatedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        action_kind: z.literal("run_command"),
+        action_sha256: sha256Schema,
+        call_id: callIdSchema,
+        effect: z.enum(["allow", "ask", "deny"]),
+        policy_version: stableIdentifierSchema,
+        reason_code: stableIdentifierSchema.optional(),
+        rule_id: stableIdentifierSchema,
+        step: positiveInteger,
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          (value.effect === "allow" && value.reason_code !== undefined) ||
+          (value.effect !== "allow" && value.reason_code === undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "permission reason_code does not match effect",
+          });
+        }
+      }),
+    type: z.literal("permission.evaluated"),
+  })
+  .strict();
+
+const commandEventIdentity = {
+  action_sha256: sha256Schema,
+  call_id: callIdSchema,
+  execution_id: uuidSchema,
+  executor: z.literal("local"),
+  step: positiveInteger,
+};
+
+const commandExecutionRequestedSchema = z
+  // PHASE6: this persisted request is the final audit boundary before spawn; its identity never uses a display string.
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...commandEventIdentity,
+        approval_request_id: uuidSchema.optional(),
+        cwd: relativeCwdSchema,
+        executable: stableIdentifierSchema,
+        purpose: z.enum(["inspect", "verify"]),
+        redacted_argv: z.array(utf8StringWithin(4096)).min(1).max(65),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.redacted_argv[0] !== value.executable) {
+          context.addIssue({
+            code: "custom",
+            message: "redacted argv must begin with executable",
+          });
+        }
+      }),
+    type: z.literal("command.execution.requested"),
+  })
+  .strict();
+
+const commandStartedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...commandEventIdentity,
+        process_identity: utf8StringWithin(200).optional(),
+      })
+      .strict(),
+    type: z.literal("command.started"),
+  })
+  .strict();
+
+const commandOutputSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...commandEventIdentity,
+        bytes: positiveInteger,
+        channel: z.enum(["stdout", "stderr"]),
+        chunk: utf8StringWithin(32 * 1024).refine(
+          (value) => value.length > 0,
+          "command output chunk must not be empty",
+        ),
+        chunk_index: nonnegativeInteger,
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.bytes !== Buffer.byteLength(value.chunk, "utf8")) {
+          context.addIssue({
+            code: "custom",
+            message: "command output bytes do not match chunk",
+          });
+        }
+      }),
+    type: z.literal("command.output"),
+  })
+  .strict();
+
+const commandCompletedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...commandEventIdentity,
+        cleanup_verified: z.boolean(),
+        duration_ms: nonnegativeInteger,
+        error_code: stableIdentifierSchema.optional(),
+        exit_code: z.number().int().nullable(),
+        signal: utf8StringWithin(128).nullable(),
+        stderr_bytes: nonnegativeInteger,
+        stdout_bytes: nonnegativeInteger,
+        termination: z.enum([
+          "exit",
+          "signal",
+          "spawn_error",
+          "timeout",
+          "output_limit_exceeded",
+          "cancelled",
+          "cleanup_failed",
+        ]),
+        total_bytes: nonnegativeInteger,
+        truncated: z.boolean(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.total_bytes !== value.stdout_bytes + value.stderr_bytes) {
+          context.addIssue({
+            code: "custom",
+            message: "command total_bytes do not match channel bytes",
+          });
+        }
+        const exitShape = value.exit_code !== null && value.signal === null;
+        const signalShape = value.exit_code === null && value.signal !== null;
+        const conflictingObservedTermination =
+          value.exit_code !== null && value.signal !== null;
+        if (
+          (value.termination === "exit" && !exitShape) ||
+          (value.termination === "signal" && !signalShape) ||
+          (value.termination !== "exit" &&
+            value.termination !== "signal" &&
+            conflictingObservedTermination)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message:
+              "command exit_code/signal do not match first-cause termination",
+          });
+        }
+      }),
+    type: z.literal("command.completed"),
+  })
+  .strict();
+
 export const runEventSchema = z.discriminatedUnion("type", [
   // PHASE2: type 是判别字段。解析成功后，TypeScript 能依据 event.type 自动缩小 data 类型。
   runStartedSchema,
@@ -452,6 +678,11 @@ export const runEventSchema = z.discriminatedUnion("type", [
   approvalDecidedSchema,
   patchApplyStartedSchema,
   patchApplyCompletedSchema,
+  permissionEvaluatedSchema,
+  commandExecutionRequestedSchema,
+  commandStartedSchema,
+  commandOutputSchema,
+  commandCompletedSchema,
   runCompletedSchema,
   runFailedSchema,
   runCancelledSchema,

@@ -43,8 +43,20 @@ export async function runCli(
       "file edit approval: ask or deny",
     )
     .option(
+      "--command-approval <mode>",
+      "command approval: ask or deny",
+    )
+    .option(
+      "--command-timeout-ms <milliseconds>",
+      "default timeout for an approved command",
+    )
+    .option(
       "--max-tool-output-bytes <bytes>",
       "cumulative UTF-8 tool observation budget",
+    )
+    .option(
+      "--max-command-output-bytes <bytes>",
+      "combined stdout/stderr capture budget",
     )
     .option("--verbose", "write step and budget metadata to stderr", false)
     .addHelpText(
@@ -55,8 +67,11 @@ export async function runCli(
       async (
         task: string,
         options: {
+          commandApproval?: string;
+          commandTimeoutMs?: string;
           editApproval?: string;
           maxDurationMs?: string;
+          maxCommandOutputBytes?: string;
           maxSteps?: string;
           maxTokens?: string;
           maxToolOutputBytes?: string;
@@ -68,8 +83,11 @@ export async function runCli(
       ) => {
         commandExitCode = await executeAgent(
           {
+            commandApproval: options.commandApproval,
+            commandTimeoutMs: options.commandTimeoutMs,
             editApproval: options.editApproval,
             maxDurationMs: options.maxDurationMs,
+            maxCommandOutputBytes: options.maxCommandOutputBytes,
             maxSteps: options.maxSteps,
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
