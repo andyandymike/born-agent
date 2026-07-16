@@ -1,0 +1,181 @@
+import { runAgentLoop } from "../agent/agent-loop.js";
+import { resolveAgentConfig } from "../agent/agent-config.js";
+import type {
+  AgentCommandOptions,
+  AgentExitCode,
+  ResolvedAgentConfig,
+} from "../agent/agent-types.js";
+import { BudgetTracker } from "../agent/budget-tracker.js";
+import type { ChatClientConfiguration } from "../chat/types.js";
+import type { CliIO, CliRuntime } from "../cli/types.js";
+import {
+  EventPersistenceError,
+  EventPublisher,
+} from "../events/event-publisher.js";
+import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
+import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+
+function clientConfiguration(
+  config: ResolvedAgentConfig,
+  env: Readonly<Record<string, string | undefined>>,
+): ChatClientConfiguration | { readonly error: string } {
+  if (config.provider === "openai") {
+    const apiKey = env.OPENAI_API_KEY?.trim();
+    return apiKey
+      ? { apiKey, provider: "openai" }
+      : { error: "OPENAI_API_KEY is not configured" };
+  }
+  return config.ollamaBaseURL === undefined
+    ? { error: "internal protocol error" }
+    : { baseURL: config.ollamaBaseURL, provider: "ollama" };
+}
+
+export async function executeAgent(
+  options: AgentCommandOptions,
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<AgentExitCode> {
+  // PHASE4: 命令边界负责配置、真实资源装配和关闭；循环策略全部下沉到 runAgentLoop。
+  const renderer = new ConsoleEventRenderer(io, options.verbose);
+  const configResult = resolveAgentConfig(options, runtime.env);
+  if (!configResult.ok) {
+    renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
+    return 2;
+  }
+  const config = configResult.value;
+  const connection = clientConfiguration(config, runtime.env);
+  if ("error" in connection) {
+    renderer.renderDiagnostic(connection.error);
+    return connection.error === "OPENAI_API_KEY is not configured" ? 4 : 1;
+  }
+
+  const sessionId = runtime.randomUUID();
+  const runId = runtime.randomUUID();
+  let writer: SessionWriter;
+  try {
+    writer = await runtime.createSessionWriter(runtime.cwd, sessionId);
+  } catch {
+    renderer.renderStorageError();
+    return 1;
+  }
+
+  const publisher = new EventPublisher({
+    // PHASE4: 一个 agent run 仍使用一个 session/run id，所有 step 和工具事件共享同一审计流。
+    randomUUID: runtime.randomUUID,
+    renderer,
+    runId,
+    sessionId,
+    timestamp: runtime.timestamp,
+    writer,
+  });
+  const startedAt = runtime.now();
+  const budget = new BudgetTracker(config, runtime, startedAt);
+  const userController = new AbortController();
+  // PHASE4: CLI 的 SIGINT 只转成用户 signal；AgentLoop 再负责映射 run.cancelled/130。
+  const stopListening = runtime.onCancel(() => userController.abort());
+  let exitCode: AgentExitCode;
+
+  try {
+    // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
+    await publisher.publish({
+      data: {
+        command: "agent",
+        input: { role: "user", text: config.task },
+        max_duration_ms: config.maxDurationMs,
+        max_steps: config.maxSteps,
+        max_tokens: config.maxTokens,
+        max_tool_output_bytes: config.maxToolOutputBytes,
+        model: config.model,
+        provider: config.provider,
+        request_timeout_ms: config.requestTimeoutMs,
+        tools: ["list_files", "read_file", "search"],
+        tools_enabled: true,
+        workspace: runtime.cwd,
+      },
+      type: "run.started",
+    });
+    const tools = await runtime.createToolRegistry(runtime.cwd, [
+      runtime.env.OPENAI_API_KEY,
+    ]);
+    const model = runtime.createModelTurnClient(connection);
+    const terminal = await runAgentLoop(
+      config.task,
+      config,
+      {
+        budget,
+        clock: runtime,
+        model,
+        modelId: config.model,
+        publisher,
+        secrets: [runtime.env.OPENAI_API_KEY],
+        tools,
+      },
+      userController.signal,
+    );
+    exitCode = terminal.exitCode;
+  } catch (error) {
+    // PHASE4: EventPersistenceError 表示 writer 已不可信，不能尝试再补 terminal event。
+    const wasUserCancelled = userController.signal.aborted;
+    if (!wasUserCancelled) userController.abort();
+    if (error instanceof EventPersistenceError) {
+      renderer.renderStorageError();
+      exitCode = 1;
+    } else if (wasUserCancelled) {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            duration_ms: snapshot.elapsedMs,
+            output_chars: publisher.outputLength,
+            reason: "user",
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.cancelled",
+        });
+        exitCode = 130;
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
+        } else {
+          renderer.renderDiagnostic("internal protocol error");
+        }
+        exitCode = 1;
+      }
+    } else {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            category: "internal",
+            code: "internal_error",
+            duration_ms: snapshot.elapsedMs,
+            message: "internal protocol error",
+            output_chars: publisher.outputLength,
+            retryable: false,
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.failed",
+        });
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
+        } else {
+          renderer.renderDiagnostic("internal protocol error");
+        }
+      }
+      exitCode = 1;
+    }
+  } finally {
+    stopListening();
+  }
+
+  try {
+    await writer.close();
+  } catch {
+    renderer.renderStorageError();
+    return 1;
+  }
+  return exitCode;
+}

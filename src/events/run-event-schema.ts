@@ -28,23 +28,42 @@ const commonEnvelope = {
   timestamp: timestampSchema,
 };
 
+const inputSchema = z
+  .object({ role: z.literal("user"), text: z.string() })
+  .strict();
+const commonRunStartedData = {
+  input: inputSchema,
+  model: z.string().min(1),
+  provider: z.enum(["openai", "ollama"]),
+  tools: z.array(toolNameSchema).optional(),
+  tools_enabled: z.boolean().optional(),
+  workspace: z.string().min(1),
+};
+const chatRunStartedDataSchema = z
+  .object({
+    ...commonRunStartedData,
+    command: z.literal("chat"),
+    timeout_ms: nonnegativeInteger,
+  })
+  .strict();
+const agentRunStartedDataSchema = z
+  .object({
+    ...commonRunStartedData,
+    command: z.literal("agent"),
+    max_duration_ms: positiveInteger,
+    max_steps: positiveInteger,
+    max_tokens: positiveInteger,
+    max_tool_output_bytes: positiveInteger,
+    request_timeout_ms: positiveInteger,
+  })
+  .strict();
 const runStartedSchema = z
   .object({
     ...commonEnvelope,
-    data: z
-      .object({
-        command: z.literal("chat"),
-        input: z
-          .object({ role: z.literal("user"), text: z.string() })
-          .strict(),
-        model: z.string().min(1),
-        provider: z.enum(["openai", "ollama"]),
-        timeout_ms: nonnegativeInteger,
-        tools: z.array(toolNameSchema).optional(),
-        tools_enabled: z.boolean().optional(),
-        workspace: z.string().min(1),
-      })
-      .strict(),
+    data: z.discriminatedUnion("command", [
+      chatRunStartedDataSchema,
+      agentRunStartedDataSchema,
+    ]),
     type: z.literal("run.started"),
   })
   .strict();
@@ -74,6 +93,71 @@ const usageSchema = z
   })
   .strict();
 
+const agentStepStartedSchema = z
+  // PHASE4: step.started 记录本步输入来源和动作前剩余预算，是“允许发起模型请求”的审计点。
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        input_kind: z.enum(["user_task", "tool_result"]),
+        max_steps: positiveInteger,
+        remaining_duration_ms: nonnegativeInteger,
+        remaining_tokens: nonnegativeInteger,
+        remaining_tool_output_bytes: nonnegativeInteger,
+        step: positiveInteger,
+      })
+      .strict(),
+    type: z.literal("agent.step.started"),
+  })
+  .strict();
+
+const modelUsageSchema = z
+  // PHASE4: 每个 step 单独记录 provider usage，run 级 usage 只能由这些事件精确聚合。
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        cached_input_tokens: nonnegativeInteger.optional(),
+        input_tokens: nonnegativeInteger,
+        output_tokens: nonnegativeInteger,
+        provider_response_id: z.string().min(1).optional(),
+        step: positiveInteger,
+        total_tokens: nonnegativeInteger,
+      })
+      .strict(),
+    type: z.literal("model.usage"),
+  })
+  .strict();
+
+const agentStepCompletedSchema = z
+  // PHASE4: outcome 区分“继续执行工具”与“得到 final”，tool_call outcome 必须绑定 call_id。
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        duration_ms: nonnegativeInteger,
+        outcome: z.enum(["final", "tool_call"]),
+        provider_response_id: z.string().min(1).optional(),
+        step: positiveInteger,
+        text_chars: nonnegativeInteger,
+        tool_call_id: z.string().min(1).max(200).optional(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          (value.outcome === "tool_call" && value.tool_call_id === undefined) ||
+          (value.outcome === "final" && value.tool_call_id !== undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "tool_call_id does not match step outcome",
+          });
+        }
+      }),
+    type: z.literal("agent.step.completed"),
+  })
+  .strict();
+
 const runCompletedSchema = z
   .object({
     ...commonEnvelope,
@@ -83,6 +167,7 @@ const runCompletedSchema = z
         model_turns: positiveInteger.optional(),
         output_chars: nonnegativeInteger,
         provider_response_id: z.string().min(1).optional(),
+        steps: positiveInteger.optional(),
         tool_calls: nonnegativeInteger.optional(),
       })
       .strict(),
@@ -109,8 +194,11 @@ const runFailedSchema = z
         code: z.string().regex(/^[a-z0-9_]+$/u),
         duration_ms: nonnegativeInteger,
         message: z.string().min(1).max(500),
+        output_chars: nonnegativeInteger.optional(),
         provider_request_id: z.string().min(1).optional(),
         retryable: z.boolean(),
+        steps: nonnegativeInteger.optional(),
+        tool_calls: nonnegativeInteger.optional(),
       })
       .strict(),
     type: z.literal("run.failed"),
@@ -123,7 +211,10 @@ const runCancelledSchema = z
     data: z
       .object({
         duration_ms: nonnegativeInteger,
+        output_chars: nonnegativeInteger.optional(),
         reason: z.literal("user"),
+        steps: nonnegativeInteger.optional(),
+        tool_calls: nonnegativeInteger.optional(),
       })
       .strict(),
     type: z.literal("run.cancelled"),
@@ -131,12 +222,14 @@ const runCancelledSchema = z
   .strict();
 
 const toolCallRequestedSchema = z
+  // PHASE3: requested 保存模型实际提出的 call_id/name/原始 arguments 证据，但不代表已获准执行。
   .object({
     ...commonEnvelope,
     data: z
       .object({
         arguments_json: utf8StringWithin(16 * 1024),
         call_id: z.string().min(1).max(200),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
         provider_response_id: z.string().min(1).optional(),
         step: positiveInteger,
         tool_name: toolNameSchema,
@@ -146,7 +239,33 @@ const toolCallRequestedSchema = z
   })
   .strict();
 
+const runBudgetExceededSchema = z
+  // PHASE4: budget terminal 保存 reason/limit/observed，使停止原因能从 JSONL 独立验证。
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        duration_ms: nonnegativeInteger,
+        limit: positiveInteger,
+        observed: nonnegativeInteger,
+        output_chars: nonnegativeInteger,
+        reason: z.enum([
+          "max_steps",
+          "max_duration",
+          "max_tokens",
+          "max_tool_output",
+          "repeated_tool_call",
+        ]),
+        steps: nonnegativeInteger,
+        tool_calls: nonnegativeInteger,
+      })
+      .strict(),
+    type: z.literal("run.budget_exceeded"),
+  })
+  .strict();
+
 const toolCallCompletedSchema = z
+  // PHASE3: completed 保存实际 observation；output 就是随后交给模型的同一字符串。
   .object({
     ...commonEnvelope,
     data: z
@@ -174,6 +293,7 @@ const toolCallCompletedSchema = z
       })
       .strict()
       .superRefine((value, context) => {
+        // PHASE3: success 不得混入错误字段；error 必须完整携带稳定分类、code 和 retryable。
         const errorFields = [
           value.error_category,
           value.error_code,
@@ -197,10 +317,14 @@ export const runEventSchema = z.discriminatedUnion("type", [
   // PHASE2: type 是判别字段。解析成功后，TypeScript 能依据 event.type 自动缩小 data 类型。
   runStartedSchema,
   textDeltaSchema,
+  agentStepStartedSchema,
+  modelUsageSchema,
+  agentStepCompletedSchema,
   usageSchema,
   toolCallRequestedSchema,
   toolCallCompletedSchema,
   runCompletedSchema,
   runFailedSchema,
   runCancelledSchema,
+  runBudgetExceededSchema,
 ]);

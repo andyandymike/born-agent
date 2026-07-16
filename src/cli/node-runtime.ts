@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
 import { OpenAIStreamingChatClient } from "../providers/openai/openai-streaming-chat-client.js";
@@ -34,11 +35,14 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             providerName: "Ollama",
           }),
     cwd: options.cwd,
+    // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。
     createToolRegistry: createReadonlyToolRegistry,
     env: options.env,
     isReadableDirectory,
     nodeVersion: options.nodeVersion,
-    now: Date.now,
+    // PHASE4: duration budgets use a monotonic clock so wall-clock adjustments cannot
+    // accidentally extend or prematurely exhaust a run; timestamps remain UTC wall time.
+    now: () => performance.now(),
     onCancel: options.onCancel,
     platform: options.platform,
     randomUUID,

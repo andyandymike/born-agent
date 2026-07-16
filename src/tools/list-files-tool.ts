@@ -35,6 +35,7 @@ export function createListFilesTool(
   runner: RipgrepRunnerLike,
   sensitive = new SensitivePathPolicy(),
 ): ToolDefinition<ListFilesInput> {
+  // PHASE3: list_files 复用 rg --files，因此遵守仓库 ignore 规则，也不自行无限递归目录树。
   return {
     description:
       "List files inside the workspace using repository ignore rules. path and glob must be null when unused.",
@@ -91,6 +92,7 @@ export function createListFilesTool(
       const files = result.lines
         .map((path) => path.replaceAll("\\", "/").replace(/^\.\//u, ""))
         .filter((path) => !sensitive.isDenied(path))
+        // PHASE3: ordinal 排序让相同工作区产生稳定输出，减少模型和测试中的随机差异。
         .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
       let truncated = result.truncated;
       while (files.length > 0 && !fitsToolOutput({ files, truncated: true })) {

@@ -60,6 +60,7 @@ export interface StreamingChatRuntime {
 }
 
 interface CompletedTurn {
+  // PHASE3: consumeModelTurn 只汇总一个回合；是否结束整个 run 由外层固定状态机决定。
   readonly call?: ModelToolCall;
   readonly continuation: ModelContinuation;
   readonly kind: "completed";
@@ -185,6 +186,7 @@ async function consumeModelTurn(
         }
         break;
       case "tool_call":
+        // PHASE3: 本阶段最多接受一个完整 tool call；发现第二个时一个也不执行。
         if (call !== undefined) {
           return {
             error: protocolFailure(
@@ -211,6 +213,7 @@ async function consumeModelTurn(
       case "failed":
         return { error: signal.error, kind: "failed" };
       case "turn_completed":
+        // PHASE3: 只有 provider 明确完成回合后才把 tool call 和 continuation 交给外层。
         return {
           ...(call === undefined ? {} : { call }),
           continuation: signal.continuation,
@@ -240,6 +243,8 @@ function aggregateUsage(usages: readonly (ChatUsage | undefined)[]):
       readonly usageIncomplete: boolean;
     }
   | undefined {
+  // PHASE3: 两个 model turn 的 usage 汇总为一个 RunEvent；缺少某回合数据时标记 incomplete，
+  // 不把未知 token 数伪造成 0。
   const known = usages.filter((usage) => usage !== undefined);
   if (known.length === 0) {
     return undefined;
@@ -351,6 +356,8 @@ async function runFixedToolRoundTrip(
   startedAt: number,
   cancellationReason: () => CancellationReason | undefined,
 ): Promise<StreamingChatExitCode> {
+  // PHASE3 状态机：first turn -> (直接回答 | 一个工具) -> second turn -> terminal。
+  // 这里刻意没有 while；通用 AgentLoop、step budget 和重复调用检测属于 Phase 4。
   const first = await consumeModelTurn(
     client,
     {
@@ -382,6 +389,7 @@ async function runFixedToolRoundTrip(
     return publishProviderFailure(first.error, publisher, runtime, startedAt);
   }
   if (first.call === undefined) {
+    // PHASE3: 模型没有请求工具时，退化成单回合流式聊天路径。
     if (!first.sawNonWhitespaceText) {
       return publishProviderFailure(
         protocolFailure("empty_model_output", "provider completed without text"),
@@ -409,6 +417,8 @@ async function runFixedToolRoundTrip(
   }
 
   const secrets = [runtime.env.OPENAI_API_KEY];
+  // PHASE3: 必须等第一回合完整结束后才记录并执行 tool call。
+  // requested 先持久化，保证 session 中存在模型确实提出过该调用的证据。
   await publisher.publish({
     data: {
       arguments_json: redactSensitiveText(first.call.argumentsJson, secrets),
@@ -423,6 +433,7 @@ async function runFixedToolRoundTrip(
   });
 
   const toolStartedAt = runtime.now();
+  // PHASE3: 模型只能“请求”工具；参数验证、权限判定和真正执行权都在 Registry。
   const execution = await tools.execute(
     {
       argumentsJson: first.call.argumentsJson,
@@ -443,6 +454,7 @@ async function runFixedToolRoundTrip(
   }
 
   await publisher.publish(
+    // PHASE3: tool result 先 persist，再进入第二个 model turn；模型不会看到未落盘的 observation。
     toolCompletedDraft(
       first.call,
       execution,
@@ -450,6 +462,8 @@ async function runFixedToolRoundTrip(
     ),
   );
   if (!execution.ok && execution.error.category === "system") {
+    // PHASE3: permission/not_found 等可反馈错误交给模型解释；system 错误表示工具基础设施失效，
+    // 直接终止 run，不伪装成正常 observation。
     await publisher.publish({
       data: {
         category: "internal",
@@ -476,6 +490,7 @@ async function runFixedToolRoundTrip(
       model: config.model,
       timeoutMs: config.timeoutMs,
       tools: [],
+      // PHASE3: 第二回合不再提供工具定义，以机械方式限制最多一次工具执行。
     },
     controller,
     publisher,
@@ -496,6 +511,7 @@ async function runFixedToolRoundTrip(
     return publishProviderFailure(second.error, publisher, runtime, startedAt);
   }
   if (second.call !== undefined) {
+    // PHASE3: 即便 provider 在无 tools 的请求中仍返回 function call，也明确以 round limit 失败。
     return publishProviderFailure(
       protocolFailure(
         "tool_round_limit",

@@ -1,5 +1,6 @@
 import { Command, CommanderError } from "commander";
 
+import { executeAgent } from "../commands/agent.js";
 import { executeChat } from "../commands/chat.js";
 import { executeDoctor } from "../commands/doctor.js";
 import type { CliIO, CliRuntime } from "./types.js";
@@ -23,6 +24,62 @@ export async function runCli(
   let commandExitCode = 0;
 
   program
+    .command("agent")
+    // PHASE4: agent 是独立命令；chat 继续保留 Phase 3 的最多一次工具往返，避免语义偷换。
+    .description("Run a budgeted read-only AgentLoop over the workspace.")
+    .argument("<task>", "repository task to answer; do not paste API keys")
+    .option("--provider <provider>", "model provider: openai or ollama")
+    .option("--model <model>", "override the provider model")
+    .option("--max-steps <steps>", "maximum model responses")
+    // PHASE4: max-duration 覆盖整次 run，request-timeout 只覆盖一轮 provider response。
+    .option("--max-duration-ms <milliseconds>", "whole-run wall clock budget")
+    .option(
+      "--request-timeout-ms <milliseconds>",
+      "timeout for each provider request",
+    )
+    .option("--max-tokens <tokens>", "maximum reported total tokens")
+    .option(
+      "--max-tool-output-bytes <bytes>",
+      "cumulative UTF-8 tool observation budget",
+    )
+    .option("--verbose", "write step and budget metadata to stderr", false)
+    .addHelpText(
+      "after",
+      "\nSecurity: tasks and allowed tool observations are saved locally in .bornagent/sessions; do not paste secrets.\n",
+    )
+    .action(
+      async (
+        task: string,
+        options: {
+          maxDurationMs?: string;
+          maxSteps?: string;
+          maxTokens?: string;
+          maxToolOutputBytes?: string;
+          model?: string;
+          provider?: string;
+          requestTimeoutMs?: string;
+          verbose: boolean;
+        },
+      ) => {
+        commandExitCode = await executeAgent(
+          {
+            maxDurationMs: options.maxDurationMs,
+            maxSteps: options.maxSteps,
+            maxTokens: options.maxTokens,
+            maxToolOutputBytes: options.maxToolOutputBytes,
+            model: options.model,
+            provider: options.provider,
+            requestTimeoutMs: options.requestTimeoutMs,
+            task,
+            verbose: options.verbose,
+          },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  program
     .command("chat")
     .description("Stream a response with at most one read-only tool call.")
     .argument("<prompt>", "text prompt to send; do not paste API keys")
@@ -30,6 +87,7 @@ export async function runCli(
     .option("--model <model>", "override the provider model")
     .option("--timeout-ms <milliseconds>", "request timeout in milliseconds")
     .option("--no-tools", "disable read-only workspace tools")
+    // PHASE3: Commander 对 --no-tools 生成 options.tools=false；默认则为 true。
     .option("--verbose", "write response metadata to stderr", false)
     .addHelpText(
       "after",

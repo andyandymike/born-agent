@@ -61,6 +61,7 @@ interface RipgrepMatchLine {
 }
 
 function parseMatch(line: string) {
+  // PHASE3: 解析 rg --json 的机器协议，不依赖易变的彩色人类输出格式。
   let parsed: RipgrepMatchLine;
   try {
     parsed = JSON.parse(line) as RipgrepMatchLine;
@@ -89,6 +90,7 @@ export function createSearchTool(
   runner: RipgrepRunnerLike,
   sensitive = new SensitivePathPolicy(),
 ): ToolDefinition<SearchInput> {
+  // PHASE3: search 只组装固定 rg argv，不拼接 shell 字符串；query 永远只是一个参数值。
   return {
     description:
       "Search workspace text with ripgrep. mode is literal or regex; path and glob must be null when unused.",
@@ -107,6 +109,7 @@ export function createSearchTool(
         ...(input.mode === "literal" ? ["--fixed-strings"] : []),
         ...(input.glob === null ? [] : ["--glob", input.glob]),
         ...SENSITIVE_GLOBS.flatMap((glob) => ["--glob", glob]),
+        // PHASE3: `--` 终止 option 解析，模型给出的 query 即使以 `-` 开头也不能变成 rg 选项。
         "--",
         input.query,
         directory.value.relativePath,
@@ -160,6 +163,7 @@ export function createSearchTool(
         .map(parseMatch)
         .filter((match) => match !== undefined && !sensitive.isDenied(match.path));
       let truncated = result.truncated;
+      // PHASE3: 子进程捕获上限之后再对最终 JSON 做第二次上限检查，只按完整 match 删除尾项。
       while (
         matches.length > 0 &&
         !fitsToolOutput({ matches, truncated: true })

@@ -61,6 +61,8 @@ const createOpenAISdk: OpenAIStreamingSdkFactory = (options) => {
 };
 
 class OpenAIContinuation extends ModelContinuation {
+  // PHASE3: 私有 input 保存第一次 response 的完整 output items（包括 reasoning/function_call）。
+  // 它只在当前进程中使用，不进入 BornAgent RunEvent 或 JSONL。
   readonly #input: readonly ResponseInputItem[];
 
   constructor(input: readonly ResponseInputItem[]) {
@@ -149,6 +151,7 @@ function readToolCall(value: unknown): ModelToolCall | undefined {
 }
 
 function modelTools(request: ModelTurnRequest): FunctionTool[] {
+  // PHASE3: 将 Registry 导出的 provider-neutral 定义翻译成 OpenAI function tools。
   return request.tools.map((tool) => ({
     description: tool.description,
     name: tool.name,
@@ -162,6 +165,8 @@ function requestInput(request: ModelTurnRequest): {
   readonly bodyInput: NonNullable<ResponseCreateParamsStreaming["input"]>;
   readonly continuationInput: readonly ResponseInputItem[];
 } {
+  // PHASE3/4: 第一次请求直接发送 prompt；每个后续请求重放 opaque continuation，
+  // 再追加与原 call_id 配对的 function_call_output。
   if (request.input.kind === "user_prompt") {
     return {
       bodyInput: request.input.text,
@@ -241,6 +246,8 @@ export class OpenAIStreamingChatClient implements ModelTurnClient {
         { readonly argumentsJson: string; readonly name?: string }
       >();
       let streamedToolCall: ModelToolCall | undefined;
+      // PHASE3: arguments 可能经 delta、arguments.done 和最终 output item 三条路径到达；
+      // adapter 会交叉核对，内容不一致时 fail closed，避免执行不确定参数。
 
       for await (const event of events) {
         if (signal.aborted) {
@@ -291,6 +298,8 @@ export class OpenAIStreamingChatClient implements ModelTurnClient {
               return;
             }
             streamedToolCall = call;
+            // PHASE3: 只在拿到完整 function_call item 后产生 tool_call signal，
+            // orchestration 仍会等待 response.completed 才真正执行。
             yield { call, type: "tool_call" };
             break;
           }
@@ -333,6 +342,7 @@ export class OpenAIStreamingChatClient implements ModelTurnClient {
               yield { type: "usage", usage };
             }
             yield {
+              // PHASE3: continuation 包含本回合全部 input/output；核心层只能把它原样用于第二回合。
               continuation: new OpenAIContinuation([
                 ...input.continuationInput,
                 ...(output as ResponseInputItem[]),

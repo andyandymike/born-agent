@@ -31,6 +31,34 @@ export class ConsoleEventRenderer implements RunEventRenderer {
         this.hasOutput = true;
         this.outputEndsWithNewline = event.data.delta.endsWith("\n");
         return;
+      case "agent.step.started":
+        // PHASE4: verbose 只显示预算元数据；默认 stdout 仍只包含模型文本。
+        if (this.verbose) {
+          this.io.stderr.write(
+            `step=${event.data.step}/${event.data.max_steps} started input=${event.data.input_kind} remaining_duration_ms=${event.data.remaining_duration_ms} remaining_tokens=${event.data.remaining_tokens} remaining_tool_output_bytes=${event.data.remaining_tool_output_bytes}\n`,
+          );
+        }
+        return;
+      case "model.usage":
+        // PHASE4: step usage 与末尾聚合 usage 分开显示，便于定位哪一步消耗异常。
+        if (this.verbose) {
+          const cached =
+            event.data.cached_input_tokens === undefined
+              ? ""
+              : ` cached_input_tokens=${event.data.cached_input_tokens}`;
+          this.io.stderr.write(
+            `step=${event.data.step} input_tokens=${event.data.input_tokens} output_tokens=${event.data.output_tokens} total_tokens=${event.data.total_tokens}${cached}\n`,
+          );
+        }
+        return;
+      case "agent.step.completed":
+        // PHASE4: outcome=tool_call 表示 run 继续；outcome=final 才可能进入成功终态。
+        if (this.verbose) {
+          this.io.stderr.write(
+            `step=${event.data.step} outcome=${event.data.outcome} duration_ms=${event.data.duration_ms} text_chars=${event.data.text_chars}\n`,
+          );
+        }
+        return;
       case "usage":
         if (this.verbose) {
           const cached =
@@ -43,11 +71,13 @@ export class ConsoleEventRenderer implements RunEventRenderer {
         }
         return;
       case "tool.call.requested":
+        // PHASE3: 默认模式不显示参数；verbose 也只显示工具名，不泄露 prompt 派生内容。
         if (this.verbose) {
           this.io.stderr.write(`tool=${event.data.tool_name} requested\n`);
         }
         return;
       case "tool.call.completed":
+        // PHASE3: 工具正文只进入受控 session/模型上下文，终端元数据仅显示状态与耗时。
         if (this.verbose) {
           this.io.stderr.write(
             `tool=${event.data.tool_name} status=${event.data.status} duration_ms=${event.data.duration_ms}${event.data.truncated ? " truncated=true" : ""}\n`,
@@ -68,7 +98,7 @@ export class ConsoleEventRenderer implements RunEventRenderer {
               ? ""
               : ` response_id=${oneLine(event.data.provider_response_id)}`;
           this.io.stderr.write(
-            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.tool_calls === undefined ? "" : ` tool_calls=${event.data.tool_calls}`}\n`,
+            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.steps === undefined ? "" : ` steps=${event.data.steps}`}${event.data.tool_calls === undefined ? "" : ` tool_calls=${event.data.tool_calls}`}\n`,
           );
         }
         return;
@@ -79,6 +109,13 @@ export class ConsoleEventRenderer implements RunEventRenderer {
       case "run.cancelled":
         this.ensureOutputLine();
         this.io.stderr.write("Cancelled\n");
+        return;
+      case "run.budget_exceeded":
+        // PHASE4: 预算停止不是 provider/internal error，使用独立、可操作的终端提示。
+        this.ensureOutputLine();
+        this.io.stderr.write(
+          `Agent stopped: ${event.data.reason} reached (${event.data.limit})\n`,
+        );
         return;
     }
   }

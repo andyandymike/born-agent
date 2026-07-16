@@ -47,6 +47,7 @@ function limitLines(
   requestedStart: number,
   requestedEnd: number,
 ): ToolRawResult {
+  // PHASE3: 同时应用 400 行上限和 64 KiB JSON 上限，并只在完整行边界截断。
   const startIndex = Math.min(requestedStart - 1, lines.length);
   const maximumEnd = Math.min(requestedEnd, startIndex + MAX_LINES, lines.length);
   const selected: string[] = [];
@@ -103,6 +104,7 @@ function limitLines(
 export function createReadFileTool(
   paths: WorkspacePathPolicy,
 ): ToolDefinition<ReadFileInput> {
+  // PHASE3: read_file 的顺序是路径策略 -> 文件大小 -> 二进制/UTF-8 -> 行范围 -> 输出上限。
   return {
     description:
       "Read a UTF-8 text file inside the workspace with 1-based line numbers. Use null for an unspecified line bound.",
@@ -138,6 +140,7 @@ export function createReadFileTool(
           };
         }
         if (bytes.includes(0)) {
+          // PHASE3: NUL 是快速二进制信号；随后 fatal TextDecoder 继续拒绝非法 UTF-8。
           return {
             error: toolError(
               "tool",

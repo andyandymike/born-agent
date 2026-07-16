@@ -17,6 +17,7 @@ const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/u;
 function strictJsonSchema<TInput>(
   definition: ToolDefinition<TInput>,
 ): Readonly<Record<string, unknown>> {
+  // PHASE3: 从 Zod 生成 provider schema，避免“模型参数定义”和“本地校验定义”各写一份后漂移。
   const schema = z.toJSONSchema(definition.inputSchema, { target: "draft-7" });
   if (
     schema.type !== "object" ||
@@ -40,6 +41,7 @@ export class ToolRegistry implements ToolRegistryLike {
     definitions: readonly ToolDefinition<unknown>[],
     private readonly secrets: readonly (string | undefined)[] = [],
   ) {
+    // PHASE3: 注册阶段 fail fast：工具名必须稳定合法且不能重复。
     for (const definition of definitions) {
       if (!TOOL_NAME.test(definition.name)) {
         throw new Error(`invalid tool name: ${definition.name}`);
@@ -51,6 +53,7 @@ export class ToolRegistry implements ToolRegistryLike {
     }
 
     this.modelDefinitions = [...this.definitions.values()]
+      // PHASE3: 稳定排序让请求、测试和 session 证据不受注册顺序影响。
       .sort((left, right) => left.name.localeCompare(right.name, "en"))
       .map((definition) => ({
         description: definition.description,
@@ -64,6 +67,8 @@ export class ToolRegistry implements ToolRegistryLike {
     invocation: ToolInvocation,
     signal: AbortSignal,
   ): Promise<ToolExecution> {
+    // PHASE3: 安全执行漏斗：abort -> 字节上限 -> 工具名 -> JSON.parse -> Zod -> executor
+    // -> 统一序列化/脱敏/输出上限。前置检查失败时绝不调用 executor。
     if (signal.aborted) {
       return serializeToolError(
         toolError("cancelled", "tool_cancelled", "tool execution was cancelled"),
@@ -124,6 +129,7 @@ export class ToolRegistry implements ToolRegistryLike {
 
     let result;
     try {
+      // PHASE3: executor 只能看到 Zod 验证后的 input，并共享整个 run 的 AbortSignal。
       result = await definition.execute(parsed.data, { signal });
     } catch {
       result = {
@@ -140,6 +146,7 @@ export class ToolRegistry implements ToolRegistryLike {
     }
 
     const output = redactSensitiveText(
+      // PHASE3: 所有成功结果都由 Registry 统一变成紧凑 JSON，工具本身不手写最终字符串。
       JSON.stringify({ ...result.value, ok: true }),
       this.secrets,
     );

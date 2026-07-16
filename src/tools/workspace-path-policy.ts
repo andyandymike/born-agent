@@ -26,6 +26,8 @@ function hasDriveRelativeRoot(value: string): boolean {
 }
 
 function isContained(root: string, candidate: string): boolean {
+  // PHASE3: 使用 path.relative 做 separator-aware containment；简单 startsWith 会把 repo-other
+  // 错判成 repo 的子目录，也容易受 Windows 分隔符和盘符影响。
   const difference = relative(root, candidate);
   return (
     difference === "" ||
@@ -54,6 +56,7 @@ export class WorkspacePathPolicy {
       readonly sensitive?: SensitivePathPolicy;
     } = {},
   ): Promise<WorkspacePathPolicy> {
+    // PHASE3: 先 canonicalize workspace 根目录，后续所有工具共用同一个可信边界。
     const fileSystem = options.fileSystem ?? nodeFileSystem;
     const workspaceRealPath = await fileSystem.realpath(workspace);
     return new WorkspacePathPolicy(
@@ -75,6 +78,7 @@ export class WorkspacePathPolicy {
     input: string,
     expected: "directory" | "file",
   ): Promise<PathResolution> {
+    // PHASE3: 第一层先拒绝绝对路径、UNC、drive-relative、NUL 等明显越界输入。
     if (
       input.length === 0 ||
       input.includes("\0") ||
@@ -104,6 +108,7 @@ export class WorkspacePathPolicy {
     }
 
     const lexicalPath = resolve(this.workspaceRealPath, input);
+    // PHASE3: 第二层做词法 containment，拦截 ../ 等尚未访问文件系统的逃逸。
     if (!isContained(this.workspaceRealPath, lexicalPath)) {
       return {
         error: toolError(
@@ -117,6 +122,7 @@ export class WorkspacePathPolicy {
 
     let canonicalPath: string;
     try {
+      // PHASE3: realpath 展开 symlink/junction，再做第三层 containment，防止链接指向工作区外。
       canonicalPath = await this.fileSystem.realpath(lexicalPath);
     } catch {
       return {
@@ -137,6 +143,7 @@ export class WorkspacePathPolicy {
     }
 
     const relativePath = portableRelative(this.workspaceRealPath, canonicalPath);
+    // PHASE3: 对 canonical relative path 再查一次敏感策略，避免链接或大小写变化绕过首次检查。
     if (this.sensitive.isDenied(relativePath)) {
       return {
         error: toolError(

@@ -33,6 +33,7 @@ export type SpawnRipgrep = (
 ) => ChildProcessWithoutNullStreams;
 
 const spawnRipgrep: SpawnRipgrep = (args, cwd) =>
+  // PHASE3: 专用 runner 只能启动固定程序 rg，且 shell:false；它不是通用命令执行器。
   spawn("rg", [...args], {
     cwd,
     shell: false,
@@ -68,6 +69,7 @@ export class RipgrepRunner implements RipgrepRunnerLike {
       let settled = false;
 
       const stop = (nextReason: typeof reason) => {
+        // PHASE3: cancel、timeout 或结果上限都会终止子进程；Promise 要等 close 后才结算。
         if (reason === undefined) {
           reason = nextReason;
           child.kill();
@@ -88,6 +90,7 @@ export class RipgrepRunner implements RipgrepRunnerLike {
       };
 
       const acceptLine = (line: string) => {
+        // PHASE3: 在继续积累内存前检查 UTF-8 捕获字节和调用方的行数/match 数预算。
         const lineBytes = Buffer.byteLength(`${line}\n`, "utf8");
         if (capturedBytes + lineBytes > options.maxStdoutBytes) {
           stop("limit");
@@ -113,6 +116,7 @@ export class RipgrepRunner implements RipgrepRunnerLike {
         }
       });
       child.stderr.resume();
+      // PHASE3: 消费但不透传原始 stderr，避免绝对路径、查询片段或系统细节进入用户输出/session。
       child.on("error", (error: NodeJS.ErrnoException) => {
         finish(error.code === "ENOENT" ? { kind: "missing" } : { kind: "failed" });
       });
