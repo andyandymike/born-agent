@@ -238,6 +238,7 @@ export function createApplyPatchTool(
             files: plan.files.map((file) => ({
               kind: file.kind,
               path: file.relativePath,
+              post_sha256: file.postimageSha256,
               pre_sha256:
                 file.kind === "create" ? null : file.preimageSha256,
             })),

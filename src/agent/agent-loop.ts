@@ -14,6 +14,8 @@ import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
 import type { ToolExecution, ToolRegistryLike } from "../tools/tool-types.js";
 import type { CompletionControlSignal } from "../tools/tool-types.js";
+import type { TurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
+import type { RecoveredToolObservation } from "../resume/resume-types.js";
 import type {
   AgentClock,
   AgentLoopConfig,
@@ -41,6 +43,18 @@ interface ModelToolCall {
   readonly name: string;
 }
 
+export interface InheritedAgentCall {
+  readonly argumentsJson: string;
+  readonly callId: string;
+  readonly checkpointId: string;
+  readonly continuation: BackendContinuation;
+  readonly providerResponseId: string | null;
+  readonly recovered: RecoveredToolObservation | null;
+  readonly sourceRunId: string;
+  readonly step: number;
+  readonly toolName: string;
+}
+
 type TurnResult =
   | CompletedTurn
   | { readonly error: ProviderFailure; readonly kind: "failed" }
@@ -52,7 +66,10 @@ export interface AgentLoopDeps {
   readonly budget: BudgetTracker;
   readonly clock: AgentClock;
   readonly instructions?: string;
+  readonly initialInput?: ModelTurnInput;
+  readonly inheritedCall?: InheritedAgentCall;
   readonly model: ModelBackend;
+  readonly persistTurnBoundary?: TurnBoundaryRecorder;
   readonly publisher: EventPublisher;
   readonly renderCompletionReport?: (
     report: string,
@@ -251,7 +268,9 @@ export async function runAgentLoop(
   let runAbortReason: RunAbortReason | undefined;
   let aggregateUsagePublished = false;
   // PHASE4: 第一步消费 user task；每次工具完成后改为携带 continuation 的 tool_result。
-  let pendingInput: ModelTurnInput = { kind: "user_prompt", text: task };
+  let pendingInput: ModelTurnInput =
+    deps.initialInput ?? { kind: "user_prompt", text: task };
+  let firstInputKind: "inherited_tool_result" | "user_task" = "user_task";
   let lastProviderResponseId: string | undefined;
 
   const abortRun = (reason: RunAbortReason) => {
@@ -465,6 +484,156 @@ export async function runAgentLoop(
   };
 
   try {
+    if (deps.inheritedCall !== undefined) {
+      const inherited = deps.inheritedCall;
+      const call: ModelToolCall = {
+        argumentsJson: inherited.argumentsJson,
+        callId: inherited.callId,
+        name: inherited.toolName,
+      };
+      await publisher.adoptPendingCall(
+        {
+          call_id: inherited.callId,
+          checkpoint_id: inherited.checkpointId,
+          source_call_id: inherited.callId,
+          source_run_id: inherited.sourceRunId,
+          step: inherited.step,
+          tool_name: inherited.toolName,
+        },
+        inherited.argumentsJson,
+      );
+      const inheritedStartedAt = clock.now();
+      let execution: ToolExecution;
+      if (inherited.recovered === null) {
+        // PHASE9: adoption restores call identity, never authority. A pending
+        // patch/command therefore traverses the current registry, permission
+        // policy, and a newly persisted approval before any side effect.
+        execution = await deps.tools.execute(
+          {
+            argumentsJson: inherited.argumentsJson,
+            callId: inherited.callId,
+            name: inherited.toolName,
+            step: inherited.step,
+          },
+          runController.signal,
+        );
+      } else {
+        execution = inherited.recovered.status === "success"
+          ? {
+              ok: true,
+              output: inherited.recovered.output,
+              truncated: inherited.recovered.truncated,
+            }
+          : {
+              error: {
+                category: inherited.recovered.errorCategory ?? "system",
+                code: inherited.recovered.errorCode ?? "recovered_tool_error",
+                message: "recovered durable tool result",
+                retryable: inherited.recovered.retryable ?? false,
+              },
+              ok: false,
+              output: inherited.recovered.output,
+              truncated: inherited.recovered.truncated,
+            };
+        await publisher.recoverAdoptedCall({
+          call_id: inherited.callId,
+          duration_ms: 0,
+          ...(execution.ok
+            ? {}
+            : {
+                error_category: execution.error.category,
+                error_code: execution.error.code,
+                retryable: execution.error.retryable,
+              }),
+          output: execution.output,
+          source_run_id: inherited.sourceRunId,
+          status: execution.ok ? "success" : "error",
+          step: inherited.step,
+          tool_name: inherited.toolName,
+          truncated: execution.truncated,
+        });
+      }
+      await publisher.publish({
+        data: toolCompletedData(
+          call,
+          execution,
+          inherited.step,
+          Math.max(0, Math.round(clock.now() - inheritedStartedAt)),
+        ),
+        type: "tool.call.completed",
+      });
+      if (runAbortReason === "user") return await publishCancelled();
+      if (runAbortReason === "max_duration") {
+        return await publishBudget({
+          limit: config.maxDurationMs,
+          observed: budget.elapsedMs(),
+          reason: "max_duration",
+        });
+      }
+      const control = execution.control;
+      if (control !== undefined && inherited.toolName !== "finish_task") {
+        return await publishInternalFailure(
+          "unexpected_tool_control",
+          "a non-control tool returned a completion signal",
+        );
+      }
+      if (!execution.ok && execution.error.category === "system") {
+        return await publishInternalFailure(
+          execution.error.code,
+          execution.error.message,
+          execution.error.retryable,
+        );
+      }
+      if (inherited.toolName === "finish_task" && control === undefined) {
+        return await publishInternalFailure(
+          "missing_completion_control",
+          "finish_task did not return a completion decision",
+        );
+      }
+      if (control?.effect === "accept") {
+        await publishAggregateUsage();
+        await publisher.publish({
+          data: {
+            completion_mode: "verified_finish_task",
+            duration_ms: budget.elapsedMs(),
+            evidence_sha256: control.evidenceSha256,
+            model_turns: 0,
+            output_chars: publisher.outputLength,
+            report_sha256: control.reportSha256,
+            steps: 0,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.completed",
+        });
+        deps.renderCompletionReport?.(
+          reportFormat === "json" ? control.reportJson : control.reportText,
+          "completed",
+        );
+        return { exitCode: 0, type: "completed" };
+      }
+      if (control?.effect === "incomplete") {
+        return await publishIncomplete(control.reason as CompletionReason, control);
+      }
+      if (!execution.ok && execution.error.category === "cancelled") {
+        return await publishInternalFailure(
+          "unexpected_tool_cancellation",
+          "tool execution was cancelled without a run cancellation reason",
+        );
+      }
+      budget.recordToolOutput(execution.output);
+      const inheritedOutputBudget = budget.checkAfterToolOutput();
+      if (inheritedOutputBudget !== undefined) {
+        return await publishBudget(inheritedOutputBudget);
+      }
+      pendingInput = {
+        callId: inherited.callId,
+        continuation: inherited.continuation,
+        kind: "tool_result",
+        output: execution.output,
+      };
+      firstInputKind = "inherited_tool_result";
+    }
+
     // PHASE4: 真正的 Agent Loop。唯一正常退出是 final answer；其余路径都发布明确 terminal。
     while (true) {
       if (runAbortReason === "user") return await publishCancelled();
@@ -485,7 +654,7 @@ export async function runAgentLoop(
       // PHASE4: step.started 在模型请求前持久化；写盘失败时该请求不会发生。
       await publisher.publish({
         data: {
-          input_kind: step === 1 ? "user_task" : "tool_result",
+          input_kind: step === 1 ? firstInputKind : "tool_result",
           max_steps: config.maxSteps,
           remaining_duration_ms: remaining.durationMs,
           remaining_tokens: remaining.tokens,
@@ -622,6 +791,13 @@ export async function runAgentLoop(
       }
 
       if (turn.call === undefined) {
+        await deps.persistTurnBoundary?.({
+          continuation: turn.continuation,
+          pendingCall: false,
+          runId: publisher.runId,
+          sessionId: publisher.sessionId,
+          turn: step,
+        });
         // PHASE4: 无 tool call + 非空文本才是 final；单纯 response completed 不足以完成 run。
         if (!turn.sawNonWhitespaceText) {
           return await publishFailure(
@@ -703,6 +879,16 @@ export async function runAgentLoop(
           tool_name: turn.call.name,
         },
         type: "tool.call.requested",
+      });
+      // PHASE9: persist the continuation/boundary only after the complete tool
+      // request is durable, but before permission, approval, or execution. A
+      // storage failure therefore cannot leave an unrecorded side effect.
+      await deps.persistTurnBoundary?.({
+        continuation: turn.continuation,
+        pendingCall: true,
+        runId: publisher.runId,
+        sessionId: publisher.sessionId,
+        turn: step,
       });
       // PHASE4: requested 成为审计事实后，仅剩重复策略决定是否执行真实工具。
 

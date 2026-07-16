@@ -1,4 +1,7 @@
-import { runAgentLoop } from "../agent/agent-loop.js";
+import {
+  runAgentLoop,
+  type InheritedAgentCall,
+} from "../agent/agent-loop.js";
 import { resolveAgentConfig } from "../agent/agent-config.js";
 import type {
   AgentCommandOptions,
@@ -18,20 +21,51 @@ import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
 import {
   BackendPreflightError,
 } from "../model/backend-factory.js";
-import type { ModelBackend } from "../model/model-backend.js";
+import type {
+  BackendContinuation,
+  ModelBackend,
+} from "../model/model-backend.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import { FatalToolExecutionError } from "../tools/tool-types.js";
+import { buildWorkspaceResumeFingerprint } from "../resume/workspace-resume-fingerprint-builder.js";
+import {
+  persistWorkspaceResumeFingerprint,
+  type WorkspaceResumeFingerprint,
+  workspaceResumeFingerprintSha256,
+} from "../resume/workspace-resume-fingerprint.js";
+
+export interface ResumedAgentExecution {
+  readonly backend: ModelBackend;
+  readonly continuation: BackendContinuation | null;
+  readonly fingerprint: WorkspaceResumeFingerprint;
+  readonly inheritedCall: InheritedAgentCall | null;
+  readonly mode: "canonical_degraded" | "exact";
+  readonly modelTask: string;
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly sourceRunId: string;
+  readonly writer: SessionWriter;
+}
+
+async function closeResumedWriter(
+  execution: ResumedAgentExecution | undefined,
+): Promise<void> {
+  await execution?.writer.close().catch(() => undefined);
+}
 
 export async function executeAgent(
   options: AgentCommandOptions,
   runtime: CliRuntime,
   io: CliIO,
+  resumedExecution?: ResumedAgentExecution,
 ): Promise<AgentExitCode> {
   // PHASE4: 命令边界负责配置、真实资源装配和关闭；循环策略全部下沉到 runAgentLoop。
   const renderer = new ConsoleEventRenderer(io, options.verbose);
   const configResult = resolveAgentConfig(options, runtime.env);
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
+    await closeResumedWriter(resumedExecution);
     return 2;
   }
   const config = configResult.value;
@@ -39,19 +73,30 @@ export async function executeAgent(
   try {
     // PHASE8: factory preflight freezes one provider/model and proves required
     // tools, complete usage and cancellation before a session or request exists.
-    backend = runtime.createModelBackend({
-      ...(config.ollamaBaseURL === undefined
-        ? {}
-        : { endpoint: config.ollamaBaseURL }),
-      model: config.model,
-      provider: config.provider,
-      requirement: {
-        cancellation: true,
-        completeUsageForReportedTokenCeiling: true,
-        streaming: true,
-        tools: true,
-      },
-    });
+    backend =
+      resumedExecution?.backend ??
+      runtime.createModelBackend({
+        ...(config.ollamaBaseURL === undefined
+          ? {}
+          : { endpoint: config.ollamaBaseURL }),
+        model: config.model,
+        provider: config.provider,
+        requirement: {
+          cancellation: true,
+          completeUsageForReportedTokenCeiling: true,
+          streaming: true,
+          tools: true,
+        },
+      });
+    if (
+      backend.identity.model !== config.model ||
+      backend.identity.provider !== config.provider
+    ) {
+      throw new BackendPreflightError(
+        "configuration_model_unknown",
+        "preselected resume backend does not match the persisted provider/model",
+      );
+    }
   } catch (error) {
     if (
       error instanceof BackendPreflightError ||
@@ -60,9 +105,11 @@ export async function executeAgent(
         error.exitCode === 2)
     ) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      await closeResumedWriter(resumedExecution);
       return 2;
     }
     renderer.renderDiagnostic("internal protocol error");
+    await closeResumedWriter(resumedExecution);
     return 1;
   }
   const modelEvidence = runtime.agentModelEvidence(config.provider);
@@ -70,13 +117,31 @@ export async function executeAgent(
     renderer.renderDiagnostic(
       "usage/config error: coding profile requires a deterministic fake backend or literal-loopback Ollama",
     );
+    await closeResumedWriter(resumedExecution);
     return 2;
   }
-  const sessionId = runtime.randomUUID();
-  const runId = runtime.randomUUID();
+  const sessionId = resumedExecution?.sessionId ?? runtime.randomUUID();
+  const runId = resumedExecution?.runId ?? runtime.randomUUID();
+  let workspaceResumeFingerprint = resumedExecution?.fingerprint;
+  if (workspaceResumeFingerprint === undefined) {
+    try {
+      workspaceResumeFingerprint = await buildWorkspaceResumeFingerprint({
+        backend,
+        config,
+        platform: runtime.platform,
+        workspace: runtime.cwd,
+      });
+    } catch {
+      // A run remains useful when Git/source-state metadata is unavailable, but
+      // the missing optional proof deliberately makes a later resume fail closed.
+      workspaceResumeFingerprint = undefined;
+    }
+  }
   let writer: SessionWriter;
   try {
-    writer = await runtime.createSessionWriter(runtime.cwd, sessionId);
+    writer =
+      resumedExecution?.writer ??
+      (await runtime.createSessionWriter(runtime.cwd, sessionId));
   } catch {
     renderer.renderStorageError();
     return 1;
@@ -115,6 +180,12 @@ export async function executeAgent(
         max_tool_output_bytes: config.maxToolOutputBytes,
         model: config.model,
         provider: config.provider,
+        ...(resumedExecution === undefined
+          ? {}
+          : {
+              resume_mode: resumedExecution.mode,
+              resume_of_run_id: resumedExecution.sourceRunId,
+            }),
         report_format: config.reportFormat,
         require_verification: config.requireVerification,
         request_timeout_ms: config.requestTimeoutMs,
@@ -132,6 +203,15 @@ export async function executeAgent(
               ],
         tools_enabled: true,
         workspace: runtime.cwd,
+        ...(workspaceResumeFingerprint === undefined
+          ? {}
+          : {
+              workspace_fingerprint: workspaceResumeFingerprintSha256(
+                workspaceResumeFingerprint,
+              ),
+              workspace_resume_fingerprint:
+                persistWorkspaceResumeFingerprint(workspaceResumeFingerprint),
+            }),
       },
       type: "run.started",
     });
@@ -140,9 +220,16 @@ export async function executeAgent(
         adapter: backend.identity.adapter,
         adapter_version: backend.identity.adapterVersion,
         capabilities: backend.capabilities,
+        ...(backend.resume.capability === "exact_checkpoint"
+          ? {
+              checkpoint_codec_version:
+                backend.resume.checkpointCodec.codecVersion,
+            }
+          : {}),
         config_fingerprint: backend.identity.configFingerprint,
         model: backend.identity.model,
         provider: backend.identity.provider,
+        resume_capability: backend.resume.capability,
       },
       type: "backend.selected",
     });
@@ -171,8 +258,16 @@ export async function executeAgent(
       timestamp: runtime.timestamp,
       workspace: runtime.cwd,
     });
+    const turnBoundaryRecorder = createTurnBoundaryRecorder(
+      writer,
+      backend,
+      runtime.cwd,
+      runtime.createCheckpointStore === undefined
+        ? {}
+        : { createCheckpointStore: runtime.createCheckpointStore },
+    );
     const terminal = await runAgentLoop(
-      config.task,
+      resumedExecution?.modelTask ?? config.task,
       config,
       {
         budget,
@@ -182,6 +277,25 @@ export async function executeAgent(
             ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
             : AGENT_SYSTEM_INSTRUCTIONS,
         model: backend,
+        ...(resumedExecution?.inheritedCall !== null &&
+        resumedExecution?.inheritedCall !== undefined
+          ? { inheritedCall: resumedExecution.inheritedCall }
+          : resumedExecution?.mode === "exact"
+          ? {
+              initialInput: {
+                continuation:
+                  resumedExecution.continuation ??
+                  (() => {
+                    throw new TypeError("exact resume requires a decoded checkpoint");
+                  })(),
+                kind: "resume_prompt" as const,
+                text: resumedExecution.modelTask,
+              },
+            }
+          : {}),
+        ...(turnBoundaryRecorder === undefined
+          ? {}
+          : { persistTurnBoundary: turnBoundaryRecorder }),
         publisher,
         renderCompletionReport: (report, terminal) =>
           terminal === "completed"

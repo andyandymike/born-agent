@@ -2,8 +2,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 
-import { readSession } from "../dist/sessions/read-session.js";
-import { reconstructSession } from "../dist/sessions/reconstruct-session.js";
+import { readStoredSession } from "../dist/sessions/read-stored-session.js";
+import { reconstructMultiRunSession } from "../dist/sessions/reconstruct-multi-run-session.js";
 
 async function latestSession(workspace) {
   const directory = resolve(workspace, ".bornagent", "sessions");
@@ -36,16 +36,24 @@ if (/Authorization\s*:\s*Bearer\s+\S+/iu.test(raw) || /\bsk-[A-Za-z0-9_-]{8,}/u.
   throw new Error("session contains token-like secret text");
 }
 
-const events = await readSession(path);
-const reconstructed = reconstructSession(events);
-const usage = reconstructed.usage;
+const events = await readStoredSession(path);
+const reconstructed = reconstructMultiRunSession(events);
+const usage = [...reconstructed.lastRun.events]
+  .reverse()
+  .find((event) => event.type === "usage");
+const outputChars = reconstructed.lastRun.events
+  .filter((event) => event.type === "text.delta")
+  .reduce((count, event) => count + event.data.delta.length, 0);
 process.stdout.write(
   [
     `session=${path}`,
     `events=${events.length}`,
-    `terminal=${reconstructed.terminal.type}`,
-    `output_chars=${reconstructed.output.length}`,
-    usage === undefined ? "usage=absent" : `total_tokens=${usage.total_tokens}`,
+    `runs=${reconstructed.runs.length}`,
+    `terminal=${reconstructed.lastRun.terminal?.type ?? "interrupted"}`,
+    `output_chars=${outputChars}`,
+    usage === undefined
+      ? "usage=absent"
+      : `total_tokens=${usage.data.total_tokens}`,
     "validation=ok",
   ].join(" ") + "\n",
 );

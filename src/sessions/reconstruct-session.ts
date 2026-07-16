@@ -236,7 +236,9 @@ function applyFilesMatch(
         result !== undefined &&
         entry.kind === result.kind &&
         entry.path === result.path &&
-        entry.pre_sha256 === result.pre_sha256
+        entry.pre_sha256 === result.pre_sha256 &&
+        (entry.post_sha256 === undefined ||
+          entry.post_sha256 === result.post_sha256)
       );
     })
   );
@@ -364,7 +366,15 @@ function validateBudgetTerminal(
   }
 }
 
-export function reconstructSession(events: readonly RunEvent[]): ReconstructedRun {
+export interface ReconstructSessionOptions {
+  readonly inheritedCallIds?: ReadonlySet<string>;
+  readonly recoveredCallIds?: ReadonlySet<string>;
+}
+
+export function reconstructSession(
+  events: readonly RunEvent[],
+  options: ReconstructSessionOptions = {},
+): ReconstructedRun {
   // PHASE4: 重建器是独立于在线 Publisher 的第二道验证；它只根据 JSONL 重建 step DAG、
   // 工具 observation 是否被消费、usage 聚合和最终停止原因。
   if (events.length === 0) throw new Error("session is empty");
@@ -432,7 +442,21 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         throw new Error("agent steps must be continuous and non-overlapping");
       }
       if (event.data.step === 1) {
-        if (event.data.input_kind !== "user_task") {
+        if (event.data.input_kind === "inherited_tool_result") {
+          const completedInherited = [...(options.inheritedCallIds ?? [])]
+            .map((callId) => tools.get(callId))
+            .filter((call) => call?.completed !== undefined);
+          if (
+            first.data.resume_mode !== "exact" ||
+            completedInherited.length !== 1
+          ) {
+            throw new Error(
+              "inherited tool_result step lacks one completed adopted call",
+            );
+          }
+          const inherited = completedInherited[0];
+          if (inherited !== undefined) inherited.consumedByModel = true;
+        } else if (event.data.input_kind !== "user_task") {
           throw new Error("first agent step must consume user_task");
         }
       } else {
@@ -517,7 +541,10 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       usage = event.data;
     } else if (event.type === "tool.call.requested") {
       if (tools.has(event.data.call_id)) throw new Error("duplicate tool call id");
-      if (first.data.command === "agent") {
+      if (
+        first.data.command === "agent" &&
+        !options.inheritedCallIds?.has(event.data.call_id)
+      ) {
         const step = steps[event.data.step - 1];
         if (
           step?.completed?.outcome !== "tool_call" ||
@@ -541,9 +568,11 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         throw new Error("tool result does not match one pending tool call");
       }
       const patchAttempt = patchAttempts.get(event.data.call_id);
+      const recovered = options.recoveredCallIds?.has(event.data.call_id) === true;
       if (
         event.data.tool_name === "apply_patch" &&
         event.data.status === "success" &&
+        !recovered &&
         patchAttempt?.applyCompleted === undefined
       ) {
         throw new Error("successful apply_patch lacks completed apply evidence");
@@ -563,6 +592,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       const commandAttempt = commandAttempts.get(event.data.call_id);
       if (
         event.data.tool_name === "run_command" &&
+        !recovered &&
         commandAttempt === undefined &&
         !isPreExecutionToolError(event.data)
       ) {
@@ -583,11 +613,12 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       if (
         event.data.tool_name === "run_command" &&
         event.data.status === "success" &&
+        !recovered &&
         commandAttempt?.completed === undefined
       ) {
         throw new Error("successful run_command lacks completed command evidence");
       }
-      if (event.data.tool_name === "finish_task") {
+      if (event.data.tool_name === "finish_task" && !recovered) {
         const completion = completionCandidates.get(event.data.call_id);
         const effect = completion?.evaluated?.effect;
         if (completion?.evaluated === undefined) {

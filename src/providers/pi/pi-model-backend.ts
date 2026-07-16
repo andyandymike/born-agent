@@ -77,6 +77,10 @@ function assertIdentity(identity: BackendIdentity): void {
 export class PiModelBackend implements ModelBackend {
   readonly capabilities: ModelCapabilities;
   readonly identity: BackendIdentity;
+  readonly resume = Object.freeze({
+    capability: "canonical_only",
+    supportsCanonicalDegradedResume: true,
+  } as const);
   readonly #owner: PiContinuationOwner = Object.freeze({});
   readonly #runtime: PiRuntimePort;
 
@@ -100,9 +104,17 @@ export class PiModelBackend implements ModelBackend {
     try {
       runtimeRequest = {
         identity: this.identity,
-        input:
-          request.input.kind === "user_prompt"
-            ? request.input
+        input: request.input.kind === "user_prompt"
+          ? request.input
+          : request.input.kind === "resume_prompt"
+            ? {
+                continuation: unwrapPiContinuation(
+                  request.input.continuation,
+                  this.#owner,
+                ),
+                kind: "resume_prompt" as const,
+                text: request.input.text,
+              }
             : {
                 callId: request.input.callId,
                 continuation: unwrapPiContinuation(

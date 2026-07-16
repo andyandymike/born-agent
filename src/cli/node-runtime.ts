@@ -19,7 +19,7 @@ import { PermissionEngine } from "../permissions/permission-engine.js";
 import { localFreeOnlyPermissionPolicy } from "../permissions/local-free-policy.js";
 import { createTrustedLocalFixturePermissionContext } from "../permissions/trusted-local-fixture-manifest.js";
 import { createProductionBackendFactory } from "../model/backend-factory.js";
-import { JsonlSessionWriter } from "../sessions/jsonl-session-writer.js";
+import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
@@ -124,7 +124,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         verificationClassifier: classifyTrustedFixtureVerification,
       });
     },
-    createSessionWriter: JsonlSessionWriter.create,
+    createSessionWriter: V2SessionWriter.create,
     createModelBackend: (request) => backendFactory.create(request),
     cwd: options.cwd,
     // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。

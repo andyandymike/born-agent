@@ -17,6 +17,9 @@ import {
   samePaths,
 } from "../completion/completion-evidence-bindings.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import type {
+  Phase9RunEventData,
+} from "./stored-event-v2.js";
 
 export interface RunEventRenderer {
   render(event: RunEvent): Promise<void> | void;
@@ -74,6 +77,7 @@ interface PatchApplyState extends PatchPlanState {
   readonly approvalRequestId: string;
   completed: boolean;
   completedData?: Extract<RunEvent, { type: "patch.apply.completed" }>["data"];
+  readonly files: Extract<RunEvent, { type: "patch.apply.started" }>["data"]["files"];
 }
 
 interface PermissionState {
@@ -142,6 +146,38 @@ function isPreExecutionToolError(
         REGISTRY_PRE_EXECUTION_ERROR_CODES.has(data.error_code)));
 }
 
+function recoveredCompletionMatches(
+  recovered: Phase9RunEventData<"tool.call.recovered">,
+  completed: Extract<RunEvent, { type: "tool.call.completed" }>["data"],
+): boolean {
+  return (
+    recovered.call_id === completed.call_id &&
+    recovered.error_category === completed.error_category &&
+    recovered.error_code === completed.error_code &&
+    recovered.output === completed.output &&
+    recovered.retryable === completed.retryable &&
+    recovered.status === completed.status &&
+    recovered.step === completed.step &&
+    recovered.tool_name === completed.tool_name &&
+    recovered.truncated === completed.truncated
+  );
+}
+
+function patchCompletionMatchesStarted(
+  started: Extract<RunEvent, { type: "patch.apply.started" }>["data"]["files"],
+  completed: Extract<RunEvent, { type: "patch.apply.completed" }>["data"]["files"],
+): boolean {
+  return started.length === completed.length && started.every((expected, index) => {
+    const actual = completed[index];
+    return actual !== undefined &&
+      actual.kind === expected.kind &&
+      actual.path === expected.path &&
+      actual.pre_sha256 === expected.pre_sha256 &&
+      (expected.post_sha256 === undefined ||
+        actual.post_sha256 === expected.post_sha256);
+  });
+}
+
 function finishArgumentsMatch(
   argumentsJson: string,
   candidate: Extract<RunEvent, { type: "completion.candidate" }>["data"],
@@ -164,6 +200,7 @@ function finishArgumentsMatch(
 
 export class EventPublisher {
   private activeAgentStep: number | undefined;
+  private readonly adoptedCalls = new Set<string>();
   private readonly approvals = new Map<string, ApprovalState>();
   private readonly agentSteps = new Map<number, AgentStepState>();
   private command: "agent" | "chat" | undefined;
@@ -186,6 +223,14 @@ export class EventPublisher {
   private readonly patchApplies = new Map<string, PatchApplyState>();
   private readonly patchPlans = new Map<string, PatchPlanState>();
   private readonly permissions = new Map<string, PermissionState>();
+  private readonly recoveredCalls = new Set<string>();
+  private readonly recoveredCallData = new Map<
+    string,
+    Phase9RunEventData<"tool.call.recovered">
+  >();
+  private resumeMode: "canonical_degraded" | "exact" | undefined;
+  private resumeOfRunId: string | undefined;
+  private readonly persistedEvents: RunEvent[] = [];
   private readonly verifications = new Map<string, VerificationState>();
   private usagePublished = false;
   private verificationGeneration = 0;
@@ -196,12 +241,27 @@ export class EventPublisher {
     return this.outputChars;
   }
 
+  get runId(): string {
+    return this.options.runId;
+  }
+
+  get sessionId(): string {
+    return this.options.sessionId;
+  }
+
   get completedToolCalls(): number {
     return [...this.toolCalls.values()].filter((call) => call.completed).length;
   }
 
   get startedAgentSteps(): number {
     return this.agentSteps.size;
+  }
+
+  get events(): readonly RunEvent[] {
+    // PHASE9: online canonical-boundary hashing may inspect only events that
+    // have crossed the writer's durable boundary. Returning a copy prevents a
+    // checkpoint hook from mutating the publisher state machine.
+    return [...this.persistedEvents];
   }
 
   async publish(draft: RunEventDraft): Promise<RunEvent> {
@@ -225,8 +285,72 @@ export class EventPublisher {
       throw new EventPersistenceError(error);
     }
     this.applyTransition(event);
+    this.persistedEvents.push(event);
     await this.options.renderer.render(event);
     return event;
+  }
+
+  async adoptPendingCall(
+    data: Phase9RunEventData<"resume.pending_call.adopted">,
+    argumentsJson: string,
+  ): Promise<void> {
+    if (
+      !this.started ||
+      this.backendSelected?.resume_capability !== "exact_checkpoint" ||
+      this.resumeMode !== "exact" ||
+      this.resumeOfRunId !== data.source_run_id ||
+      this.agentSteps.size !== 0 ||
+      this.toolCalls.has(data.call_id) ||
+      this.options.writer.appendRunEvent === undefined
+    ) {
+      throw new Error("pending call adoption is not valid for this run");
+    }
+    try {
+      await this.options.writer.appendRunEvent(
+        this.options.runId,
+        "resume.pending_call.adopted",
+        data,
+      );
+    } catch (error) {
+      throw new EventPersistenceError(error);
+    }
+    // PHASE9: adoption is the new run's request-side pairing fact. It enters
+    // the same in-memory tool state only after its v2 event is durable, so an
+    // outer observation can never precede adoption or trigger a second model call.
+    this.toolCalls.set(data.call_id, {
+      argumentsJson,
+      completed: false,
+      name: data.tool_name,
+      step: data.step,
+    });
+    this.adoptedCalls.add(data.call_id);
+  }
+
+  async recoverAdoptedCall(
+    data: Phase9RunEventData<"tool.call.recovered">,
+  ): Promise<void> {
+    const call = this.toolCalls.get(data.call_id);
+    if (
+      call === undefined ||
+      call.completed ||
+      call.name !== data.tool_name ||
+      call.step !== data.step ||
+      this.recoveredCalls.has(data.call_id) ||
+      this.options.writer.appendRunEvent === undefined
+    ) {
+      throw new Error("recovered result does not match an adopted call");
+    }
+    try {
+      await this.options.writer.appendRunEvent(
+        this.options.runId,
+        "tool.call.recovered",
+        data,
+      );
+    } catch (error) {
+      throw new EventPersistenceError(error);
+    }
+    this.recoveredCalls.add(data.call_id);
+    this.recoveredCallData.set(data.call_id, data);
   }
 
   private validateTransition(draft: RunEventDraft): void {
@@ -306,6 +430,7 @@ export class EventPublisher {
     }
     if (draft.type === "tool.call.completed") {
       const requested = this.toolCalls.get(draft.data.call_id);
+      const recovered = this.recoveredCalls.has(draft.data.call_id);
       if (
         requested === undefined ||
         requested.completed ||
@@ -314,9 +439,17 @@ export class EventPublisher {
       ) {
         throw new Error("tool result must match one pending tool call");
       }
+      const recoveredData = this.recoveredCallData.get(draft.data.call_id);
+      if (
+        recoveredData !== undefined &&
+        !recoveredCompletionMatches(recoveredData, draft.data)
+      ) {
+        throw new Error("tool result must match its recovered observation");
+      }
       if (
         requested.name === "apply_patch" &&
         draft.data.status === "success" &&
+        !recovered &&
         this.patchApplies.get(draft.data.call_id)?.completed !== true
       ) {
         throw new Error("successful apply_patch result requires completed apply evidence");
@@ -329,6 +462,7 @@ export class EventPublisher {
           : this.commandExecutions.get(executionId);
       if (
         requested.name === "run_command" &&
+        !recovered &&
         permission === undefined &&
         !isPreExecutionToolError(draft.data)
       ) {
@@ -336,6 +470,7 @@ export class EventPublisher {
       }
       if (
         requested.name === "run_command" &&
+        !recovered &&
         permission?.effect === "ask" &&
         ![...this.approvals.values()].some(
           (approval) =>
@@ -355,12 +490,13 @@ export class EventPublisher {
       }
       if (
         requested.name === "run_command" &&
+        !recovered &&
         draft.data.status === "success" &&
         (execution?.completed !== true || execution.cleanupVerified !== true)
       ) {
         throw new Error("successful run_command result requires completed command evidence");
       }
-      if (requested.name === "finish_task") {
+      if (requested.name === "finish_task" && !recovered) {
         const completion = this.completionCandidates.get(draft.data.call_id);
         const effect = completion?.evaluated?.effect;
         if (completion?.evaluated === undefined) {
@@ -440,8 +576,22 @@ export class EventPublisher {
       if (this.activeAgentStep !== undefined || draft.data.step !== expected) {
         throw new Error(`agent step must start at ${expected}`);
       }
-      if (draft.data.step === 1 && draft.data.input_kind !== "user_task") {
-        throw new Error("first agent step must consume the user task");
+      if (draft.data.step === 1) {
+        const inheritedReady = [...this.adoptedCalls].some(
+          (callId) => this.toolCalls.get(callId)?.completed === true,
+        );
+        if (
+          draft.data.input_kind !== "user_task" &&
+          !(
+            draft.data.input_kind === "inherited_tool_result" &&
+            this.resumeMode === "exact" &&
+            inheritedReady
+          )
+        ) {
+          throw new Error(
+            "first agent step must consume the user task or an adopted tool result",
+          );
+        }
       }
       if (draft.data.step > 1) {
         // PHASE4: 后续 step 必须消费前一步已持久化完成的工具 observation。
@@ -623,7 +773,8 @@ export class EventPublisher {
         apply.completed ||
         apply.approvalRequestId !== draft.data.approval_request_id ||
         apply.planId !== draft.data.plan_id ||
-        apply.step !== draft.data.step
+        apply.step !== draft.data.step ||
+        !patchCompletionMatchesStarted(apply.files, draft.data.files)
       ) {
         throw new Error("patch completion must match one started apply");
       }
@@ -1132,6 +1283,8 @@ export class EventPublisher {
       this.command = event.data.command;
       this.startedModel = event.data.model;
       this.startedProvider = event.data.provider;
+      this.resumeMode = event.data.resume_mode;
+      this.resumeOfRunId = event.data.resume_of_run_id;
       if (event.data.command === "agent") {
         this.taskProfile = event.data.task_profile ?? "read-only";
         this.taskProfileExplicit = event.data.task_profile !== undefined;
@@ -1206,6 +1359,7 @@ export class EventPublisher {
         approvalRequestId: event.data.approval_request_id,
         callId: event.data.call_id,
         completed: false,
+        files: event.data.files,
         planId: event.data.plan_id,
         step: event.data.step,
       });

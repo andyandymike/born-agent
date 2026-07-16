@@ -66,6 +66,33 @@ const commonEnvelope = {
 const inputSchema = z
   .object({ role: z.literal("user"), text: z.string() })
   .strict();
+const workspaceResumeFingerprintSchema = z
+  .object({
+    backend: z
+      .object({
+        adapter: z.string().min(1).max(200),
+        adapter_version: z.string().min(1).max(200),
+        config_fingerprint: sha256Schema,
+        model: z.string().min(1),
+        provider: providerIdSchema,
+      })
+      .strict(),
+    canonical_root_identity: sha256Schema,
+    checkpoint_codec_version: stableIdentifierSchema.nullable(),
+    completion_schema_sha256: sha256Schema,
+    policy_sha256: sha256Schema,
+    source_state: z
+      .object({
+        git_head_sha256: sha256Schema,
+        git_index_sha256: sha256Schema,
+        source_state_sha256: sha256Schema,
+      })
+      .strict(),
+    system_instructions_sha256: sha256Schema,
+    task_profile: z.enum(["read-only", "coding"]),
+    tool_schema_sha256: sha256Schema,
+  })
+  .strict();
 const commonRunStartedData = {
   input: inputSchema,
   model: z.string().min(1),
@@ -75,6 +102,13 @@ const commonRunStartedData = {
   tools: z.array(toolNameSchema).optional(),
   tools_enabled: z.boolean().optional(),
   workspace: z.string().min(1),
+  // PHASE9: a resumed CLI process is a new run. These optional fields preserve
+  // strict v1 replay while letting v2 storage explain which earlier run and
+  // explicitly selected resume mode produced the new run.
+  resume_mode: z.enum(["exact", "canonical_degraded"]).optional(),
+  resume_of_run_id: uuidSchema.optional(),
+  workspace_fingerprint: sha256Schema.optional(),
+  workspace_resume_fingerprint: workspaceResumeFingerprintSchema.optional(),
 };
 const chatRunStartedDataSchema = z
   .object({
@@ -135,8 +169,14 @@ const backendSelectedSchema = z
         adapter_version: z.string().min(1).max(200),
         capabilities: backendCapabilitiesSchema,
         config_fingerprint: sha256Schema,
+        checkpoint_codec_version: stableIdentifierSchema.optional(),
         model: z.string().min(1),
         provider: providerIdSchema,
+        // PHASE9: capability is persisted rather than inferred from an adapter
+        // name. Missing remains legal only for historical Phase 0-8 sessions.
+        resume_capability: z
+          .enum(["exact_checkpoint", "canonical_only", "none"])
+          .optional(),
       })
       .strict(),
     type: z.literal("backend.selected"),
@@ -180,7 +220,11 @@ const agentStepStartedSchema = z
     ...commonEnvelope,
     data: z
       .object({
-        input_kind: z.enum(["user_task", "tool_result"]),
+        input_kind: z.enum([
+          "inherited_tool_result",
+          "user_task",
+          "tool_result",
+        ]),
         max_steps: positiveInteger,
         remaining_duration_ms: nonnegativeInteger,
         remaining_tokens: nonnegativeInteger,
@@ -619,6 +663,10 @@ const patchApplyFileStartedSchema = z
   .object({
     kind: z.enum(["create", "modify"]),
     path: relativePathSchema,
+    // PHASE9: the predicted postimage hash is durable before mutation. Without
+    // it, a crash after apply cannot distinguish an applied patch from unknown
+    // third-party bytes. Optional keeps historical schema-v1 logs readable.
+    post_sha256: sha256Schema.optional(),
     pre_sha256: sha256Schema.nullable(),
   })
   .strict();

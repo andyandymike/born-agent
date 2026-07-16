@@ -4,6 +4,11 @@ import { executeAgent } from "../commands/agent.js";
 import { executeChat } from "../commands/chat.js";
 import { executeDoctor } from "../commands/doctor.js";
 import { executeModels } from "../commands/models.js";
+import {
+  executeSessionsList,
+  executeSessionsResume,
+  executeSessionsShow,
+} from "../commands/sessions.js";
 import type { CliIO, CliRuntime } from "./types.js";
 
 export async function runCli(
@@ -189,6 +194,69 @@ export async function runCli(
             json: options.json,
             provider: options.provider,
             refreshLocal: options.refreshLocal,
+          },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  const sessions = program
+    .command("sessions")
+    .description("List, replay, or safely resume local sessions.");
+
+  sessions
+    .command("list")
+    .description("List local sessions without calling a model.")
+    .option("--limit <count>", "maximum sessions to show (1..200)")
+    .option("--json", "write a versioned JSON document", false)
+    .action(async (options: { json: boolean; limit?: string }) => {
+      commandExitCode = await executeSessionsList(
+        { json: options.json, limit: options.limit },
+        runtime,
+        io,
+      );
+    });
+
+  sessions
+    .command("show")
+    .description("Replay one saved session without calling a model or tool.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--events", "show bounded redacted domain events", false)
+    .option("--json", "write a versioned JSON document", false)
+    .action(
+      async (
+        sessionId: string,
+        options: { events: boolean; json: boolean },
+      ) => {
+        commandExitCode = await executeSessionsShow(
+          { events: options.events, json: options.json, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  sessions
+    .command("resume")
+    .description("Create a new run from a verified safe resume boundary.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--message <text>", "new user turn for a completed session")
+    .option(
+      "--allow-degraded-resume",
+      "explicitly accept loss of provider-private continuation state",
+      false,
+    )
+    .action(
+      async (
+        sessionId: string,
+        options: { allowDegradedResume: boolean; message?: string },
+      ) => {
+        commandExitCode = await executeSessionsResume(
+          {
+            allowDegradedResume: options.allowDegradedResume,
+            message: options.message,
+            sessionId,
           },
           runtime,
           io,

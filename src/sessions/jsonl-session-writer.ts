@@ -2,9 +2,18 @@ import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RunEvent } from "../events/run-event.js";
+import type {
+  Phase9RunEventData,
+  Phase9RunEventType,
+} from "../events/stored-event-v2.js";
 
 export interface SessionWriter {
   readonly path: string;
+  appendRunEvent?<TType extends Phase9RunEventType>(
+    runId: string,
+    type: TType,
+    data: Phase9RunEventData<TType>,
+  ): Promise<unknown>;
   close(): Promise<void>;
   write(event: RunEvent): Promise<void>;
 }

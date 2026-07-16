@@ -66,6 +66,11 @@ export type PiRuntimeRequest = {
   readonly input:
     | Extract<ModelTurnInput, { readonly kind: "user_prompt" }>
     | {
+        readonly continuation: unknown;
+        readonly kind: "resume_prompt";
+        readonly text: string;
+      }
+    | {
         readonly callId: string;
         readonly continuation: unknown;
         readonly kind: "tool_result";
@@ -85,4 +90,3 @@ export interface PiRuntimePort {
     signal: AbortSignal,
   ): AsyncIterable<PiRuntimeEvent>;
 }
-

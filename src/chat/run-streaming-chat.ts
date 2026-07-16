@@ -26,6 +26,10 @@ import type { ModelUsage } from "../model/model-events.js";
 import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import {
+  createTurnBoundaryRecorder,
+  type TurnBoundaryRecorder,
+} from "../sessions/turn-boundary-recorder.js";
 import type {
   ToolExecution,
   ToolRegistryLike,
@@ -408,6 +412,7 @@ async function runFixedToolRoundTrip(
   runtime: StreamingChatRuntime,
   startedAt: number,
   cancellationReason: () => CancellationReason | undefined,
+  persistTurnBoundary?: TurnBoundaryRecorder,
 ): Promise<StreamingChatExitCode> {
   // PHASE3 状态机：first turn -> (直接回答 | 一个工具) -> second turn -> terminal。
   // 这里刻意没有 while；通用 AgentLoop、step budget 和重复调用检测属于 Phase 4。
@@ -450,6 +455,13 @@ async function runFixedToolRoundTrip(
         startedAt,
       );
     }
+    await persistTurnBoundary?.({
+      continuation: first.continuation,
+      pendingCall: false,
+      runId: publisher.runId,
+      sessionId: publisher.sessionId,
+      turn: 1,
+    });
     await publishUsage([first.usage], publisher);
     return publishCompleted(
       1,
@@ -482,6 +494,13 @@ async function runFixedToolRoundTrip(
       tool_name: first.call.name,
     },
     type: "tool.call.requested",
+  });
+  await persistTurnBoundary?.({
+    continuation: first.continuation,
+    pendingCall: true,
+    runId: publisher.runId,
+    sessionId: publisher.sessionId,
+    turn: 1,
   });
 
   const toolStartedAt = runtime.now();
@@ -582,6 +601,13 @@ async function runFixedToolRoundTrip(
       startedAt,
     );
   }
+  await persistTurnBoundary?.({
+    continuation: second.continuation,
+    pendingCall: false,
+    runId: publisher.runId,
+    sessionId: publisher.sessionId,
+    turn: 2,
+  });
   await publishUsage([first.usage, second.usage], publisher);
   return publishCompleted(
     2,
@@ -696,9 +722,16 @@ export async function runStreamingChat(
         adapter: backend.identity.adapter,
         adapter_version: backend.identity.adapterVersion,
         capabilities: backend.capabilities,
+        ...(backend.resume.capability === "exact_checkpoint"
+          ? {
+              checkpoint_codec_version:
+                backend.resume.checkpointCodec.codecVersion,
+            }
+          : {}),
         config_fingerprint: backend.identity.configFingerprint,
         model: backend.identity.model,
         provider: backend.identity.provider,
+        resume_capability: backend.resume.capability,
       },
       type: "backend.selected",
     });
@@ -708,6 +741,11 @@ export async function runStreamingChat(
           runtime.env.ANTHROPIC_API_KEY,
         ])
       : undefined;
+    const turnBoundaryRecorder = createTurnBoundaryRecorder(
+      writer,
+      backend,
+      runtime.cwd,
+    );
     exitCode = await runFixedToolRoundTrip(
       config,
       backend,
@@ -717,6 +755,7 @@ export async function runStreamingChat(
       runtime,
       startedAt,
       () => cancellationReason,
+      turnBoundaryRecorder,
     );
   } catch (error) {
     // PHASE2: 存储失败后 writer 不可信，不能再尝试补 terminal event。

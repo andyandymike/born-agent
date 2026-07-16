@@ -639,6 +639,19 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
       throw new TypeError("runtime continuation is invalid");
     }
     const previous = request.input.continuation.messages(this.#owner, request);
+    if (request.input.kind === "resume_prompt") {
+      // PHASE9: an exact checkpoint owns the prior provider messages. A new
+      // user turn is appended through the adapter instead of rebuilding those
+      // opaque messages from the canonical transcript.
+      return [
+        ...previous,
+        {
+          content: request.input.text,
+          role: "user",
+          timestamp: Date.now(),
+        },
+      ];
+    }
     const toolName = findToolName(previous, request.input.callId);
     if (toolName === undefined) {
       throw new TypeError("tool result does not match a prior pi tool call");

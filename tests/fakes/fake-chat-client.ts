@@ -60,6 +60,10 @@ export class FakeStreamingChatClient implements ModelBackend {
     tools: "strict",
     usage: "complete",
   } as const;
+  readonly resume = Object.freeze({
+    capability: "canonical_only",
+    supportsCanonicalDegradedResume: true,
+  } as const);
   #identity: BackendIdentity;
 
   constructor(

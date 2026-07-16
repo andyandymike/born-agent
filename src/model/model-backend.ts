@@ -1,5 +1,6 @@
 import type { ModelCapabilities } from "./model-capabilities.js";
 import type { ModelEvent } from "./model-events.js";
+import type { BackendResumeDeclaration } from "./backend-resume.js";
 
 export type ProviderId = "openai" | "anthropic" | "ollama";
 
@@ -32,6 +33,12 @@ export interface ModelToolDefinition {
 export type ModelTurnInput =
   | { readonly kind: "user_prompt"; readonly text: string }
   | {
+      readonly continuation: BackendContinuation;
+      readonly kind: "resume_prompt";
+      readonly output?: never;
+      readonly text: string;
+    }
+  | {
       readonly callId: string;
       readonly continuation: BackendContinuation;
       readonly kind: "tool_result";
@@ -48,9 +55,9 @@ export interface ModelTurnRequest {
 export interface ModelBackend {
   readonly capabilities: ModelCapabilities;
   readonly identity: BackendIdentity;
+  readonly resume: BackendResumeDeclaration;
   runTurn(
     request: ModelTurnRequest,
     signal: AbortSignal,
   ): AsyncIterable<ModelEvent>;
 }
-
