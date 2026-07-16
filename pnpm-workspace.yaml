@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: true
+cacheDir: .cache/pnpm-cache
+engineStrict: true
+savePrefix: ''
+storeDir: .cache/pnpm-store

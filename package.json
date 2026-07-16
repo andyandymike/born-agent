@@ -1,0 +1,43 @@
+{
+  "name": "bornagent",
+  "version": "0.0.0",
+  "description": "A learning-first coding agent built one phase at a time.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "born": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": "11.13.1"
+  },
+  "packageManager": "pnpm@11.13.1",
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "clean": "node scripts/clean.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run && node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs"
+  },
+  "dependencies": {
+    "commander": "15.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.1",
+    "eslint": "10.7.0",
+    "globals": "17.7.0",
+    "tsx": "4.23.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10"
+  }
+}

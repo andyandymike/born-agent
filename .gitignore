@@ -1,0 +1,30 @@
+# Dependencies, build output, and caches
+node_modules/
+dist/
+coverage/
+.cache/
+.pnpm-store/
+*.tgz
+
+# Local planning and learning material
+/spec/
+/docs/learning/
+/ROADMAP.md
+**/[Tt][Oo][Dd][Oo]*
+*.todo
+
+# Local agent state
+/.agents/
+/.codex/
+
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
+
+# Logs, editor state, and operating-system files
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

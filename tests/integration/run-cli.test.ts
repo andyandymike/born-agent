@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+
+import { runCli } from "../../src/cli/run-cli.js";
+import { createMemoryIO, createRuntime } from "../helpers.js";
+
+describe("runCli", () => {
+  it("prints help to stdout", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli(["--help"], memory.io, createRuntime());
+    expect(exitCode).toBe(0);
+    expect(memory.readStdout()).toContain("Usage: born");
+    expect(memory.readStderr()).toBe("");
+  });
+
+  it("prints the package version to stdout", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli(["--version"], memory.io, createRuntime());
+    expect(exitCode).toBe(0);
+    expect(memory.readStdout()).toBe("0.0.0\n");
+    expect(memory.readStderr()).toBe("");
+  });
+
+  it("prints help when no arguments are provided", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli([], memory.io, createRuntime());
+    expect(exitCode).toBe(0);
+    expect(memory.readStdout()).toContain("Usage: born");
+    expect(memory.readStderr()).toBe("");
+  });
+
+  it("returns usage error 2 for an unknown command", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli(["chat"], memory.io, createRuntime());
+    expect(exitCode).toBe(2);
+    expect(memory.readStdout()).toBe("");
+    expect(memory.readStderr()).toContain("unknown command 'chat'");
+  });
+
+  it("returns success when every doctor check passes", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli(["doctor"], memory.io, createRuntime());
+    expect(exitCode).toBe(0);
+    expect(memory.readStdout()).toContain("[ok] Node.js");
+    expect(memory.readStdout()).toContain("Doctor: 4 passed, 0 failed");
+    expect(memory.readStderr()).toBe("");
+  });
+
+  it("returns doctor error 3 when ripgrep is missing", async () => {
+    const memory = createMemoryIO();
+    const fallback = createRuntime().runExecutable;
+    const runtime = createRuntime({
+      runExecutable: async (command, args, timeout) =>
+        command === "rg"
+          ? { kind: "missing" }
+          : fallback(command, args, timeout),
+    });
+    const exitCode = await runCli(["doctor"], memory.io, runtime);
+    expect(exitCode).toBe(3);
+    expect(memory.readStdout()).toContain("[fail] ripgrep");
+    expect(memory.readStdout()).toContain("Doctor: 3 passed, 1 failed");
+    expect(memory.readStderr()).toBe("");
+  });
+});
+
