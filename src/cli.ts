@@ -3,11 +3,14 @@ import packageJson from "../package.json" with { type: "json" };
 
 import { createNodeRuntime } from "./cli/node-runtime.js";
 import { runCli } from "./cli/run-cli.js";
+import { redactSensitiveText } from "./security/redact.js";
 
 function oneLineError(error: unknown, secret: string | undefined): string {
   let message = error instanceof Error ? error.message : String(error);
   if (secret && secret.length > 0) {
-    message = message.replaceAll(secret, "[redacted]");
+    message = redactSensitiveText(message, [secret]);
+  } else {
+    message = redactSensitiveText(message);
   }
   return message.replace(/\s+/gu, " ").trim();
 }

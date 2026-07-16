@@ -1,58 +1,13 @@
-import { normalizeAssistantText, runChat } from "../chat/run-chat.js";
-import type {
-  ChatCommandOptions,
-  ChatResponse,
-  ChatRuntime,
-} from "../chat/types.js";
-import type { CliIO } from "../cli/types.js";
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
-}
-
-function formatVerbose(
-  provider: string,
-  response: ChatResponse,
-  elapsedMs: number,
-): string {
-  const fields = [
-    `provider=${oneLine(provider)}`,
-    `model=${oneLine(response.model)}`,
-    response.providerResponseId === undefined
-      ? undefined
-      : `response_id=${oneLine(response.providerResponseId)}`,
-    response.usage === undefined
-      ? undefined
-      : `input_tokens=${response.usage.inputTokens}`,
-    response.usage === undefined
-      ? undefined
-      : `output_tokens=${response.usage.outputTokens}`,
-    response.usage === undefined
-      ? undefined
-      : `total_tokens=${response.usage.totalTokens}`,
-    `elapsed_ms=${Math.round(elapsedMs)}`,
-  ].filter((value): value is string => value !== undefined);
-
-  return `${fields.join(" ")}\n`;
-}
+import { runStreamingChat } from "../chat/run-streaming-chat.js";
+import type { ChatCommandOptions } from "../chat/types.js";
+import type { CliIO, CliRuntime } from "../cli/types.js";
+import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
 
 export async function executeChat(
   options: ChatCommandOptions,
-  runtime: ChatRuntime,
+  runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
-  const result = await runChat(options, runtime);
-
-  if (!result.ok) {
-    io.stderr.write(`${result.error}\n`);
-    return result.exitCode;
-  }
-
-  io.stdout.write(normalizeAssistantText(result.response.text));
-  if (options.verbose) {
-    io.stderr.write(
-      formatVerbose(result.provider, result.response, result.elapsedMs),
-    );
-  }
-  return 0;
+  const renderer = new ConsoleEventRenderer(io, options.verbose);
+  return runStreamingChat(options, runtime, renderer);
 }

@@ -16,6 +16,7 @@ coverage/
 # Local agent state
 /.agents/
 /.codex/
+/.bornagent/
 
 # Secrets and local environment overrides
 .env

@@ -6,20 +6,10 @@ export interface ChatRequest {
 }
 
 export interface ChatUsage {
+  readonly cachedInputTokens?: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly totalTokens: number;
-}
-
-export interface ChatResponse {
-  readonly model: string;
-  readonly providerResponseId?: string;
-  readonly text: string;
-  readonly usage?: ChatUsage;
-}
-
-export interface ChatClient {
-  complete(request: ChatRequest, signal: AbortSignal): Promise<ChatResponse>;
 }
 
 export type ChatProvider = "ollama" | "openai";
@@ -42,15 +32,6 @@ export interface ChatCommandOptions {
   readonly verbose: boolean;
 }
 
-export interface ChatRuntime {
-  readonly env: Readonly<Record<string, string | undefined>>;
-  clearTimer(handle: unknown): void;
-  createChatClient(configuration: ChatClientConfiguration): ChatClient;
-  now(): number;
-  onCancel(listener: () => void): () => void;
-  setTimer(listener: () => void, delayMs: number): unknown;
-}
-
 export interface ResolvedChatConfig {
   readonly model: string;
   readonly ollamaBaseURL?: string;
@@ -59,17 +40,3 @@ export interface ResolvedChatConfig {
   readonly timeoutMs: number;
   readonly verbose: boolean;
 }
-
-export type ChatRunResult =
-  | {
-      readonly elapsedMs: number;
-      readonly exitCode: 0;
-      readonly ok: true;
-      readonly provider: ChatProvider;
-      readonly response: ChatResponse;
-    }
-  | {
-      readonly error: string;
-      readonly exitCode: 1 | 2 | 4 | 5 | 6 | 130;
-      readonly ok: false;
-    };

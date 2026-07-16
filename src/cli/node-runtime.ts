@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+
 import type { CliRuntime } from "./types.js";
-import { OpenAIChatClient } from "../providers/openai/openai-chat-client.js";
+import { OpenAIStreamingChatClient } from "../providers/openai/openai-streaming-chat-client.js";
+import { JsonlSessionWriter } from "../sessions/jsonl-session-writer.js";
 import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
 
@@ -16,13 +19,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   return {
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
-    createChatClient: (configuration) =>
+    createSessionWriter: JsonlSessionWriter.create,
+    createStreamingChatClient: (configuration) =>
       configuration.provider === "openai"
-        ? new OpenAIChatClient({ apiKey: configuration.apiKey })
-        : new OpenAIChatClient({
+        ? new OpenAIStreamingChatClient({ apiKey: configuration.apiKey })
+        : new OpenAIStreamingChatClient({
             apiKey: "ollama",
             baseURL: configuration.baseURL,
             includeStore: false,
+            providerName: "Ollama",
           }),
     cwd: options.cwd,
     env: options.env,
@@ -31,8 +36,10 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     now: Date.now,
     onCancel: options.onCancel,
     platform: options.platform,
+    randomUUID,
     runExecutable,
     setTimer: (listener, delayMs) => setTimeout(listener, delayMs),
+    timestamp: () => new Date().toISOString(),
     version: options.version,
   };
 }

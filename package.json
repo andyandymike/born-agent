@@ -25,11 +25,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run && node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "session:validate": "node scripts/validate-latest-session.mjs",
     "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs"
   },
   "dependencies": {
     "commander": "15.0.0",
-    "openai": "6.47.0"
+    "openai": "6.47.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -1,4 +1,4 @@
-import type { ChatRuntime } from "../chat/types.js";
+import type { StreamingChatRuntime } from "../chat/run-streaming-chat.js";
 import type { DoctorRuntime } from "../doctor/types.js";
 
 export interface OutputWriter {
@@ -10,6 +10,6 @@ export interface CliIO {
   readonly stdout: OutputWriter;
 }
 
-export interface CliRuntime extends ChatRuntime, DoctorRuntime {
+export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   readonly version: string;
 }

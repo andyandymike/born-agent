@@ -1,41 +1,102 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
-import { mapOpenAIError } from "../../src/providers/openai/map-openai-error.js";
+import type { CliIO } from "../../src/cli/types.js";
+import type { RunEvent } from "../../src/events/run-event.js";
 import {
-  FakeChatClient,
-  fixedResponse,
-  rejected,
+  createControlledStream,
+  failedStream,
+  FakeStreamingChatClient,
+  fixedStream,
   waitForAbort,
 } from "../fakes/fake-chat-client.js";
-import { createMemoryIO, createRuntime } from "../helpers.js";
+import {
+  createMemoryIO,
+  createRuntime,
+  InMemorySessionWriter,
+} from "../helpers.js";
 
-describe("born chat", () => {
-  it("writes only normalized assistant text to stdout", async () => {
-    const client = new FakeChatClient(fixedResponse("hello\n\n"));
-    const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "say hello"],
+function orderedIO(order: string[]): {
+  io: CliIO;
+  readStderr(): string;
+  readStdout(): string;
+} {
+  let stdout = "";
+  let stderr = "";
+  return {
+    io: {
+      stderr: {
+        write: (value) => {
+          order.push(`stderr:${value}`);
+          stderr += value;
+        },
+      },
+      stdout: {
+        write: (value) => {
+          order.push(`stdout:${value}`);
+          stdout += value;
+        },
+      },
+    },
+    readStderr: () => stderr,
+    readStdout: () => stdout,
+  };
+}
+
+describe("born chat streaming", () => {
+  it("persists each delayed delta before rendering it", async () => {
+    const order: string[] = [];
+    const memory = orderedIO(order);
+    const controlled = createControlledStream();
+    const writer = new InMemorySessionWriter("memory://ordered", (event) => {
+      order.push(`persist:${event.type}`);
+    });
+    const promise = runCli(
+      ["chat", "stream this"],
       memory.io,
-      createRuntime({ createChatClient: () => client }),
+      createRuntime({
+        createSessionWriter: async () => writer,
+        createStreamingChatClient: () =>
+          new FakeStreamingChatClient(controlled.behavior),
+      }),
     );
-    expect(exitCode).toBe(0);
-    expect(memory.readStdout()).toBe("hello\n");
-    expect(memory.readStderr()).toBe("");
-    expect(client.calls[0]?.request.prompt).toBe("say hello");
+
+    await controlled.waitUntilStarted();
+    controlled.push({ delta: "first", type: "text_delta" });
+    await vi.waitFor(() => expect(memory.readStdout()).toBe("first"));
+    expect(writer.events.at(-1)).toMatchObject({
+      data: { delta: "first" },
+      type: "text.delta",
+    });
+    expect(order.indexOf("persist:text.delta")).toBeLessThan(
+      order.indexOf("stdout:first"),
+    );
+
+    controlled.push({ delta: " second", type: "text_delta" });
+    controlled.push({
+      type: "usage",
+      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+    });
+    controlled.push({ providerResponseId: "resp_delayed", type: "completed" });
+    controlled.end();
+
+    await expect(promise).resolves.toBe(0);
+    expect(memory.readStdout()).toBe("first second\n");
+    expect(writer.events.at(-1)?.type).toBe("run.completed");
   });
 
-  it("uses Ollama without an OpenAI key and reports the selected provider", async () => {
-    const client = new FakeChatClient(fixedResponse("local answer"));
+  it("supports Ollama without an API key and prints verbose metadata to stderr", async () => {
+    const writer = new InMemorySessionWriter();
     const memory = createMemoryIO();
     let configuration: unknown;
     const exitCode = await runCli(
       ["chat", "hello", "--provider", "ollama", "--verbose"],
       memory.io,
       createRuntime({
-        createChatClient: (selected) => {
+        createSessionWriter: async () => writer,
+        createStreamingChatClient: (selected) => {
           configuration = selected;
-          return client;
+          return new FakeStreamingChatClient(fixedStream(["local answer"]));
         },
         env: {},
       }),
@@ -46,158 +107,121 @@ describe("born chat", () => {
       baseURL: "http://localhost:11434/v1",
       provider: "ollama",
     });
-    expect(client.calls[0]?.request.model).toBe("qwen3:1.7b");
     expect(memory.readStdout()).toBe("local answer\n");
     expect(memory.readStderr()).toContain("provider=ollama");
-  });
-
-  it("keeps text in stdout and writes metadata to stderr in verbose mode", async () => {
-    const times = [100, 142];
-    const client = new FakeChatClient(fixedResponse("verbose answer"));
-    const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "hello", "--model", "test-model", "--verbose"],
-      memory.io,
-      createRuntime({
-        createChatClient: () => client,
-        now: () => times.shift() ?? 142,
-      }),
-    );
-    expect(exitCode).toBe(0);
-    expect(memory.readStdout()).toBe("verbose answer\n");
-    expect(memory.readStderr()).toContain("provider=openai");
-    expect(memory.readStderr()).toContain("model=test-model");
-    expect(memory.readStderr()).toContain("response_id=resp_fake");
     expect(memory.readStderr()).toContain("total_tokens=5");
-    expect(memory.readStderr()).toContain("elapsed_ms=42");
+    expect(memory.readStderr()).toContain("response_id=resp_fake");
   });
 
-  it("does not create a client when the API key is missing", async () => {
-    const createChatClient = vi.fn();
+  it("keeps partial text and puts a provider failure on a separate stderr line", async () => {
     const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "hello"],
-      memory.io,
-      createRuntime({ createChatClient, env: {} }),
-    );
-    expect(exitCode).toBe(4);
-    expect(createChatClient).not.toHaveBeenCalled();
-    expect(memory.readStdout()).toBe("");
-    expect(memory.readStderr()).toBe("OPENAI_API_KEY is not configured\n");
-  });
-
-  it("does not create a client for an invalid timeout", async () => {
-    const createChatClient = vi.fn();
-    const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "hello", "--timeout-ms", "999"],
-      memory.io,
-      createRuntime({ createChatClient }),
-    );
-    expect(exitCode).toBe(2);
-    expect(createChatClient).not.toHaveBeenCalled();
-    expect(memory.readStderr()).toContain("usage/config error");
-  });
-
-  it("maps authentication failure without leaking the API key", async () => {
-    const secret = "sk-cli-secret-value";
-    const client = new FakeChatClient(
-      rejected(
-        mapOpenAIError({
-          code: "invalid_api_key",
-          message: `invalid ${secret}`,
-          requestID: "req_auth",
-          status: 401,
-        }),
-      ),
-    );
-    const memory = createMemoryIO();
+    const writer = new InMemorySessionWriter();
+    const client = new FakeStreamingChatClient(async function* () {
+      yield { delta: "partial", type: "text_delta" };
+      yield* failedStream({
+        category: "rate_limit",
+        code: "rate_limit_exceeded",
+        message: "OpenAI rate limit exceeded",
+        retryable: true,
+      })({
+        instructions: "",
+        model: "",
+        prompt: "",
+        timeoutMs: 1,
+      }, new AbortController().signal);
+    });
     const exitCode = await runCli(
       ["chat", "hello"],
       memory.io,
       createRuntime({
-        createChatClient: () => client,
-        env: { OPENAI_API_KEY: secret },
+        createSessionWriter: async () => writer,
+        createStreamingChatClient: () => client,
       }),
     );
-    expect(exitCode).toBe(4);
-    expect(memory.readStderr()).toContain("authentication failed");
-    expect(memory.readStderr()).not.toContain(secret);
-    expect(memory.readStdout()).toBe("");
-  });
 
-  it("classifies rate limits as provider failures without retrying", async () => {
-    const client = new FakeChatClient(
-      rejected(
-        mapOpenAIError({
-          code: "rate_limit_exceeded",
-          requestID: "req_rate",
-          status: 429,
-        }),
-      ),
-    );
-    const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "hello"],
-      memory.io,
-      createRuntime({ createChatClient: () => client }),
-    );
     expect(exitCode).toBe(5);
-    expect(client.calls).toHaveLength(1);
-    expect(memory.readStderr()).toContain("provider request failed");
-    expect(memory.readStderr()).toContain("rate_limit");
-    expect(memory.readStdout()).toBe("");
+    expect(memory.readStdout()).toBe("partial\n");
+    expect(memory.readStderr()).toBe("OpenAI rate limit exceeded\n");
+    expect(writer.events.at(-1)?.type).toBe("run.failed");
   });
 
-  it("aborts the request and returns 6 on timeout", async () => {
-    const client = new FakeChatClient(waitForAbort());
-    const clearTimer = vi.fn();
-    const stopListening = vi.fn();
-    const memory = createMemoryIO();
-    const exitCode = await runCli(
-      ["chat", "hello", "--timeout-ms", "1000"],
-      memory.io,
-      createRuntime({
-        clearTimer,
-        createChatClient: () => client,
-        onCancel: () => stopListening,
-        setTimer: (listener) => {
-          queueMicrotask(listener);
-          return "timeout-handle";
-        },
-      }),
-    );
-    expect(exitCode).toBe(6);
-    expect(client.calls[0]?.signal.aborted).toBe(true);
-    expect(clearTimer).toHaveBeenCalledWith("timeout-handle");
-    expect(stopListening).toHaveBeenCalledOnce();
-    expect(memory.readStdout()).toBe("");
-    expect(memory.readStderr()).toBe("request timed out after 1000 ms\n");
+  it("does not create a session for missing credentials or invalid timeout", async () => {
+    const createSessionWriter = vi.fn();
+    for (const [argv, env, expected] of [
+      [["chat", "hello"], {}, 4],
+      [["chat", "hello", "--timeout-ms", "999"], { OPENAI_API_KEY: "key" }, 2],
+    ] as const) {
+      const memory = createMemoryIO();
+      await expect(
+        runCli(
+          argv,
+          memory.io,
+          createRuntime({ createSessionWriter, env }),
+        ),
+      ).resolves.toBe(expected);
+      expect(memory.readStdout()).toBe("");
+    }
+    expect(createSessionWriter).not.toHaveBeenCalled();
   });
 
-  it("aborts the request and returns 130 on Ctrl+C", async () => {
-    const client = new FakeChatClient(waitForAbort());
-    const clearTimer = vi.fn();
-    const stopListening = vi.fn();
+  it("writes the correct terminal event for timeout and Ctrl+C", async () => {
+    for (const scenario of ["timeout", "cancelled"] as const) {
+      const memory = createMemoryIO();
+      const writer = new InMemorySessionWriter();
+      const client = new FakeStreamingChatClient(waitForAbort());
+      const exitCode = await runCli(
+        ["chat", "hello", "--timeout-ms", "1000"],
+        memory.io,
+        createRuntime({
+          createSessionWriter: async () => writer,
+          createStreamingChatClient: () => client,
+          onCancel: (listener) => {
+            if (scenario === "cancelled") {
+              queueMicrotask(listener);
+            }
+            return () => undefined;
+          },
+          setTimer: (listener) => {
+            if (scenario === "timeout") {
+              queueMicrotask(listener);
+            }
+            return "timer";
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(scenario === "timeout" ? 6 : 130);
+      expect(writer.events.at(-1)?.type).toBe(
+        scenario === "timeout" ? "run.failed" : "run.cancelled",
+      );
+      expect(memory.readStderr()).toContain(
+        scenario === "timeout" ? "timed out" : "Cancelled",
+      );
+    }
+  });
+
+  it("does not render an unpersisted delta after storage failure", async () => {
     const memory = createMemoryIO();
+    const persisted: RunEvent[] = [];
+    const writer = new InMemorySessionWriter("memory://full", (event) => {
+      if (event.type === "text.delta") {
+        throw new Error("disk full");
+      }
+      persisted.push(event);
+    });
     const exitCode = await runCli(
       ["chat", "hello"],
       memory.io,
       createRuntime({
-        clearTimer,
-        createChatClient: () => client,
-        onCancel: (listener) => {
-          queueMicrotask(listener);
-          return stopListening;
-        },
-        setTimer: () => "timeout-handle",
+        createSessionWriter: async () => writer,
+        createStreamingChatClient: () =>
+          new FakeStreamingChatClient(fixedStream(["must not render"])),
       }),
     );
-    expect(exitCode).toBe(130);
-    expect(client.calls[0]?.signal.aborted).toBe(true);
-    expect(clearTimer).toHaveBeenCalledWith("timeout-handle");
-    expect(stopListening).toHaveBeenCalledOnce();
+
+    expect(exitCode).toBe(1);
     expect(memory.readStdout()).toBe("");
-    expect(memory.readStderr()).toBe("Cancelled\n");
+    expect(memory.readStderr()).toBe("session storage failed\n");
+    expect(persisted.map((event) => event.type)).toEqual(["run.started"]);
   });
 });

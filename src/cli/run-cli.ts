@@ -24,12 +24,16 @@ export async function runCli(
 
   program
     .command("chat")
-    .description("Send one non-streaming text request to a model provider.")
-    .argument("<prompt>", "text prompt to send")
+    .description("Stream one text response and save a local session event log.")
+    .argument("<prompt>", "text prompt to send; do not paste API keys")
     .option("--provider <provider>", "model provider: openai or ollama")
     .option("--model <model>", "override the provider model")
     .option("--timeout-ms <milliseconds>", "request timeout in milliseconds")
     .option("--verbose", "write response metadata to stderr", false)
+    .addHelpText(
+      "after",
+      "\nSecurity: prompts are saved locally in .bornagent/sessions; do not paste secrets.\n",
+    )
     .action(
       async (
         prompt: string,
