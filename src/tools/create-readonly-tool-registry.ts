@@ -1,4 +1,6 @@
+import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
 import { createListFilesTool } from "./list-files-tool.js";
+import { createReadArtifactTool } from "./read-artifact-tool.js";
 import { createReadFileTool } from "./read-file-tool.js";
 import { RipgrepRunner } from "./ripgrep-runner.js";
 import { createSearchTool } from "./search-tool.js";
@@ -9,6 +11,7 @@ import { WorkspacePathPolicy } from "./workspace-path-policy.js";
 
 export async function createReadonlyToolDefinitions(
   workspace: string,
+  artifacts?: ArtifactSessionRuntimeLike,
 ): Promise<readonly ToolDefinition<unknown>[]> {
   // PHASE3: 三个工具共享同一份 canonical workspace 与敏感路径策略，防止各自实现出不同边界。
   const sensitive = new SensitivePathPolicy();
@@ -19,6 +22,11 @@ export async function createReadonlyToolDefinitions(
     createReadFileTool(paths) as ToolDefinition<unknown>,
     createSearchTool(paths, runner, sensitive) as ToolDefinition<unknown>,
     createListFilesTool(paths, runner, sensitive) as ToolDefinition<unknown>,
+    ...(artifacts === undefined
+      ? []
+      : [
+          createReadArtifactTool(artifacts.reader) as ToolDefinition<unknown>,
+        ]),
   ];
   if (definitions.some((definition) => definition.capability !== "read")) {
     throw new Error("read-only registry cannot contain mutation tools");
@@ -29,7 +37,8 @@ export async function createReadonlyToolDefinitions(
 export async function createReadonlyToolRegistry(
   workspace: string,
   secrets: readonly (string | undefined)[] = [],
+  artifacts?: ArtifactSessionRuntimeLike,
 ): Promise<ToolRegistry> {
-  const definitions = await createReadonlyToolDefinitions(workspace);
-  return new ToolRegistry(definitions, secrets);
+  const definitions = await createReadonlyToolDefinitions(workspace, artifacts);
+  return new ToolRegistry(definitions, secrets, undefined, artifacts);
 }

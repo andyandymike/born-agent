@@ -36,6 +36,7 @@ function strictJsonSchema<TInput>(
 }
 
 export class ToolRegistry implements ToolRegistryLike {
+  readonly artifactOutput?: NonNullable<ToolRegistryLike["artifactOutput"]>;
   readonly modelDefinitions: readonly ModelToolDefinition[];
   private readonly definitions = new Map<string, ToolDefinition<unknown>>();
 
@@ -43,7 +44,9 @@ export class ToolRegistry implements ToolRegistryLike {
     definitions: readonly ToolDefinition<unknown>[],
     private readonly secrets: readonly (string | undefined)[] = [],
     readonly completion?: CompletionRuntimeLike,
+    artifactOutput?: NonNullable<ToolRegistryLike["artifactOutput"]>,
   ) {
+    if (artifactOutput !== undefined) this.artifactOutput = artifactOutput;
     // PHASE3: 注册阶段 fail fast：工具名必须稳定合法且不能重复。
     for (const definition of definitions) {
       if (!TOOL_NAME.test(definition.name)) {
@@ -173,22 +176,24 @@ export class ToolRegistry implements ToolRegistryLike {
       );
       const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
       if (Buffer.byteLength(output, "utf8") > outputLimit) {
-        return serializeToolError(
-          toolError(
-            "system",
-            "tool_output_too_large",
-            "tool output exceeded the safety limit",
-          ),
-          this.secrets,
-        );
+        if (!this.canMaterialize(invocation)) {
+          return serializeToolError(
+            toolError(
+              "system",
+              "tool_output_too_large",
+              "tool output exceeded the safety limit",
+            ),
+            this.secrets,
+          );
+        }
       }
-      return {
+      return this.materializeExecution(invocation, outputLimit, {
         ...(result.control === undefined ? {} : { control: result.control }),
         error: safeError,
         ok: false,
         output,
         truncated: result.truncated ?? false,
-      };
+      });
     }
 
     const output = redactSensitiveText(
@@ -198,20 +203,57 @@ export class ToolRegistry implements ToolRegistryLike {
     );
     const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
     if (Buffer.byteLength(output, "utf8") > outputLimit) {
-      return serializeToolError(
-        toolError(
-          "system",
-          "tool_output_too_large",
-          "tool output exceeded the safety limit",
-        ),
-        this.secrets,
-      );
+      if (!this.canMaterialize(invocation)) {
+        return serializeToolError(
+          toolError(
+            "system",
+            "tool_output_too_large",
+            "tool output exceeded the safety limit",
+          ),
+          this.secrets,
+        );
+      }
     }
-    return {
+    return this.materializeExecution(invocation, outputLimit, {
       ...(result.control === undefined ? {} : { control: result.control }),
       ok: true,
       output,
       truncated: result.truncated,
-    };
+    });
+  }
+
+  private canMaterialize(invocation: ToolInvocation): boolean {
+    return (
+      this.artifactOutput !== undefined &&
+      invocation.originEventId !== undefined &&
+      invocation.name !== "read_artifact"
+    );
+  }
+
+  private async materializeExecution(
+    invocation: ToolInvocation,
+    modelObservationBytes: number,
+    execution: ToolExecution,
+  ): Promise<ToolExecution> {
+    if (!this.canMaterialize(invocation)) return execution;
+    try {
+      const materialized = await this.artifactOutput!.materialize({
+        modelObservationBytes,
+        originEventId: invocation.originEventId!,
+        source: [Buffer.from(execution.output, "utf8")],
+      });
+      return {
+        ...execution,
+        output: materialized.modelObservation,
+        truncated:
+          execution.truncated || materialized.modelObservationTruncated,
+      };
+    } catch (error) {
+      throw new FatalToolExecutionError(
+        "storage",
+        "tool output artifact could not be persisted durably",
+        { cause: error, workspaceMayHaveChanged: false },
+      );
+    }
   }
 }

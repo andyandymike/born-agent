@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
+import { phase10ArtifactRunEventDataSchemas } from "../artifacts/artifact-event-schema.js";
+import type { Phase10ArtifactEvent } from "../artifacts/artifact-types.js";
 import {
   decodeStoredEvents,
   type DecodedStoredEvent,
@@ -57,6 +59,7 @@ function isCanonicalUuid(value: string): boolean {
 
 export class V2SessionWriter implements SessionWriter {
   readonly path: string;
+  readonly persistenceProfile = "phase10_full" as const;
   readonly workspace: string;
   private closed = false;
   private readonly createEventId: () => string;
@@ -125,6 +128,10 @@ export class V2SessionWriter implements SessionWriter {
     return [...this.decoded];
   }
 
+  readDecodedEvents(): readonly DecodedStoredEvent[] {
+    return this.events;
+  }
+
   async write(event: RunEvent): Promise<void> {
     if (event.session_id !== this.sessionId) {
       throw new Error("run event belongs to a different session");
@@ -158,13 +165,38 @@ export class V2SessionWriter implements SessionWriter {
     return this.appendEnvelope(envelope);
   }
 
+  async appendArtifactEvent(
+    runId: string,
+    event: Phase10ArtifactEvent,
+  ): Promise<DecodedStoredEvent> {
+    phase10ArtifactRunEventDataSchemas[event.type].parse(event.data);
+    const eventId = this.createEventId();
+    if (!isCanonicalUuid(eventId)) throw new Error("event id must be a canonical UUID");
+    return this.appendRunEnvelope({
+      data: event.data,
+      eventId,
+      runId,
+      timestamp: this.timestamp(),
+      type: event.type,
+    });
+  }
+
   async appendRunEvent<TType extends Phase9RunEventType>(
     runId: string,
     type: TType,
     data: Phase9RunEventData<TType>,
   ): Promise<DecodedStoredEvent> {
-    phase9RunEventDataSchemas[type].parse(data);
     const eventId = this.createEventId();
+    return this.appendRunEventWithId(runId, eventId, type, data);
+  }
+
+  async appendRunEventWithId<TType extends Phase9RunEventType>(
+    runId: string,
+    eventId: string,
+    type: TType,
+    data: Phase9RunEventData<TType>,
+  ): Promise<DecodedStoredEvent> {
+    phase9RunEventDataSchemas[type].parse(data);
     if (!isCanonicalUuid(eventId)) throw new Error("event id must be a canonical UUID");
     return this.appendRunEnvelope({
       data,

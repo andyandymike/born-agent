@@ -1,9 +1,13 @@
 import type { ChatProvider } from "../chat/types.js";
 
 export interface AgentCommandOptions {
+  readonly artifactCaptureBytes?: string | undefined;
   readonly commandApproval: string | undefined;
   readonly commandTimeoutMs: string | undefined;
   readonly completionPolicy: string | undefined;
+  readonly contextCompactionThreshold?: string | undefined;
+  readonly contextReserveOutputTokens?: string | undefined;
+  readonly contextWindowTokens?: string | undefined;
   readonly editApproval: string | undefined;
   readonly maxDurationMs: string | undefined;
   readonly maxCommandOutputBytes: string | undefined;
@@ -39,9 +43,13 @@ export interface AgentLoopConfig {
 }
 
 export interface ResolvedAgentConfig extends AgentLoopConfig {
+  readonly artifactCaptureBytes?: number;
   readonly commandApproval: CommandApprovalMode;
   readonly commandTimeoutMs: number;
   readonly completionPolicy: CompletionPolicyMode;
+  readonly contextCompactionThreshold?: number;
+  readonly contextReserveOutputTokens?: number;
+  readonly contextWindowTokens?: number;
   readonly editApproval: EditApprovalMode;
   readonly model: string;
   readonly maxCommandOutputBytes: number;
@@ -60,6 +68,9 @@ export type AgentBudgetReason =
   | "max_duration"
   | "max_tokens"
   | "max_tool_output"
+  | "context_estimate_overflow"
+  | "context_protected_overflow"
+  | "context_unsafe_compaction"
   | "repeated_tool_call";
 
 export type AgentExitCode = 0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 130;

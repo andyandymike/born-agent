@@ -5,6 +5,10 @@ import { BackendPreflightError } from "../src/model/backend-factory.js";
 import type { RunEvent } from "../src/events/run-event.js";
 import type { ExecutableResult } from "../src/doctor/types.js";
 import type { SessionWriter } from "../src/sessions/jsonl-session-writer.js";
+import type {
+  Phase9RunEventData,
+  Phase9RunEventType,
+} from "../src/events/stored-event-v2.js";
 import {
   FakeStreamingChatClient,
   fixedStream,
@@ -47,7 +51,15 @@ export class FakeToolRegistry implements ToolRegistryLike {
 
 export class InMemorySessionWriter implements SessionWriter {
   readonly events: RunEvent[] = [];
+  readonly persistedTypes: string[] = [];
+  readonly runEventsV2: Array<{
+    readonly data: unknown;
+    readonly eventId: string;
+    readonly runId: string;
+    readonly type: string;
+  }> = [];
   closed = false;
+  private v2Counter = 0;
 
   constructor(
     readonly path = "memory://session.jsonl",
@@ -57,6 +69,31 @@ export class InMemorySessionWriter implements SessionWriter {
   async write(event: RunEvent): Promise<void> {
     await this.onWrite?.(event);
     this.events.push(event);
+    this.persistedTypes.push(event.type);
+  }
+
+  async appendRunEvent<TType extends Phase9RunEventType>(
+    runId: string,
+    type: TType,
+    data: Phase9RunEventData<TType>,
+  ): Promise<void> {
+    this.v2Counter += 1;
+    await this.appendRunEventWithId(
+      runId,
+      `90000000-0000-4000-8000-${String(this.v2Counter).padStart(12, "0")}`,
+      type,
+      data,
+    );
+  }
+
+  async appendRunEventWithId<TType extends Phase9RunEventType>(
+    runId: string,
+    eventId: string,
+    type: TType,
+    data: Phase9RunEventData<TType>,
+  ): Promise<void> {
+    this.runEventsV2.push({ data, eventId, runId, type });
+    this.persistedTypes.push(type);
   }
 
   async close(): Promise<void> {

@@ -1,9 +1,11 @@
 import type {
   BackendIdentity,
   ModelBackend,
+  PreparedModelTurnRequest,
   ModelTurnRequest,
 } from "../../model/model-backend.js";
 import type { ModelCapabilities } from "../../model/model-capabilities.js";
+import type { ContextCapacity } from "../../model/model-context-capacity.js";
 import type { ModelEvent } from "../../model/model-events.js";
 import {
   createPiContinuation,
@@ -25,6 +27,7 @@ import type {
 
 export interface PiModelBackendOptions {
   readonly capabilities: ModelCapabilities;
+  readonly contextCapacity?: ContextCapacity;
   readonly identity: BackendIdentity;
   readonly runtime: PiRuntimePort;
 }
@@ -76,6 +79,7 @@ function assertIdentity(identity: BackendIdentity): void {
 
 export class PiModelBackend implements ModelBackend {
   readonly capabilities: ModelCapabilities;
+  readonly contextCapacity: ContextCapacity;
   readonly identity: BackendIdentity;
   readonly resume = Object.freeze({
     capability: "canonical_only",
@@ -88,7 +92,24 @@ export class PiModelBackend implements ModelBackend {
     assertIdentity(options.identity);
     this.identity = Object.freeze({ ...options.identity });
     this.capabilities = Object.freeze({ ...options.capabilities });
+    this.contextCapacity = Object.freeze(
+      options.contextCapacity ?? {
+        contextWindowTokens: null,
+        maximumOutputTokens: null,
+        source: "pinned_catalog",
+      },
+    );
     this.#runtime = options.runtime;
+  }
+
+  prepareTurnRequest(request: ModelTurnRequest): PreparedModelTurnRequest {
+    // PHASE10: pi-ai does not expose the final credential-free SDK payload, so
+    // this adapter binds the durable canonical plan but honestly omits a wire
+    // hash instead of hashing an approximation.
+    return Object.freeze({
+      adapterEncodingVersion: `pi-ai-${this.identity.adapterVersion}`,
+      request,
+    });
   }
 
   async *runTurn(
@@ -103,6 +124,9 @@ export class PiModelBackend implements ModelBackend {
     let runtimeRequest: PiRuntimeRequest;
     try {
       runtimeRequest = {
+        ...(request.canonicalContext === undefined
+          ? {}
+          : { canonicalContext: request.canonicalContext }),
         identity: this.identity,
         input: request.input.kind === "user_prompt"
           ? request.input

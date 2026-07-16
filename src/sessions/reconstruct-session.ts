@@ -361,6 +361,18 @@ function validateBudgetTerminal(
     ) {
       throw new Error("max_tool_output terminal does not match event history");
     }
+  } else if (
+    data.reason === "context_estimate_overflow" ||
+    data.reason === "context_protected_overflow" ||
+    data.reason === "context_unsafe_compaction"
+  ) {
+    if (data.limit <= 0 || data.observed <= data.limit) {
+      // PHASE10: context overflow is a gate for the *next* provider request,
+      // not necessarily the first request in a run. Earlier closed model/tool
+      // steps remain legal history; the v2 context semantic validator binds
+      // this terminal to the exact failed estimate and reason.
+      throw new Error("context budget terminal does not match overflow history");
+    }
   } else if (data.limit !== 3 || data.observed !== 3) {
     throw new Error("repeated_tool_call terminal must report 3 of 3");
   }

@@ -293,7 +293,7 @@ export class EventPublisher {
   async adoptPendingCall(
     data: Phase9RunEventData<"resume.pending_call.adopted">,
     argumentsJson: string,
-  ): Promise<void> {
+  ): Promise<string> {
     if (
       !this.started ||
       this.backendSelected?.resume_capability !== "exact_checkpoint" ||
@@ -305,12 +305,24 @@ export class EventPublisher {
     ) {
       throw new Error("pending call adoption is not valid for this run");
     }
+    let originEventId: string;
     try {
-      await this.options.writer.appendRunEvent(
+      const persisted = await this.options.writer.appendRunEvent(
         this.options.runId,
         "resume.pending_call.adopted",
         data,
       );
+      if (
+        typeof persisted !== "object" ||
+        persisted === null ||
+        !("eventId" in persisted) ||
+        typeof persisted.eventId !== "string"
+      ) {
+        throw new Error("pending call adoption did not return a durable event id");
+      }
+      // PHASE10: a resumed tool output uses this already-durable adoption fact
+      // as its artifact origin; provider call ids are not session event ids.
+      originEventId = persisted.eventId;
     } catch (error) {
       throw new EventPersistenceError(error);
     }
@@ -324,6 +336,7 @@ export class EventPublisher {
       step: data.step,
     });
     this.adoptedCalls.add(data.call_id);
+    return originEventId;
   }
 
   async recoverAdoptedCall(

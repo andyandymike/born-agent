@@ -4,6 +4,7 @@ import type {
   ReportFormat,
   TaskProfile,
 } from "../agent/agent-types.js";
+import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
 import type { ApprovalPrompt } from "../approvals/approval-types.js";
 import { CommandApprovalGate } from "../approvals/command-approval-gate.js";
 import { PatchApprovalGate } from "../approvals/patch-approval-gate.js";
@@ -18,6 +19,7 @@ import type {
   PermissionEngineLike,
 } from "../permissions/permission-types.js";
 import { createApplyPatchTool } from "./apply-patch-tool.js";
+import { createReadArtifactTool } from "./read-artifact-tool.js";
 import { createFinishTaskTool } from "../completion/finish-task-tool.js";
 import { VerifiedCompletionPolicy } from "../completion/completion-policy.js";
 import {
@@ -31,6 +33,7 @@ import { createRunCommandTool } from "./run-command-tool.js";
 import type { ToolDefinition } from "./tool-types.js";
 
 export interface AgentToolRegistryOptions {
+  readonly artifactRuntime?: ArtifactSessionRuntimeLike;
   readonly approvalMode: EditApprovalMode;
   readonly approvalPrompt: ApprovalPrompt;
   readonly caseInsensitivePaths: boolean;
@@ -98,6 +101,13 @@ export async function createAgentToolRegistry(
         });
   const definitions: ToolDefinition<unknown>[] = [
     ...(await createReadonlyToolDefinitions(options.workspace)),
+    ...(options.artifactRuntime === undefined
+      ? []
+      : [
+          createReadArtifactTool(
+            options.artifactRuntime.reader,
+          ) as ToolDefinition<unknown>,
+        ]),
     createApplyPatchTool({
       approvalGate,
       applier,
@@ -154,5 +164,10 @@ export async function createAgentToolRegistry(
       `agent registry must contain exactly ${expectedMutations} mutations`,
     );
   }
-  return new ToolRegistry(definitions, options.secrets ?? [], completion);
+  return new ToolRegistry(
+    definitions,
+    options.secrets ?? [],
+    completion,
+    options.artifactRuntime,
+  );
 }

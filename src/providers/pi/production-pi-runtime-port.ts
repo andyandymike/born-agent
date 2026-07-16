@@ -515,7 +515,10 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
     const messages = this.#messages(request);
     const context: PiSdkContext = {
       messages: [...messages],
-      systemPrompt: request.instructions,
+      systemPrompt:
+        request.canonicalContext === undefined
+          ? request.instructions
+          : `${request.instructions}\n\n[BORNAGENT PROVIDER-NEUTRAL CONTEXT ${request.canonicalContext.sha256}]\n${request.canonicalContext.text}`,
       ...(request.tools.length === 0
         ? {}
         : {
@@ -626,6 +629,19 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
   }
 
   #messages(request: PiRuntimeRequest): readonly PiSdkMessage[] {
+    if (request.canonicalContext?.conversationMode === "replace") {
+      // PHASE10: provider continuations are an optimization, not context
+      // authority. A planned request starts from the exact materialized
+      // provider-neutral bytes so archived content cannot leak back through an
+      // opaque provider conversation after deterministic compaction.
+      return [
+        {
+          content: request.canonicalContext.text,
+          role: "user",
+          timestamp: Date.now(),
+        },
+      ];
+    }
     if (request.input.kind === "user_prompt") {
       return [
         {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
 import { createMemoryIO, createRuntime } from "../helpers.js";
@@ -34,6 +34,31 @@ describe("runCli", () => {
     expect(exitCode).toBe(2);
     expect(memory.readStdout()).toBe("");
     expect(memory.readStderr()).toContain("unknown command 'unknown'");
+  });
+
+  it("validates Phase 10 context CLI options before creating a session", async () => {
+    const memory = createMemoryIO();
+    const createSessionWriter = vi.fn(createRuntime().createSessionWriter);
+    const exitCode = await runCli(
+      [
+        "agent",
+        "inspect",
+        "--context-compaction-threshold",
+        "0.49",
+        "--context-reserve-output-tokens",
+        "4096",
+        "--context-window-tokens",
+        "32768",
+        "--artifact-capture-bytes",
+        "4194304",
+      ],
+      memory.io,
+      createRuntime({ createSessionWriter }),
+    );
+
+    expect(exitCode).toBe(2);
+    expect(createSessionWriter).not.toHaveBeenCalled();
+    expect(memory.readStderr()).toContain("context compaction threshold");
   });
 
   it("returns success when every doctor check passes", async () => {

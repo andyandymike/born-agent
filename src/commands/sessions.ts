@@ -53,6 +53,7 @@ export interface SessionsListOptions {
 }
 
 export interface SessionsShowOptions {
+  readonly context?: boolean;
   readonly events: boolean;
   readonly json: boolean;
   readonly sessionId: string;
@@ -236,11 +237,94 @@ function publicTranscript(
     .slice(0, MAX_SHOW_ITEMS);
 }
 
+function publicArtifactFacts(
+  session: ReconstructedMultiRunSession,
+): Readonly<Record<string, unknown>> {
+  return {
+    capturedBytes: session.artifacts.budgetUsage.sessionBytes ?? 0,
+    objects: session.artifacts.objects.slice(0, MAX_SHOW_ITEMS).map((artifact) => ({
+      artifactId: artifact.artifactId,
+      bytes: artifact.bytes,
+      mediaTypes: artifact.mediaTypes,
+      referenceCount: artifact.referenceCount,
+      sha256: artifact.sha256,
+      wasCaptureTruncated: artifact.wasCaptureTruncated,
+    })),
+    objectsTruncated: session.artifacts.objects.length > MAX_SHOW_ITEMS,
+    storedReferences: session.artifacts.storedReferenceCount,
+    truncatedCaptures: session.artifacts.truncatedCaptureEventCount,
+    uniqueObjectBytes: session.artifacts.uniqueObjectBytes,
+    uniqueObjects: session.artifacts.objects.length,
+  };
+}
+
+function publicContextFacts(
+  session: ReconstructedMultiRunSession,
+): Readonly<Record<string, unknown>> {
+  const estimates = new Map<string, Extract<
+    (typeof session.events)[number],
+    { readonly type: "context.estimate.created" }
+  >>();
+  const encoded = new Map<string, Extract<
+    (typeof session.events)[number],
+    { readonly type: "model.request.encoded" }
+  >>();
+  const key = (runId: string, step: number): string => `${runId}:${step}`;
+  for (const event of session.events) {
+    if (event.scope !== "run") continue;
+    if (event.type === "context.estimate.created") {
+      estimates.set(key(event.runId, event.data.step), event);
+    } else if (event.type === "model.request.encoded") {
+      encoded.set(key(event.runId, event.data.step), event);
+    }
+  }
+  const plans = session.events.filter(
+    (event): event is Extract<
+      (typeof session.events)[number],
+      { readonly type: "context.plan.created" }
+    > => event.scope === "run" && event.type === "context.plan.created",
+  );
+  return {
+    plans: plans.slice(0, MAX_SHOW_ITEMS).map((plan) => {
+      const requestKey = key(plan.runId, plan.data.step);
+      const estimate = estimates.get(requestKey);
+      const request = encoded.get(requestKey);
+      return {
+        adapter: request?.data.adapter ?? null,
+        adapterEncodingVersion:
+          request?.data.adapter_encoding_version ?? null,
+        archivedItemCount: plan.data.archived_item_ids.length,
+        canonicalContextSha256: plan.data.canonical_context_sha256,
+        compacted: plan.data.compacted,
+        compactionThreshold:
+          estimate?.data.compaction_threshold ?? null,
+        contextWindowTokens:
+          estimate?.data.context_window_tokens ?? null,
+        encodedRequestSha256:
+          request?.data.encoded_request_sha256 ?? null,
+        epoch: plan.data.epoch,
+        estimatedInputTokens: plan.data.estimated_input_tokens,
+        includedItemCount: plan.data.included_item_ids.length,
+        plannerVersion: plan.data.planner_version,
+        protectedCategories: plan.data.protected_categories ?? [],
+        protectedEstimatedTokens: plan.data.protected_estimated_tokens,
+        protectedFactCount: plan.data.protected_fact_ids.length,
+        runId: plan.runId,
+        step: plan.data.step,
+      };
+    }),
+    plansTruncated: plans.length > MAX_SHOW_ITEMS,
+  };
+}
+
 export async function executeSessionsShow(
   options: SessionsShowOptions,
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
+  if (options.context === true && options.events) {
+    return usageError(io, "session show --context cannot be combined with --events");
+  }
   try {
     assertCanonicalSessionId(options.sessionId);
   } catch (error) {
@@ -260,7 +344,10 @@ export async function executeSessionsShow(
     const transcript = buildCanonicalTranscript(session.events);
     if (options.json) {
       writeJson(io, runtime, {
-        ...(options.events
+        artifacts: publicArtifactFacts(session),
+        ...(options.context === true
+          ? { context: publicContextFacts(session) }
+          : options.events
           ? { events: session.events }
           : {
               transcript: publicTranscript(transcript),
@@ -270,6 +357,7 @@ export async function executeSessionsShow(
         model: session.lastRun.started.data.model,
         provider: session.lastRun.started.data.provider,
         runs: session.runs.length,
+        schemaVersion: 1,
         sessionId: session.sessionId,
         status: session.status,
       });
@@ -281,6 +369,23 @@ export async function executeSessionsShow(
     io.stdout.write(
       `Backend: ${session.lastRun.started.data.provider}/${session.lastRun.started.data.model}\n`,
     );
+    io.stdout.write(
+      `Artifacts: ${session.artifacts.storedReferenceCount} references, ${session.artifacts.objects.length} objects, ${session.artifacts.budgetUsage.sessionBytes ?? 0} captured bytes, ${session.artifacts.truncatedCaptureEventCount} truncated\n`,
+    );
+    if (options.context === true) {
+      const facts = publicContextFacts(session) as {
+        readonly plans: readonly Readonly<Record<string, unknown>>[];
+        readonly plansTruncated: boolean;
+      };
+      io.stdout.write(`Context plans: ${facts.plans.length}\n`);
+      for (const plan of facts.plans) {
+        io.stdout.write(
+          `run=${String(plan.runId)} step=${String(plan.step)} epoch=${String(plan.epoch)} estimated_input_tokens=${String(plan.estimatedInputTokens)} context_window_tokens=${String(plan.contextWindowTokens)} protected_estimated_tokens=${String(plan.protectedEstimatedTokens)} protected_categories=${(plan.protectedCategories as readonly string[]).join(",") || "none"} archived_items=${String(plan.archivedItemCount)} compacted=${String(plan.compacted)} canonical_context_sha256=${String(plan.canonicalContextSha256)} encoded_request_sha256=${String(plan.encodedRequestSha256 ?? "unavailable")}\n`,
+        );
+      }
+      if (facts.plansTruncated) io.stdout.write("[context plans truncated]\n");
+      return 0;
+    }
     if (options.events) {
       for (const event of session.events.slice(0, MAX_SHOW_ITEMS)) {
         io.stdout.write(
@@ -309,9 +414,18 @@ function lastBackend(run: ReconstructedRunProjection) {
     .find((event) => event.type === "backend.selected");
 }
 
-const PHASE9_ONLY_RUN_EVENTS = new Set([
+const NON_LEGACY_RUN_EVENTS = new Set([
+  "artifact.capture.truncated",
+  "artifact.stored",
   "backend.canonical_boundary.created",
   "backend.checkpoint.created",
+  "context.compaction.failed",
+  "context.compaction.started",
+  "context.estimate.created",
+  "context.plan.created",
+  "model.request.encoded",
+  "repository.rules.changed",
+  "repository.rules.loaded",
   "resume.pending_call.adopted",
   "tool.call.recovered",
 ]);
@@ -349,7 +463,7 @@ function legacyDomainEvents(
         }),
       ];
     }
-    if (PHASE9_ONLY_RUN_EVENTS.has(event.type)) return [];
+    if (NON_LEGACY_RUN_EVENTS.has(event.type)) return [];
     return [
       runEventSchema.parse({
         data: event.data,

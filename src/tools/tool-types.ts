@@ -1,5 +1,6 @@
 import type { z } from "zod";
 
+import type { ArtifactOutputMaterializationPort } from "../artifacts/artifact-session-runtime.js";
 import type { ModelToolDefinition } from "../model/model-backend.js";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
@@ -113,6 +114,7 @@ export interface ToolInvocation {
   readonly argumentsJson: string;
   readonly callId: string;
   readonly name: string;
+  readonly originEventId?: string;
   readonly step: number;
 }
 
@@ -135,6 +137,7 @@ export class FatalToolExecutionError extends Error {
 }
 
 export interface ToolRegistryLike {
+  readonly artifactOutput?: ArtifactOutputMaterializationPort;
   readonly completion?: CompletionRuntimeLike | undefined;
   readonly modelDefinitions: readonly ModelToolDefinition[];
   execute(

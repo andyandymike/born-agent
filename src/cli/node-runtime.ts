@@ -64,6 +64,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         return createReadonlyToolRegistry(
           registryOptions.workspace,
           registryOptions.secrets ?? [],
+          registryOptions.artifactRuntime,
         );
       }
       const executableRegistry = createDefaultExecutableRegistry({

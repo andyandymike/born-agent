@@ -24,6 +24,10 @@ import type {
 import type { BudgetExceeded, BudgetTracker } from "./budget-tracker.js";
 import { RepetitionDetector } from "./repetition-detector.js";
 import { AGENT_SYSTEM_INSTRUCTIONS } from "./system-instructions.js";
+import {
+  type AgentContextController,
+  ContextRequestBudgetError,
+} from "../context/agent-context-controller.js";
 
 type RunAbortReason = "max_duration" | "user";
 
@@ -65,6 +69,7 @@ export interface AgentLoopDeps {
   // 因此测试无需真实网络、磁盘、timer 或子进程。
   readonly budget: BudgetTracker;
   readonly clock: AgentClock;
+  readonly context?: AgentContextController;
   readonly instructions?: string;
   readonly initialInput?: ModelTurnInput;
   readonly inheritedCall?: InheritedAgentCall;
@@ -345,7 +350,11 @@ export async function runAgentLoop(
     exceeded: BudgetExceeded | {
       readonly limit: number;
       readonly observed: number;
-      readonly reason: "repeated_tool_call";
+      readonly reason:
+        | "context_estimate_overflow"
+        | "context_protected_overflow"
+        | "context_unsafe_compaction"
+        | "repeated_tool_call";
     },
   ): Promise<AgentTerminal> => {
     // PHASE4: 预算耗尽使用独立 terminal/exit 7，表明这是受控策略停止而非程序故障。
@@ -491,7 +500,7 @@ export async function runAgentLoop(
         callId: inherited.callId,
         name: inherited.toolName,
       };
-      await publisher.adoptPendingCall(
+      const inheritedOriginEventId = await publisher.adoptPendingCall(
         {
           call_id: inherited.callId,
           checkpoint_id: inherited.checkpointId,
@@ -513,6 +522,7 @@ export async function runAgentLoop(
             argumentsJson: inherited.argumentsJson,
             callId: inherited.callId,
             name: inherited.toolName,
+            originEventId: inheritedOriginEventId,
             step: inherited.step,
           },
           runController.signal,
@@ -649,6 +659,34 @@ export async function runAgentLoop(
       // 若请求工具，工具结果仍会落盘，只有回到这里时才由 maxSteps 阻止额外 model call。
       if (beforeStep !== undefined) return await publishBudget(beforeStep);
 
+      const nextStep = budget.snapshot().steps + 1;
+      let modelRequest: ModelTurnRequest = {
+        input: pendingInput,
+        instructions: deps.instructions ?? AGENT_SYSTEM_INSTRUCTIONS,
+        timeoutMs: config.requestTimeoutMs,
+        tools: deps.tools.modelDefinitions,
+      };
+      if (deps.context !== undefined) {
+        try {
+          modelRequest = await deps.context.prepare({
+            input: pendingInput,
+            instructions: deps.instructions ?? AGENT_SYSTEM_INSTRUCTIONS,
+            step: nextStep,
+            timeoutMs: config.requestTimeoutMs,
+            tools: deps.tools.modelDefinitions,
+          });
+        } catch (error) {
+          if (error instanceof ContextRequestBudgetError) {
+            return await publishBudget({
+              limit: error.limitTokens,
+              observed: error.estimatedTokens,
+              reason: error.reason,
+            });
+          }
+          throw error;
+        }
+      }
+
       const step = budget.beginStep();
       const remaining = budget.remaining();
       // PHASE4: step.started 在模型请求前持久化；写盘失败时该请求不会发生。
@@ -671,12 +709,7 @@ export async function runAgentLoop(
         // PHASE4: 每一步都继续提供完整只读工具集，这是与 Phase 3 第二回合 tools:[] 的关键区别。
         turn = await consumeModelTurn(
           deps.model,
-          {
-            input: pendingInput,
-            instructions: deps.instructions ?? AGENT_SYSTEM_INSTRUCTIONS,
-            timeoutMs: config.requestTimeoutMs,
-            tools: deps.tools.modelDefinitions,
-          },
+          modelRequest,
           requestAbort,
           publisher,
           taskProfile === "coding" ? "internal_candidate" : "user",
@@ -864,7 +897,7 @@ export async function runAgentLoop(
       );
       // PHASE4: fingerprint 先规范化 JSON key 顺序再 hash，使等价参数稳定相同；
       // 连续第三次在 Registry executor 前阻止，避免把模型死循环变成真实重复工作。
-      await publisher.publish({
+      const requestedEvent = await publisher.publish({
         data: {
           arguments_json: safeToolArguments(
             turn.call.argumentsJson,
@@ -923,6 +956,7 @@ export async function runAgentLoop(
           argumentsJson: turn.call.argumentsJson,
           callId: turn.call.callId,
           name: turn.call.name,
+          originEventId: requestedEvent.event_id,
           step,
         },
         runController.signal,

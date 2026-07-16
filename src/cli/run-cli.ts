@@ -80,6 +80,22 @@ export async function runCli(
       "--max-command-output-bytes <bytes>",
       "combined stdout/stderr capture budget",
     )
+    .option(
+      "--context-reserve-output-tokens <tokens>",
+      "reserved output capacity for each context plan",
+    )
+    .option(
+      "--context-compaction-threshold <ratio>",
+      "context compaction threshold from 0.50 to 0.95",
+    )
+    .option(
+      "--context-window-tokens <tokens>",
+      "conservative context window override (may only lower a pinned limit)",
+    )
+    .option(
+      "--artifact-capture-bytes <bytes>",
+      "maximum sanitized capture bytes per artifact",
+    )
     .option("--verbose", "write step and budget metadata to stderr", false)
     .addHelpText(
       "after",
@@ -89,9 +105,13 @@ export async function runCli(
       async (
         task: string,
         options: {
+          artifactCaptureBytes?: string;
           commandApproval?: string;
           commandTimeoutMs?: string;
           completionPolicy?: string;
+          contextCompactionThreshold?: string;
+          contextReserveOutputTokens?: string;
+          contextWindowTokens?: string;
           editApproval?: string;
           maxDurationMs?: string;
           maxCommandOutputBytes?: string;
@@ -109,9 +129,13 @@ export async function runCli(
       ) => {
         commandExitCode = await executeAgent(
           {
+            artifactCaptureBytes: options.artifactCaptureBytes,
             commandApproval: options.commandApproval,
             commandTimeoutMs: options.commandTimeoutMs,
             completionPolicy: options.completionPolicy,
+            contextCompactionThreshold: options.contextCompactionThreshold,
+            contextReserveOutputTokens: options.contextReserveOutputTokens,
+            contextWindowTokens: options.contextWindowTokens,
             editApproval: options.editApproval,
             maxDurationMs: options.maxDurationMs,
             maxCommandOutputBytes: options.maxCommandOutputBytes,
@@ -222,15 +246,21 @@ export async function runCli(
     .command("show")
     .description("Replay one saved session without calling a model or tool.")
     .argument("<session-id>", "canonical session UUID")
+    .option("--context", "show bounded context plan metadata", false)
     .option("--events", "show bounded redacted domain events", false)
     .option("--json", "write a versioned JSON document", false)
     .action(
       async (
         sessionId: string,
-        options: { events: boolean; json: boolean },
+        options: { context: boolean; events: boolean; json: boolean },
       ) => {
         commandExitCode = await executeSessionsShow(
-          { events: options.events, json: options.json, sessionId },
+          {
+            context: options.context,
+            events: options.events,
+            json: options.json,
+            sessionId,
+          },
           runtime,
           io,
         );

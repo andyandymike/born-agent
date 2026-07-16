@@ -2,7 +2,10 @@ import {
   runAgentLoop,
   type InheritedAgentCall,
 } from "../agent/agent-loop.js";
-import { resolveAgentConfig } from "../agent/agent-config.js";
+import {
+  resolveAgentConfig,
+  resolveAgentContextRuntime,
+} from "../agent/agent-config.js";
 import type {
   AgentCommandOptions,
   AgentExitCode,
@@ -28,6 +31,20 @@ import type {
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import { FatalToolExecutionError } from "../tools/tool-types.js";
+import { ArtifactSessionRuntime } from "../artifacts/artifact-session-runtime.js";
+import {
+  AgentContextRuntime,
+} from "../context/agent-context-runtime.js";
+import {
+  AgentContextController,
+  type ContextEventAppender,
+} from "../context/agent-context-controller.js";
+import type {
+  Phase10ContextRunEventData,
+  Phase10ContextRunEventType,
+} from "../context/context-event-schema.js";
+import { RootAgentsLoader } from "../repository-rules/root-agents-loader.js";
+import type { RepositoryRulesChangeDetection } from "../repository-rules/repository-rule-set.js";
 import { buildWorkspaceResumeFingerprint } from "../resume/workspace-resume-fingerprint-builder.js";
 import {
   persistWorkspaceResumeFingerprint,
@@ -120,6 +137,17 @@ export async function executeAgent(
     await closeResumedWriter(resumedExecution);
     return 2;
   }
+  const contextRuntimeResult = resolveAgentContextRuntime(
+    config,
+    backend.contextCapacity,
+  );
+  if (!contextRuntimeResult.ok) {
+    renderer.renderDiagnostic(
+      `usage/config error: ${contextRuntimeResult.error}`,
+    );
+    await closeResumedWriter(resumedExecution);
+    return 2;
+  }
   const sessionId = resumedExecution?.sessionId ?? runtime.randomUUID();
   const runId = resumedExecution?.runId ?? runtime.randomUUID();
   let workspaceResumeFingerprint = resumedExecution?.fingerprint;
@@ -192,12 +220,22 @@ export async function executeAgent(
         task_profile: config.taskProfile,
         tools:
           config.taskProfile === "read-only"
-            ? ["list_files", "read_file", "search"]
+            ? [
+                "list_files",
+                "read_file",
+                ...(writer.appendArtifactEvent === undefined
+                  ? []
+                  : ["read_artifact"]),
+                "search",
+              ]
             : [
                 "apply_patch",
                 "finish_task",
                 "list_files",
                 "read_file",
+                ...(writer.appendArtifactEvent === undefined
+                  ? []
+                  : ["read_artifact"]),
                 "run_command",
                 "search",
               ],
@@ -233,9 +271,200 @@ export async function executeAgent(
       },
       type: "backend.selected",
     });
+    if (writer.appendRunEvent === undefined) {
+      throw new TypeError("agent session writer does not support Phase 10 events");
+    }
+    if (
+      writer.persistenceProfile === "phase10_full" &&
+      (writer.appendRunEventWithId === undefined ||
+        writer.appendArtifactEvent === undefined ||
+        writer.readDecodedEvents === undefined)
+    ) {
+      throw new TypeError(
+        "Phase 10 production writer is missing durable event capabilities",
+      );
+    }
+    const decodedEvents = () => writer.readDecodedEvents?.() ?? publisher.events;
+    const artifactRuntime =
+      writer.appendArtifactEvent === undefined
+        ? undefined
+        : await ArtifactSessionRuntime.create({
+            budgets: {
+              perArtifactBytes: config.artifactCaptureBytes ?? 4 * 1024 * 1024,
+            },
+            events: writer.readDecodedEvents?.() ?? [],
+            eventAppender: {
+              appendArtifactEvent: async (eventRunId, event) => {
+                try {
+                  await writer.appendArtifactEvent!(eventRunId, event);
+                } catch (error) {
+                  throw new EventPersistenceError(error);
+                }
+              },
+            },
+            runId,
+            secrets: [
+              runtime.env.OPENAI_API_KEY,
+              runtime.env.ANTHROPIC_API_KEY,
+            ],
+            sessionId,
+            workspace: runtime.cwd,
+          });
+
+    let rulesLoader: RootAgentsLoader | undefined;
+    let repositoryRules;
+    let repositoryRulesEventId: string | undefined;
+    if (
+      artifactRuntime !== undefined &&
+      writer.appendRunEventWithId !== undefined
+    ) {
+      const rulesEventId = runtime.randomUUID();
+      repositoryRulesEventId = rulesEventId;
+      rulesLoader = await RootAgentsLoader.create(runtime.cwd, {
+        artifactStore: {
+          storeRepositoryRules: async (input) => {
+            const stored = await artifactRuntime.materializeText({
+              bytes: input.bytes,
+              expectedSha256: input.expectedSha256,
+              mediaType: input.mediaType,
+              originEventId: rulesEventId,
+            });
+            return {
+              artifactId: stored.artifactId,
+              bytes: stored.bytes,
+              relativeRef: stored.objectRef,
+              sha256: stored.sha256,
+            };
+          },
+        },
+      });
+      repositoryRules = await rulesLoader.loadForRun();
+      try {
+        await writer.appendRunEventWithId(
+          runId,
+          rulesEventId,
+          "repository.rules.loaded",
+          repositoryRules.snapshot.state === "missing"
+            ? { relative_path: "AGENTS.md", state: "missing" }
+            : {
+                artifact_id: repositoryRules.snapshot.artifact.artifactId,
+                bytes: repositoryRules.snapshot.contentBytes,
+                content_sha256: repositoryRules.snapshot.contentSha256,
+                object_ref: repositoryRules.snapshot.artifact.relativeRef,
+                relative_path: "AGENTS.md",
+                state: "loaded",
+              },
+        );
+      } catch (error) {
+        throw new EventPersistenceError(error);
+      }
+      if (config.verbose) {
+        io.stderr.write(
+          repositoryRules.snapshot.state === "missing"
+            ? "repository_rules path=AGENTS.md state=missing\n"
+            : `repository_rules path=AGENTS.md sha256=${repositoryRules.snapshot.contentSha256}\n`,
+        );
+      }
+    }
+
+    let rulesChangeRecorded = false;
+    const persistRulesChange = async (
+      change: RepositoryRulesChangeDetection,
+    ): Promise<void> => {
+      if (!change.changed || rulesChangeRecorded) return;
+      const current = change.current;
+      try {
+        await writer.appendRunEvent!(runId, "repository.rules.changed", {
+          ...(current.state === "loaded"
+            ? { current_content_sha256: current.contentSha256 }
+            : current.state === "missing"
+              ? { current_content_sha256: null }
+              : { current_error_code: current.errorCode }),
+          current_state: current.state,
+          frozen_content_sha256:
+            change.frozen.state === "loaded"
+              ? change.frozen.contentSha256
+              : null,
+          frozen_state: change.frozen.state,
+          reason: change.reason,
+          relative_path: "AGENTS.md",
+        });
+      } catch (error) {
+        throw new EventPersistenceError(error);
+      }
+      rulesChangeRecorded = true;
+      if (config.verbose) {
+        io.stderr.write(`repository_rules changed reason=${change.reason}\n`);
+      }
+    };
+
+    const contextEvents: ContextEventAppender = {
+      append: async <TType extends Phase10ContextRunEventType>(
+        type: TType,
+        data: Phase10ContextRunEventData<TType>,
+      ): Promise<void> => {
+        try {
+          await writer.appendRunEvent!(runId, type, data);
+        } catch (error) {
+          throw new EventPersistenceError(error);
+        }
+        if (!config.verbose) return;
+        if (type === "context.estimate.created") {
+          const estimate = data as Phase10ContextRunEventData<"context.estimate.created">;
+          io.stderr.write(
+            `context estimated_input_tokens=${estimate.estimated_input_tokens} absolute_input_tokens=${estimate.absolute_input_tokens} context_window_tokens=${estimate.context_window_tokens} epoch=${estimate.epoch}\n`,
+          );
+        } else if (type === "context.plan.created") {
+          const plan = data as Phase10ContextRunEventData<"context.plan.created">;
+          io.stderr.write(
+            `context_plan epoch=${plan.epoch} protected_tokens=${plan.protected_estimated_tokens} archived_items=${plan.archived_item_ids.length} compacted=${String(plan.compacted)}\n`,
+          );
+        }
+      },
+    };
+    const existingPlans = decodedEvents().filter(
+      (event) => event.type === "context.plan.created",
+    );
+    const initialContextEpoch = existingPlans.reduce(
+      (maximum, event) => {
+        const data = event.data as { readonly epoch?: unknown };
+        return typeof data.epoch === "number" && Number.isSafeInteger(data.epoch)
+          ? Math.max(maximum, data.epoch)
+          : maximum;
+      },
+      0,
+    );
+    const context = new AgentContextController({
+      backend,
+      ...(rulesLoader === undefined || repositoryRules === undefined
+        ? {}
+        : {
+            beforePlan: async () => {
+              await persistRulesChange(
+                await rulesLoader!.detectChange(repositoryRules!),
+              );
+            },
+          }),
+      eventAppender: contextEvents,
+      events: decodedEvents,
+      initialEpoch: initialContextEpoch,
+      runtime: new AgentContextRuntime({
+        budget: contextRuntimeResult.value.budget,
+        estimator: contextRuntimeResult.value.estimator,
+        ...(repositoryRules === undefined ? {} : { repositoryRules }),
+        ...(repositoryRulesEventId === undefined
+          ? {}
+          : { repositoryRulesEventId }),
+        systemInstructions:
+          config.taskProfile === "read-only"
+            ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
+            : AGENT_SYSTEM_INSTRUCTIONS,
+      }),
+    });
     const tools = await runtime.createAgentToolRegistry({
       approvalMode: config.editApproval,
       approvalPrompt: runtime.createApprovalPrompt(io),
+      ...(artifactRuntime === undefined ? {} : { artifactRuntime }),
       caseInsensitivePaths: runtime.platform === "win32",
       commandApprovalMode: config.commandApproval,
       commandTimeoutMs: config.commandTimeoutMs,
@@ -272,6 +501,7 @@ export async function executeAgent(
       {
         budget,
         clock: runtime,
+        context,
         instructions:
           config.taskProfile === "read-only"
             ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS

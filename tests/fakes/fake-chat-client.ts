@@ -60,6 +60,11 @@ export class FakeStreamingChatClient implements ModelBackend {
     tools: "strict",
     usage: "complete",
   } as const;
+  readonly contextCapacity = Object.freeze({
+    contextWindowTokens: 32_768,
+    maximumOutputTokens: 8_192,
+    source: "pinned_catalog" as const,
+  });
   readonly resume = Object.freeze({
     capability: "canonical_only",
     supportsCanonicalDegradedResume: true,
@@ -100,6 +105,12 @@ export class FakeStreamingChatClient implements ModelBackend {
     signal: AbortSignal,
   ): AsyncIterable<ModelEvent> {
     const fakeRequest: FakeModelTurnRequest = {
+      ...(request.canonicalContext === undefined
+        ? {}
+        : { canonicalContext: request.canonicalContext }),
+      ...(request.contextPlan === undefined
+        ? {}
+        : { contextPlan: request.contextPlan }),
       input: request.input,
       instructions: request.instructions,
       model: this.identity.model,

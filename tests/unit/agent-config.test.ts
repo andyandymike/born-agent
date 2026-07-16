@@ -6,9 +6,13 @@ import {
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES,
   DEFAULT_AGENT_REQUEST_TIMEOUT_MS,
+  DEFAULT_ARTIFACT_CAPTURE_BYTES,
   DEFAULT_COMMAND_TIMEOUT_MS,
+  DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+  DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS,
   DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
   resolveAgentConfig,
+  resolveAgentContextRuntime,
 } from "../../src/agent/agent-config.js";
 
 const options = {
@@ -36,9 +40,12 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentConfig(options, {})).toEqual({
       ok: true,
       value: {
+        artifactCaptureBytes: DEFAULT_ARTIFACT_CAPTURE_BYTES,
         commandApproval: "ask",
         commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
         completionPolicy: "verified",
+        contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+        contextReserveOutputTokens: DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS,
         editApproval: "ask",
         maxDurationMs: DEFAULT_AGENT_MAX_DURATION_MS,
         maxCommandOutputBytes: DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
@@ -107,6 +114,20 @@ describe("resolveAgentConfig", () => {
     [{ ...options, completionPolicy: "trust-model" }, "completion policy"],
     [{ ...options, requireVerification: "false" }, "require verification"],
     [{ ...options, reportFormat: "yaml" }, "report format"],
+    [
+      { ...options, contextReserveOutputTokens: "511" },
+      "context reserve output tokens",
+    ],
+    [
+      { ...options, contextCompactionThreshold: "0.49" },
+      "context compaction threshold",
+    ],
+    [
+      { ...options, contextCompactionThreshold: "NaN" },
+      "context compaction threshold",
+    ],
+    [{ ...options, contextWindowTokens: "2047" }, "context window tokens"],
+    [{ ...options, artifactCaptureBytes: "65535" }, "artifact capture bytes"],
   ])("rejects invalid input before a session is created", (input, message) => {
     const result = resolveAgentConfig(input, {});
     expect(result.ok).toBe(false);
@@ -123,5 +144,70 @@ describe("resolveAgentConfig", () => {
       { BORN_OLLAMA_BASE_URL: baseURL },
     );
     expect(result).toMatchObject({ ok: false });
+  });
+
+  it("resolves pinned capacity and only permits a conservative window override", () => {
+    const resolved = resolveAgentConfig(options, {});
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const pinned = resolveAgentContextRuntime(resolved.value, {
+      contextWindowTokens: 131_072,
+      maximumOutputTokens: 16_384,
+      source: "pinned_catalog",
+    });
+    expect(pinned).toMatchObject({
+      ok: true,
+      value: {
+        budget: {
+          capacitySource: "pinned_catalog",
+          contextWindowTokens: 131_072,
+        },
+      },
+    });
+
+    const loweredConfig = resolveAgentConfig(
+      { ...options, contextWindowTokens: "65536" },
+      {},
+    );
+    expect(loweredConfig.ok).toBe(true);
+    if (!loweredConfig.ok) return;
+    expect(
+      resolveAgentContextRuntime(loweredConfig.value, {
+        contextWindowTokens: 131_072,
+        maximumOutputTokens: 16_384,
+        source: "pinned_catalog",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        budget: {
+          capacitySource: "user_conservative_limit",
+          contextWindowTokens: 65_536,
+        },
+      },
+    });
+
+    const raisedConfig = resolveAgentConfig(
+      { ...options, contextWindowTokens: "200000" },
+      {},
+    );
+    expect(raisedConfig.ok).toBe(true);
+    if (!raisedConfig.ok) return;
+    expect(
+      resolveAgentContextRuntime(raisedConfig.value, {
+        contextWindowTokens: 131_072,
+        maximumOutputTokens: 16_384,
+        source: "pinned_catalog",
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("requires an explicit conservative limit when backend capacity is unknown", () => {
+    const resolved = resolveAgentConfig(options, {});
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolveAgentContextRuntime(resolved.value, undefined)).toMatchObject({
+      ok: false,
+    });
   });
 });

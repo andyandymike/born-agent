@@ -1,5 +1,6 @@
 import type {
   BackendIdentity,
+  ModelCanonicalContextPayload,
   ModelToolDefinition,
   ModelTurnInput,
 } from "../../model/model-backend.js";
@@ -62,6 +63,7 @@ export type PiRuntimeEvent =
     };
 
 export type PiRuntimeRequest = {
+  readonly canonicalContext?: ModelCanonicalContextPayload;
   readonly identity: BackendIdentity;
   readonly input:
     | Extract<ModelTurnInput, { readonly kind: "user_prompt" }>

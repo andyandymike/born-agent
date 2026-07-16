@@ -74,6 +74,11 @@ const backend: ModelBackend = {
     tools: "strict",
     usage: "complete",
   },
+  contextCapacity: {
+    contextWindowTokens: 32_768,
+    maximumOutputTokens: 8_192,
+    source: "pinned_catalog",
+  },
   identity,
   resume: {
     capability: "exact_checkpoint",
@@ -546,6 +551,9 @@ describe("Phase 9 deterministic exact checkpoint crash fixture", () => {
       kind: "tool_result",
       output: '{"content":"durable fixture","ok":true}',
     });
+    expect(modelRequests[0]?.canonicalContext?.conversationMode).toBe(
+      "augment",
+    );
 
     const reconstructed = reconstructMultiRunSession(
       await readStoredSession(writer.path),

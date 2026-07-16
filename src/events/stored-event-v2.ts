@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import { phase10ContextRunEventDataSchemas } from "../context/context-event-schema.js";
+import { phase10ArtifactRunEventDataSchemas } from "../artifacts/artifact-event-schema.js";
+import { phase10RepositoryRulesRunEventDataSchemas } from "../repository-rules/repository-rules-event-schema.js";
+
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
   .string()
@@ -197,6 +201,9 @@ export const phase9SessionEventDataSchemas = {
 } as const;
 
 export const phase9RunEventDataSchemas = {
+  ...phase10ArtifactRunEventDataSchemas,
+  ...phase10ContextRunEventDataSchemas,
+  ...phase10RepositoryRulesRunEventDataSchemas,
   "backend.canonical_boundary.created":
     backendCanonicalBoundaryCreatedDataSchema,
   "backend.checkpoint.created": backendCheckpointCreatedDataSchema,

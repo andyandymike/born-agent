@@ -8,6 +8,13 @@ import type {
   ResolvedAgentConfig,
 } from "./agent-types.js";
 import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
+import {
+  DeterministicTokenEstimator,
+  resolveContextBudget,
+  type ContextBudget,
+  type TokenEstimator,
+} from "../context/token-estimator.js";
+import type { ContextCapacity } from "../model/model-context-capacity.js";
 
 export const DEFAULT_AGENT_MAX_STEPS = 8;
 export const DEFAULT_AGENT_MAX_DURATION_MS = 300_000;
@@ -22,9 +29,13 @@ export const DEFAULT_TASK_PROFILE = "coding" as const;
 export const DEFAULT_COMPLETION_POLICY = "verified" as const;
 export const DEFAULT_REQUIRE_VERIFICATION = "auto" as const;
 export const DEFAULT_REPORT_FORMAT = "text" as const;
+export const DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS = 4_096;
+export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.8;
+export const DEFAULT_CONTEXT_FIXED_SAFETY_MARGIN_TOKENS = 256;
+export const DEFAULT_ARTIFACT_CAPTURE_BYTES = 4_194_304;
 
 // PHASE4: 所有预算统一采用 CLI > 环境变量 > 内置默认值，先在创建 session 前完成验证。
-type ConfigResult<T> =
+export type ConfigResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly error: string; readonly ok: false };
 
@@ -32,6 +43,39 @@ interface IntegerContract {
   readonly label: string;
   readonly maximum: number;
   readonly minimum: number;
+}
+
+function resolveOptionalInteger(
+  cliValue: string | undefined,
+  environmentValue: string | undefined,
+  contract: IntegerContract,
+): ConfigResult<number | undefined> {
+  const selected = cliValue ?? environmentValue;
+  if (selected === undefined) return { ok: true, value: undefined };
+  return resolveInteger(selected, undefined, contract.minimum, contract);
+}
+
+function resolveThreshold(
+  cliValue: string | undefined,
+  environmentValue: string | undefined,
+): ConfigResult<number> {
+  const selected = cliValue ?? environmentValue;
+  if (selected === undefined) {
+    return { ok: true, value: DEFAULT_CONTEXT_COMPACTION_THRESHOLD };
+  }
+  if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/u.test(selected)) {
+    return {
+      error: "context compaction threshold must be a decimal from 0.50 to 0.95",
+      ok: false,
+    };
+  }
+  const value = Number(selected);
+  return value >= 0.5 && value <= 0.95
+    ? { ok: true, value }
+    : {
+        error: "context compaction threshold must be a decimal from 0.50 to 0.95",
+        ok: false,
+      };
 }
 
 function resolveInteger(
@@ -167,6 +211,43 @@ export function resolveAgentConfig(
     },
   );
   if (!maxCommandOutputBytes.ok) return maxCommandOutputBytes;
+  const contextReserveOutputTokens = resolveInteger(
+    options.contextReserveOutputTokens,
+    env.BORN_CONTEXT_RESERVE_OUTPUT_TOKENS,
+    DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS,
+    {
+      label: "context reserve output tokens",
+      maximum: 32_768,
+      minimum: 512,
+    },
+  );
+  if (!contextReserveOutputTokens.ok) return contextReserveOutputTokens;
+  const contextCompactionThreshold = resolveThreshold(
+    options.contextCompactionThreshold,
+    env.BORN_CONTEXT_COMPACTION_THRESHOLD,
+  );
+  if (!contextCompactionThreshold.ok) return contextCompactionThreshold;
+  const contextWindowTokens = resolveOptionalInteger(
+    options.contextWindowTokens,
+    env.BORN_CONTEXT_WINDOW_TOKENS,
+    {
+      label: "context window tokens",
+      maximum: 2_000_000,
+      minimum: 2_048,
+    },
+  );
+  if (!contextWindowTokens.ok) return contextWindowTokens;
+  const artifactCaptureBytes = resolveInteger(
+    options.artifactCaptureBytes,
+    env.BORN_ARTIFACT_CAPTURE_BYTES,
+    DEFAULT_ARTIFACT_CAPTURE_BYTES,
+    {
+      label: "artifact capture bytes",
+      maximum: 16_777_216,
+      minimum: 65_536,
+    },
+  );
+  if (!artifactCaptureBytes.ok) return artifactCaptureBytes;
 
   const ollamaBaseURL =
     provider.value === "ollama"
@@ -179,9 +260,15 @@ export function resolveAgentConfig(
   return {
     ok: true,
     value: {
+      artifactCaptureBytes: artifactCaptureBytes.value,
       commandApproval,
       commandTimeoutMs: commandTimeoutMs.value,
       completionPolicy,
+      contextCompactionThreshold: contextCompactionThreshold.value,
+      contextReserveOutputTokens: contextReserveOutputTokens.value,
+      ...(contextWindowTokens.value === undefined
+        ? {}
+        : { contextWindowTokens: contextWindowTokens.value }),
       editApproval,
       maxDurationMs: maxDurationMs.value,
       maxCommandOutputBytes: maxCommandOutputBytes.value,
@@ -201,4 +288,66 @@ export function resolveAgentConfig(
       verbose: options.verbose,
     },
   };
+}
+
+export interface ResolvedAgentContextRuntime {
+  readonly budget: ContextBudget;
+  readonly estimator: TokenEstimator;
+}
+
+export function resolveAgentContextRuntime(
+  config: ResolvedAgentConfig,
+  backendCapacity: ContextCapacity | undefined,
+): ConfigResult<ResolvedAgentContextRuntime> {
+  const catalogWindow = backendCapacity?.contextWindowTokens ?? null;
+  if (
+    config.contextWindowTokens !== undefined &&
+    catalogWindow !== null &&
+    config.contextWindowTokens > catalogWindow
+  ) {
+    return {
+      error: `context window tokens may lower but not exceed pinned catalog limit ${catalogWindow}`,
+      ok: false,
+    };
+  }
+  const contextWindowTokens = config.contextWindowTokens ?? catalogWindow;
+  const capacity: ContextCapacity = Object.freeze({
+    contextWindowTokens,
+    maximumOutputTokens: backendCapacity?.maximumOutputTokens ?? null,
+    source:
+      config.contextWindowTokens === undefined
+        ? "pinned_catalog"
+        : "user_conservative_limit",
+  });
+  try {
+    const budget = resolveContextBudget(capacity, {
+      compactionThreshold:
+        config.contextCompactionThreshold ??
+        DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+      fixedSafetyMarginTokens: DEFAULT_CONTEXT_FIXED_SAFETY_MARGIN_TOKENS,
+      reservedOutputTokens:
+        config.contextReserveOutputTokens ??
+        DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS,
+    });
+    const estimator = new DeterministicTokenEstimator({
+      bytesPerToken: 3,
+      itemOverheadTokens: 8,
+      model: config.model,
+      provider: config.provider,
+      tokenizer: "utf8-conservative",
+      version: "phase10-v1",
+    });
+    return {
+      ok: true,
+      value: Object.freeze({ budget, estimator }),
+    };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "context capacity configuration is invalid",
+      ok: false,
+    };
+  }
 }

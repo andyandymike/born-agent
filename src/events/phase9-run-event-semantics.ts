@@ -8,6 +8,7 @@ import {
   type CommandOutputAccumulator,
 } from "../resume/pending-effect-ledger.js";
 import type { RecoveredToolObservation } from "../resume/resume-types.js";
+import { assertPhase10ContextEventSemantics } from "../context/context-event-semantics.js";
 
 type BackendSelectedEvent = Extract<
   DecodedRunEvent,
@@ -373,6 +374,7 @@ function assertRecoveredEffect(
 export function assertPhase9RunEventSemantics(
   events: readonly DecodedStoredEvent[],
 ): void {
+  assertPhase10ContextEventSemantics(events);
   const runs = new Map<string, RunSemanticState>();
   const checkpointIds = new Set<string>();
 

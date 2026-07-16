@@ -2,6 +2,10 @@ import {
   assertDecodedStoredEventInvariants,
   isDecodedTerminalRunEvent,
 } from "../events/event-decoder-registry.js";
+import {
+  reconstructArtifactSessionLedger,
+  type ArtifactSessionLedgerProjection,
+} from "../artifacts/artifact-session-ledger.js";
 import { assertPhase9RunEventSemantics } from "../events/phase9-run-event-semantics.js";
 import { runEventSchema } from "../events/run-event-schema.js";
 import type {
@@ -47,6 +51,7 @@ export interface ReconstructedRunProjection {
 }
 
 export interface ReconstructedMultiRunSession {
+  readonly artifacts: ArtifactSessionLedgerProjection;
   readonly events: readonly DecodedStoredEvent[];
   readonly lastRun: ReconstructedRunProjection;
   readonly runs: readonly ReconstructedRunProjection[];
@@ -68,9 +73,18 @@ export class SessionProjectionError extends Error {
   }
 }
 
-const PHASE9_RUN_EVENT_TYPES = new Set<string>([
+const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
+  "artifact.capture.truncated",
+  "artifact.stored",
   "backend.canonical_boundary.created",
   "backend.checkpoint.created",
+  "context.compaction.failed",
+  "context.compaction.started",
+  "context.estimate.created",
+  "context.plan.created",
+  "model.request.encoded",
+  "repository.rules.changed",
+  "repository.rules.loaded",
   "resume.pending_call.adopted",
   "tool.call.recovered",
 ]);
@@ -115,7 +129,7 @@ function toLegacyDomainEvent(
       type: "tool.call.requested",
     });
   }
-  if (PHASE9_RUN_EVENT_TYPES.has(event.type)) return undefined;
+  if (NON_LEGACY_RUN_EVENT_TYPES.has(event.type)) return undefined;
   return runEventSchema.parse({
     data: event.data,
     event_id: event.eventId,
@@ -297,6 +311,8 @@ export function reconstructMultiRunSession(
   // used before append; otherwise a hand-edited but schema-valid log could
   // acquire resume authority that the online writer would have rejected.
   assertPhase9RunEventSemantics(events);
+  const sessionId = events[0]?.sessionId ?? "";
+  const artifacts = reconstructArtifactSessionLedger(events, sessionId);
 
   const mutableRuns = new Map<string, MutableRunProjection>();
   const runOrder: string[] = [];
@@ -391,11 +407,12 @@ export function reconstructMultiRunSession(
   }
 
   return {
+    artifacts,
     events,
     lastRun,
     runs,
     sessionEvents,
-    sessionId: events[0]?.sessionId ?? "",
+    sessionId,
     status: lastRun.status,
   };
 }

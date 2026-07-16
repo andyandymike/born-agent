@@ -225,6 +225,35 @@ describe("Phase 9 sessions CLI", () => {
       sessionId: session.id,
       status: "completed",
     });
+
+    const context = createMemoryIO();
+    expect(
+      await runCli(
+        ["sessions", "show", session.id, "--context", "--json"],
+        context.io,
+        runtime,
+      ),
+    ).toBe(0);
+    expect(JSON.parse(context.readStdout())).toMatchObject({
+      context: {
+        plans: [
+          {
+            canonicalContextSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            epoch: 0,
+            estimatedInputTokens: expect.any(Number),
+            protectedCategories: expect.arrayContaining([
+              "system_policy",
+              "user_instruction",
+            ]),
+            step: 1,
+          },
+        ],
+        plansTruncated: false,
+      },
+      schemaVersion: 1,
+      sessionId: session.id,
+    });
+    expect(context.readStdout()).not.toContain("saved answer");
     expect(createModelBackend).toHaveBeenCalledOnce();
   });
 

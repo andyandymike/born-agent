@@ -200,6 +200,9 @@ export class BackendFactory {
     });
     return new PiModelBackend({
       capabilities: entry.capabilities,
+      ...(entry.contextCapacity === undefined
+        ? {}
+        : { contextCapacity: entry.contextCapacity }),
       identity: Object.freeze({
         adapter: "pi-ai",
         adapterVersion: PI_AI_PACKAGE_VERSION,
