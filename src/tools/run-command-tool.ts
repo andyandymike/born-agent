@@ -19,6 +19,10 @@ import type {
   PermissionDecision,
   PermissionEngineLike,
 } from "../permissions/permission-types.js";
+import type {
+  ActiveVerificationContext,
+  Phase7CompletionRuntime,
+} from "../completion/phase7-completion-runtime.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { toolError } from "./tool-errors.js";
 import {
@@ -63,6 +67,12 @@ export interface RunCommandToolOptions {
   readonly publisher: EventPublisher;
   readonly randomUUID: () => string;
   readonly secrets?: readonly (string | undefined)[];
+  readonly verification?: Pick<
+    Phase7CompletionRuntime,
+    | "completeVerification"
+    | "prepareVerification"
+    | "publishVerificationStarted"
+  >;
 }
 
 interface CommandObservation {
@@ -448,6 +458,24 @@ export function createRunCommandTool(
         context.callId,
         context.step,
       );
+      let verification: ActiveVerificationContext | null = null;
+      if (options.verification !== undefined) {
+        try {
+          verification = await options.verification.prepareVerification(
+            prepared,
+            executionId,
+          );
+        } catch {
+          return {
+            error: toolError(
+              "system",
+              "verification_snapshot_failed",
+              "verification inputs or the source-state snapshot could not be established",
+            ),
+            ok: false,
+          };
+        }
+      }
       // PHASE6: request evidence is durable before crossing the spawn boundary;
       // a write failure here therefore guarantees that no child was attempted.
       await publishBoundary(
@@ -470,6 +498,13 @@ export function createRunCommandTool(
         },
         false,
       );
+      if (verification !== null && options.verification !== undefined) {
+        await options.verification.publishVerificationStarted(
+          verification,
+          context.callId,
+          context.step,
+        );
+      }
 
       let executionAttempted = false;
       let started = false;
@@ -600,6 +635,24 @@ export function createRunCommandTool(
           "command process tree cleanup could not be verified",
           { workspaceMayHaveChanged: true },
         );
+      }
+
+      if (verification !== null && options.verification !== undefined) {
+        try {
+          await options.verification.completeVerification(
+            verification,
+            completed,
+            context.callId,
+            context.step,
+          );
+        } catch (error) {
+          if (error instanceof FatalToolExecutionError) throw error;
+          throw new FatalToolExecutionError(
+            "ambiguous_command_state",
+            "verification completion snapshot could not be established",
+            { cause: error, workspaceMayHaveChanged: true },
+          );
+        }
       }
 
       const error = resultError(completed);

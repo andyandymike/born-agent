@@ -9,6 +9,7 @@ function oneLine(value: string): string {
 export class ConsoleEventRenderer implements RunEventRenderer {
   private hasOutput = false;
   private outputEndsWithNewline = false;
+  private taskProfile: "read-only" | "coding" | undefined;
 
   constructor(
     private readonly io: CliIO,
@@ -20,13 +21,26 @@ export class ConsoleEventRenderer implements RunEventRenderer {
     // 文本走 stdout，诊断/元数据走 stderr，方便 shell 分别重定向两类输出。
     switch (event.type) {
       case "run.started":
+        if (event.data.command === "agent") {
+          this.taskProfile = event.data.task_profile ?? "read-only";
+        } else {
+          this.taskProfile = undefined;
+        }
         if (this.verbose) {
           this.io.stderr.write(
-            `session=${event.session_id} run=${event.run_id} provider=${event.data.provider} model=${oneLine(event.data.model)}\n`,
+            `session=${event.session_id} run=${event.run_id} provider=${event.data.provider} model=${oneLine(event.data.model)}${event.data.command === "agent" && event.data.task_profile !== undefined ? ` task_profile=${event.data.task_profile}` : ""}\n`,
           );
         }
         return;
       case "text.delta":
+        // PHASE7: coding prose is persisted as an internal candidate; only the
+        // deterministic report rendered after durable completion may claim success.
+        if (
+          this.taskProfile === "coding" ||
+          event.data.visibility === "internal_candidate"
+        ) {
+          return;
+        }
         this.io.stdout.write(event.data.delta);
         this.hasOutput = true;
         this.outputEndsWithNewline = event.data.delta.endsWith("\n");
@@ -145,6 +159,34 @@ export class ConsoleEventRenderer implements RunEventRenderer {
           );
         }
         return;
+      case "verification.started":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `verification=${event.data.verification_id} status=started kind=${event.data.kind} generation=${event.data.generation} execution=${event.data.command_execution_id} snapshot=${event.data.snapshot_sha256.slice(0, 12)}\n`,
+          );
+        }
+        return;
+      case "verification.completed":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `verification=${event.data.verification_id} status=${event.data.status} exit_code=${event.data.exit_code === null ? "none" : event.data.exit_code} generation=${event.data.started_generation}->${event.data.completed_generation} duration_ms=${event.data.duration_ms}${event.data.stale ? " stale=true" : ""}\n`,
+          );
+        }
+        return;
+      case "completion.candidate":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `completion call=${event.data.call_id} candidate=${event.data.status} hash=${event.data.candidate_sha256.slice(0, 12)}\n`,
+          );
+        }
+        return;
+      case "completion.evaluated":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `completion call=${event.data.call_id} effect=${event.data.effect}${event.data.reasons.length === 0 ? "" : ` reasons=${event.data.reasons.join(",")}`}\n`,
+          );
+        }
+        return;
       case "patch.apply.started":
         if (this.verbose) {
           this.io.stderr.write(
@@ -160,12 +202,14 @@ export class ConsoleEventRenderer implements RunEventRenderer {
         }
         return;
       case "run.completed":
-        if (!this.hasOutput) {
-          this.io.stdout.write("\n");
-          this.hasOutput = true;
-          this.outputEndsWithNewline = true;
-        } else {
-          this.ensureOutputLine();
+        if (event.data.completion_mode !== "verified_finish_task") {
+          if (!this.hasOutput) {
+            this.io.stdout.write("\n");
+            this.hasOutput = true;
+            this.outputEndsWithNewline = true;
+          } else {
+            this.ensureOutputLine();
+          }
         }
         if (this.verbose) {
           const responseId =
@@ -173,9 +217,15 @@ export class ConsoleEventRenderer implements RunEventRenderer {
               ? ""
               : ` response_id=${oneLine(event.data.provider_response_id)}`;
           this.io.stderr.write(
-            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.steps === undefined ? "" : ` steps=${event.data.steps}`}${event.data.tool_calls === undefined ? "" : ` tool_calls=${event.data.tool_calls}`}\n`,
+            `completed duration_ms=${event.data.duration_ms} output_chars=${event.data.output_chars}${responseId}${event.data.completion_mode === undefined ? "" : ` completion_mode=${event.data.completion_mode}`}${event.data.model_turns === undefined ? "" : ` model_turns=${event.data.model_turns}`}${event.data.steps === undefined ? "" : ` steps=${event.data.steps}`}${event.data.tool_calls === undefined ? "" : ` tool_calls=${event.data.tool_calls}`}\n`,
           );
         }
+        return;
+      case "run.incomplete":
+        // PHASE7: an evidence-based incomplete terminal is actionable task state,
+        // while run.failed remains reserved for provider/storage/program failure.
+        this.ensureOutputLine();
+        this.io.stderr.write(`Incomplete: ${event.data.reason}\n`);
         return;
       case "run.failed":
         this.ensureOutputLine();

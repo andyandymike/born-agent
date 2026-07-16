@@ -11,6 +11,10 @@ export const LOCAL_FREE_PERMISSION_POLICY_ID =
   "bornagent.local-free-only-command-policy";
 export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "1";
 export const PHASE6_FIXTURE_CWD = "fixtures/phase-06-command-execution";
+export const PHASE7_FIXTURE_CWDS = Object.freeze([
+  "fixtures/phase-07-fix-and-verify",
+  "fixtures/phase-07-verification-fails",
+]);
 
 export const LOCAL_FREE_PERMISSION_RULE_IDS = Object.freeze({
   askReviewedFixture: "local-free.ask.reviewed-phase6-fixture.v1",
@@ -88,6 +92,9 @@ function isFixtureNodeCommand(action: CommandActionIdentity): boolean {
 
   if (action.canonicalCwd === PHASE6_FIXTURE_CWD) {
     return !normalizedScript.startsWith("/");
+  }
+  if (PHASE7_FIXTURE_CWDS.includes(action.canonicalCwd)) {
+    return normalizedScript === "verify.mjs";
   }
   return (
     action.canonicalCwd === "." &&

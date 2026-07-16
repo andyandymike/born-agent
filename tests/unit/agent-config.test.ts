@@ -14,6 +14,7 @@ import {
 const options = {
   commandApproval: undefined,
   commandTimeoutMs: undefined,
+  completionPolicy: undefined,
   editApproval: undefined,
   maxDurationMs: undefined,
   maxCommandOutputBytes: undefined,
@@ -22,8 +23,11 @@ const options = {
   maxToolOutputBytes: undefined,
   model: undefined,
   provider: undefined,
+  reportFormat: undefined,
+  requireVerification: undefined,
   requestTimeoutMs: undefined,
   task: "inspect the repository",
+  taskProfile: undefined,
   verbose: false,
 };
 
@@ -34,6 +38,7 @@ describe("resolveAgentConfig", () => {
       value: {
         commandApproval: "ask",
         commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+        completionPolicy: "verified",
         editApproval: "ask",
         maxDurationMs: DEFAULT_AGENT_MAX_DURATION_MS,
         maxCommandOutputBytes: DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
@@ -42,8 +47,11 @@ describe("resolveAgentConfig", () => {
         maxToolOutputBytes: DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES,
         model: "gpt-5.6-terra",
         provider: "openai",
+        reportFormat: "text",
+        requireVerification: "auto",
         requestTimeoutMs: DEFAULT_AGENT_REQUEST_TIMEOUT_MS,
         task: options.task,
+        taskProfile: "coding",
         verbose: false,
       },
     });
@@ -95,6 +103,10 @@ describe("resolveAgentConfig", () => {
     [{ ...options, commandApproval: "always" }, "command approval"],
     [{ ...options, commandTimeoutMs: "999" }, "command timeout"],
     [{ ...options, maxCommandOutputBytes: "16383" }, "max command output"],
+    [{ ...options, taskProfile: "write" }, "task profile"],
+    [{ ...options, completionPolicy: "trust-model" }, "completion policy"],
+    [{ ...options, requireVerification: "false" }, "require verification"],
+    [{ ...options, reportFormat: "yaml" }, "report format"],
   ])("rejects invalid input before a session is created", (input, message) => {
     const result = resolveAgentConfig(input, {});
     expect(result.ok).toBe(false);

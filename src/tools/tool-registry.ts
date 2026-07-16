@@ -8,6 +8,7 @@ import {
   MAX_TOOL_ARGUMENT_BYTES,
   MAX_TOOL_OUTPUT_BYTES,
   type ToolDefinition,
+  type CompletionRuntimeLike,
   type ToolExecution,
   type ToolInvocation,
   type ToolRegistryLike,
@@ -41,6 +42,7 @@ export class ToolRegistry implements ToolRegistryLike {
   constructor(
     definitions: readonly ToolDefinition<unknown>[],
     private readonly secrets: readonly (string | undefined)[] = [],
+    readonly completion?: CompletionRuntimeLike,
   ) {
     // PHASE3: 注册阶段 fail fast：工具名必须稳定合法且不能重复。
     for (const definition of definitions) {
@@ -181,6 +183,7 @@ export class ToolRegistry implements ToolRegistryLike {
         );
       }
       return {
+        ...(result.control === undefined ? {} : { control: result.control }),
         error: safeError,
         ok: false,
         output,
@@ -204,6 +207,11 @@ export class ToolRegistry implements ToolRegistryLike {
         this.secrets,
       );
     }
-    return { ok: true, output, truncated: result.truncated };
+    return {
+      ...(result.control === undefined ? {} : { control: result.control }),
+      ok: true,
+      output,
+      truncated: result.truncated,
+    };
   }
 }

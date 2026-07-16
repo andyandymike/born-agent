@@ -11,6 +11,7 @@ export type TerminalRunEvent = Extract<
       | "run.budget_exceeded"
       | "run.cancelled"
       | "run.completed"
+      | "run.incomplete"
       | "run.failed";
   }
 >;
@@ -25,6 +26,7 @@ export type RunEventDraft = {
 export function isTerminalRunEvent(event: RunEvent): event is TerminalRunEvent {
   return (
     event.type === "run.completed" ||
+    event.type === "run.incomplete" ||
     event.type === "run.failed" ||
     event.type === "run.cancelled" ||
     event.type === "run.budget_exceeded"

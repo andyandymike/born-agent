@@ -18,6 +18,10 @@ export const DEFAULT_EDIT_APPROVAL = "ask" as const;
 export const DEFAULT_COMMAND_APPROVAL = "ask" as const;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 export const DEFAULT_MAX_COMMAND_OUTPUT_BYTES = 131_072;
+export const DEFAULT_TASK_PROFILE = "coding" as const;
+export const DEFAULT_COMPLETION_POLICY = "verified" as const;
+export const DEFAULT_REQUIRE_VERIFICATION = "auto" as const;
+export const DEFAULT_REPORT_FORMAT = "text" as const;
 
 // PHASE4: 所有预算统一采用 CLI > 环境变量 > 内置默认值，先在创建 session 前完成验证。
 type ConfigResult<T> =
@@ -81,6 +85,24 @@ export function resolveAgentConfig(
   const commandApproval = options.commandApproval ?? DEFAULT_COMMAND_APPROVAL;
   if (commandApproval !== "ask" && commandApproval !== "deny") {
     return { error: "command approval must be one of: ask, deny", ok: false };
+  }
+  const taskProfile = options.taskProfile ?? DEFAULT_TASK_PROFILE;
+  if (taskProfile !== "coding" && taskProfile !== "read-only") {
+    return { error: "task profile must be one of: read-only, coding", ok: false };
+  }
+  const completionPolicy =
+    options.completionPolicy ?? DEFAULT_COMPLETION_POLICY;
+  if (completionPolicy !== "verified") {
+    return { error: "completion policy must be: verified", ok: false };
+  }
+  const requireVerification =
+    options.requireVerification ?? DEFAULT_REQUIRE_VERIFICATION;
+  if (requireVerification !== "auto") {
+    return { error: "require verification must be: auto", ok: false };
+  }
+  const reportFormat = options.reportFormat ?? DEFAULT_REPORT_FORMAT;
+  if (reportFormat !== "text" && reportFormat !== "json") {
+    return { error: "report format must be one of: text, json", ok: false };
   }
 
   const provider = resolveProvider(options.provider, env.BORN_PROVIDER);
@@ -159,6 +181,7 @@ export function resolveAgentConfig(
     value: {
       commandApproval,
       commandTimeoutMs: commandTimeoutMs.value,
+      completionPolicy,
       editApproval,
       maxDurationMs: maxDurationMs.value,
       maxCommandOutputBytes: maxCommandOutputBytes.value,
@@ -170,8 +193,11 @@ export function resolveAgentConfig(
         ? {}
         : { ollamaBaseURL: ollamaBaseURL.value }),
       provider: provider.value,
+      reportFormat,
+      requireVerification,
       requestTimeoutMs: requestTimeoutMs.value,
       task: options.task,
+      taskProfile,
       verbose: options.verbose,
     },
   };

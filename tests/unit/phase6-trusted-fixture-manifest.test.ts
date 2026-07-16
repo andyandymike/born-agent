@@ -255,6 +255,7 @@ function makeUnlistedAction(
   sha256: string,
 ): CommandActionIdentity {
   const syntheticReview: TrustedLocalNodeFixtureReview = {
+    canonicalCwd: PHASE6_FIXTURE_CWD,
     exactArgv: [scriptName],
     id: "test.unlisted",
     outputLimitBytes: 131_072,

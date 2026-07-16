@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { persistedCompletionEvidenceSchema } from "../completion/completion-evidence-schema.js";
+
 // PHASE2: RunEvent 是 BornAgent 自己的长期存储协议。
 // TypeScript 只能检查编译期代码，Zod 还会检查 SDK 数据、磁盘 JSONL 和未来读回的数据。
 const uuidSchema = z.string().uuid();
@@ -13,6 +15,19 @@ const toolNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u);
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const callIdSchema = z.string().min(1).max(200);
 const stableIdentifierSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/u);
+const incompleteReasonSchema = z.enum([
+  "verification_missing",
+  "verification_failed",
+  "verification_stale",
+  "verification_inputs_unknown",
+  "diff_check_failed",
+  "source_state_changed",
+  "change_journal_inconsistent",
+  "pending_effect",
+  "task_blocked",
+  "completion_signal_required",
+  "no_changes_for_coding_task",
+]);
 const utf8StringWithin = (maximumBytes: number) =>
   z
     .string()
@@ -74,12 +89,17 @@ const agentRunStartedDataSchema = z
     // PHASE6: command controls stay optional so schema v1 Phase 0-5 JSONL remains replayable.
     command_approval: z.enum(["ask", "deny"]).optional(),
     command_timeout_ms: positiveInteger.optional(),
+    completion_policy: z.literal("verified").optional(),
     max_duration_ms: positiveInteger,
     max_command_output_bytes: positiveInteger.optional(),
     max_steps: positiveInteger,
     max_tokens: positiveInteger,
     max_tool_output_bytes: positiveInteger,
     request_timeout_ms: positiveInteger,
+    report_format: z.enum(["text", "json"]).optional(),
+    require_verification: z.literal("auto").optional(),
+    // PHASE7: optional only keeps Phase 0-6 schema-v1 logs replayable; new agent runs persist the profile explicitly.
+    task_profile: z.enum(["read-only", "coding"]).optional(),
   })
   .strict();
 const runStartedSchema = z
@@ -96,7 +116,13 @@ const runStartedSchema = z
 const textDeltaSchema = z
   .object({
     ...commonEnvelope,
-    data: z.object({ delta: z.string().min(1) }).strict(),
+    data: z
+      .object({
+        delta: z.string().min(1),
+        // PHASE7: coding prose is evidence of a model candidate, not user-visible proof of completion.
+        visibility: z.enum(["user", "internal_candidate"]).optional(),
+      })
+      .strict(),
     type: z.literal("text.delta"),
   })
   .strict();
@@ -188,15 +214,75 @@ const runCompletedSchema = z
     ...commonEnvelope,
     data: z
       .object({
+        completion_mode: z
+          .enum(["model_final", "verified_finish_task"])
+          .optional(),
         duration_ms: nonnegativeInteger,
+        evidence_sha256: sha256Schema.optional(),
         model_turns: positiveInteger.optional(),
         output_chars: nonnegativeInteger,
         provider_response_id: z.string().min(1).optional(),
+        report_sha256: sha256Schema.optional(),
         steps: positiveInteger.optional(),
         tool_calls: nonnegativeInteger.optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, context) => {
+        const hasEvidence = value.evidence_sha256 !== undefined;
+        const hasReport = value.report_sha256 !== undefined;
+        if (hasEvidence !== hasReport) {
+          context.addIssue({
+            code: "custom",
+            message: "completion evidence and report hashes must appear together",
+          });
+        }
+        if (
+          value.completion_mode === "verified_finish_task" &&
+          (!hasEvidence || !hasReport)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "verified completion requires evidence and report hashes",
+          });
+        }
+        if (value.completion_mode === "model_final" && (hasEvidence || hasReport)) {
+          context.addIssue({
+            code: "custom",
+            message: "model final completion cannot claim verified evidence",
+          });
+        }
+      }),
     type: z.literal("run.completed"),
+  })
+  .strict();
+
+const runIncompleteSchema = z
+  // PHASE7: failed verification is a truthful task outcome (exit 8), not a provider or program crash.
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        duration_ms: nonnegativeInteger,
+        evidence_sha256: sha256Schema.optional(),
+        output_chars: nonnegativeInteger,
+        reason: incompleteReasonSchema,
+        report_sha256: sha256Schema.optional(),
+        steps: nonnegativeInteger,
+        tool_calls: nonnegativeInteger,
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          (value.evidence_sha256 === undefined) !==
+          (value.report_sha256 === undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "incomplete evidence and report hashes must appear together",
+          });
+        }
+      }),
+    type: z.literal("run.incomplete"),
   })
   .strict();
 
@@ -663,6 +749,262 @@ const commandCompletedSchema = z
   })
   .strict();
 
+const verificationIdentity = {
+  action_sha256: sha256Schema,
+  call_id: callIdSchema,
+  command_execution_id: uuidSchema,
+  step: positiveInteger,
+  verification_id: uuidSchema,
+};
+
+const verificationStartedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...verificationIdentity,
+        generation: nonnegativeInteger,
+        kind: z.enum(["test", "lint", "typecheck", "build", "check"]),
+        snapshot_sha256: sha256Schema,
+      })
+      .strict(),
+    type: z.literal("verification.started"),
+  })
+  .strict();
+
+const verificationCompletedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        ...verificationIdentity,
+        after_snapshot_sha256: sha256Schema,
+        before_snapshot_sha256: sha256Schema,
+        completed_generation: nonnegativeInteger,
+        duration_ms: nonnegativeInteger,
+        exit_code: z.number().int().nullable(),
+        stale: z.boolean(),
+        stale_reasons: z
+          .array(
+            z.enum([
+              "generation_changed",
+              "generation_marked_stale",
+              "source_state_changed",
+            ]),
+          )
+          .max(3)
+          .refine(
+            (values) => new Set(values).size === values.length,
+            "verification stale reasons must be unique",
+          ),
+        started_generation: nonnegativeInteger,
+        status: z.enum(["passed", "failed", "stale"]),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        const snapshotChanged =
+          value.before_snapshot_sha256 !== value.after_snapshot_sha256;
+        const generationChanged =
+          value.started_generation !== value.completed_generation;
+        const shouldBeStale =
+          snapshotChanged || generationChanged || value.stale_reasons.length > 0;
+        if (
+          value.stale !== shouldBeStale ||
+          (value.status === "stale") !== value.stale
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "verification stale state does not match generation and snapshots",
+          });
+        }
+        if (
+          value.status === "passed" &&
+          (value.exit_code !== 0 || value.stale)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "passed verification requires exit 0 on an unchanged snapshot",
+          });
+        }
+        if (
+          value.status === "failed" &&
+          (value.exit_code === 0 || value.stale)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "failed verification must not claim exit 0 or stale evidence",
+          });
+        }
+        if (
+          value.stale_reasons.includes("generation_changed") !==
+          generationChanged
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "generation stale reason does not match generation evidence",
+          });
+        }
+        if (
+          value.stale_reasons.includes("source_state_changed") !==
+          snapshotChanged
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "source-state stale reason does not match snapshot evidence",
+          });
+        }
+      }),
+    type: z.literal("verification.completed"),
+  })
+  .strict();
+
+const completionCandidateSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        call_id: callIdSchema,
+        candidate_sha256: sha256Schema,
+        status: z.enum(["completed", "blocked"]),
+        step: positiveInteger,
+        summary: z.string().max(4000).refine(
+          (value) =>
+            !value.includes("\0") &&
+            [...value].length >= 1 &&
+            [...value].length <= 2000,
+          "completion summary must contain 1..2000 NUL-free characters",
+        ),
+      })
+      .strict(),
+    type: z.literal("completion.candidate"),
+  })
+  .strict();
+
+const completionEvidenceSchema = z
+  .object({
+    ...commonEnvelope,
+    data: persistedCompletionEvidenceSchema,
+    type: z.literal("completion.evidence"),
+  })
+  .strict();
+
+const diffStatSchema = z
+  .object({
+    added_lines: nonnegativeInteger,
+    removed_lines: nonnegativeInteger,
+  })
+  .strict();
+
+const completionEvaluatedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        call_id: callIdSchema,
+        candidate_sha256: sha256Schema,
+        changed_paths: z.array(relativePathSchema).max(256),
+        diff_stat: diffStatSchema.optional(),
+        effect: z.enum(["accept", "continue", "error", "incomplete"]),
+        error_code: z.literal("completion_evaluation_failed").optional(),
+        evidence_sha256: sha256Schema.optional(),
+        reasons: z.array(incompleteReasonSchema).max(16),
+        report_sha256: sha256Schema.optional(),
+        step: positiveInteger,
+        verification_ids: z.array(uuidSchema).max(64),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        const hasEvidence = value.evidence_sha256 !== undefined;
+        const hasReport = value.report_sha256 !== undefined;
+        if (hasEvidence !== hasReport) {
+          context.addIssue({
+            code: "custom",
+            message: "completion evidence and report hashes must appear together",
+          });
+        }
+        if (
+          (value.effect === "error") !== (value.error_code !== undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "completion evaluation error must carry its stable error code",
+          });
+        }
+        if (
+          value.effect === "accept" &&
+          (value.reasons.length !== 0 ||
+            !hasEvidence ||
+            !hasReport ||
+            value.verification_ids.length === 0 ||
+            value.changed_paths.length === 0 ||
+            value.diff_stat === undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "accepted completion requires current evidence without rejection reasons",
+          });
+        }
+        if (
+          value.effect === "continue" &&
+          (value.reasons.length === 0 || hasEvidence || hasReport)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "continued completion requires reasons and cannot claim final evidence",
+          });
+        }
+        if (
+          value.effect === "incomplete" &&
+          (value.reasons.length === 0 ||
+            !hasEvidence ||
+            !hasReport ||
+            value.diff_stat === undefined)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message:
+              "incomplete completion requires a reason, persisted evidence, and diff stat",
+          });
+        }
+        if (
+          value.effect === "error" &&
+          (value.reasons.length !== 0 ||
+            hasEvidence ||
+            hasReport ||
+            value.changed_paths.length !== 0 ||
+            value.diff_stat !== undefined ||
+            value.verification_ids.length !== 0)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "failed completion evaluation cannot claim task evidence",
+          });
+        }
+        if (new Set(value.reasons).size !== value.reasons.length) {
+          context.addIssue({
+            code: "custom",
+            message: "completion reasons must be unique",
+          });
+        }
+        if (
+          new Set(value.verification_ids).size !== value.verification_ids.length
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "completion verification ids must be unique",
+          });
+        }
+        if (new Set(value.changed_paths).size !== value.changed_paths.length) {
+          context.addIssue({
+            code: "custom",
+            message: "completion changed paths must be unique",
+          });
+        }
+      }),
+    type: z.literal("completion.evaluated"),
+  })
+  .strict();
+
 export const runEventSchema = z.discriminatedUnion("type", [
   // PHASE2: type 是判别字段。解析成功后，TypeScript 能依据 event.type 自动缩小 data 类型。
   runStartedSchema,
@@ -683,7 +1025,13 @@ export const runEventSchema = z.discriminatedUnion("type", [
   commandStartedSchema,
   commandOutputSchema,
   commandCompletedSchema,
+  verificationStartedSchema,
+  verificationCompletedSchema,
+  completionEvidenceSchema,
+  completionCandidateSchema,
+  completionEvaluatedSchema,
   runCompletedSchema,
+  runIncompleteSchema,
   runFailedSchema,
   runCancelledSchema,
   runBudgetExceededSchema,

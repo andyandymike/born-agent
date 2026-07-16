@@ -23,15 +23,48 @@ export interface ToolError {
   readonly retryable: boolean;
 }
 
+export type CompletionControlSignal =
+  | {
+      readonly effect: "accept";
+      readonly evidenceSha256: string;
+      readonly kind: "completion";
+      readonly reportJson: string;
+      readonly reportSha256: string;
+      readonly reportText: string;
+    }
+  | {
+      readonly effect: "continue";
+      readonly kind: "completion";
+      readonly reasons: readonly string[];
+    }
+  | {
+      readonly effect: "incomplete";
+      readonly evidenceSha256: string;
+      readonly kind: "completion";
+      readonly reason: string;
+      readonly reportJson: string;
+      readonly reportSha256: string;
+      readonly reportText: string;
+    };
+
+export interface CompletionRuntimeLike {
+  createIncomplete(
+    reason: string,
+    summary: string,
+  ): Promise<Extract<CompletionControlSignal, { readonly effect: "incomplete" }>>;
+}
+
 export type ToolRawResult =
   // PHASE3: executor 返回结构化 value；Registry 统一负责 JSON 序列化、脱敏和最终字节上限。
   | {
       readonly ok: true;
+      readonly control?: CompletionControlSignal;
       readonly truncated: boolean;
       readonly value: Readonly<Record<string, unknown>>;
     }
   | {
       readonly error: ToolError;
+      readonly control?: CompletionControlSignal;
       readonly ok: false;
       // PHASE6: execution failures can still carry bounded stdout/stderr evidence;
       // the Registry remains the single serializer/redactor for that observation.
@@ -44,11 +77,13 @@ export type ToolExecution =
   // 以及第二回合实际提交给模型的字符串完全一致。
   | {
       readonly ok: true;
+      readonly control?: CompletionControlSignal;
       readonly output: string;
       readonly truncated: boolean;
     }
   | {
       readonly error: ToolError;
+      readonly control?: CompletionControlSignal;
       readonly ok: false;
       readonly output: string;
       readonly truncated: boolean;
@@ -100,6 +135,7 @@ export class FatalToolExecutionError extends Error {
 }
 
 export interface ToolRegistryLike {
+  readonly completion?: CompletionRuntimeLike | undefined;
   readonly modelDefinitions: readonly ModelToolDefinition[];
   execute(
     invocation: ToolInvocation,

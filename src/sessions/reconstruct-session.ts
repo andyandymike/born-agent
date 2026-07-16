@@ -1,5 +1,16 @@
 import type { RunEvent, TerminalRunEvent } from "../events/run-event.js";
 import { isTerminalRunEvent } from "../events/run-event.js";
+import {
+  completionVerificationIdsMatch,
+  completionVerificationsMatchEvents,
+} from "../events/verification-evidence-binding.js";
+import {
+  evidenceChangedPaths,
+  evidenceDiffStat,
+  netChangedPaths,
+  sameDiffStat,
+  samePaths,
+} from "../completion/completion-evidence-bindings.js";
 
 type StartedEvent = Extract<RunEvent, { type: "run.started" }>;
 type UsageEvent = Extract<RunEvent, { type: "usage" }>;
@@ -37,6 +48,11 @@ type CommandExecutionRequestedEvent = Extract<
 type CommandStartedEvent = Extract<RunEvent, { type: "command.started" }>;
 type CommandOutputEvent = Extract<RunEvent, { type: "command.output" }>;
 type CommandCompletedEvent = Extract<RunEvent, { type: "command.completed" }>;
+type VerificationStartedEvent = Extract<RunEvent, { type: "verification.started" }>;
+type VerificationCompletedEvent = Extract<RunEvent, { type: "verification.completed" }>;
+type CompletionCandidateEvent = Extract<RunEvent, { type: "completion.candidate" }>;
+type CompletionEvidenceEvent = Extract<RunEvent, { type: "completion.evidence" }>;
+type CompletionEvaluatedEvent = Extract<RunEvent, { type: "completion.evaluated" }>;
 
 export interface ReconstructedToolCall {
   readonly completed?: ToolCompletedEvent["data"];
@@ -76,9 +92,21 @@ export interface ReconstructedCommandAttempt {
   readonly started?: CommandStartedEvent["data"];
 }
 
+export interface ReconstructedVerification {
+  readonly completed?: VerificationCompletedEvent["data"];
+  readonly started: VerificationStartedEvent["data"];
+}
+
+export interface ReconstructedCompletionCandidate {
+  readonly candidate: CompletionCandidateEvent["data"];
+  readonly evaluated?: CompletionEvaluatedEvent["data"];
+}
+
 export interface ReconstructedRun {
   readonly agentSteps: readonly ReconstructedAgentStep[];
   readonly commandAttempts: readonly ReconstructedCommandAttempt[];
+  readonly completionCandidates: readonly ReconstructedCompletionCandidate[];
+  readonly completionEvidence: readonly CompletionEvidenceEvent["data"][];
   readonly output: string;
   readonly patchAttempts: readonly ReconstructedPatchAttempt[];
   readonly runId: string;
@@ -87,6 +115,7 @@ export interface ReconstructedRun {
   readonly terminal: TerminalRunEvent;
   readonly toolCalls: readonly ReconstructedToolCall[];
   readonly usage?: UsageEvent["data"];
+  readonly verifications: readonly ReconstructedVerification[];
 }
 
 interface MutableToolCall {
@@ -125,6 +154,16 @@ interface MutableCommandAttempt {
   stdoutChunks: number;
 }
 
+interface MutableVerification {
+  completed?: VerificationCompletedEvent["data"];
+  started: VerificationStartedEvent["data"];
+}
+
+interface MutableCompletionCandidate {
+  candidate: CompletionCandidateEvent["data"];
+  evaluated?: CompletionEvaluatedEvent["data"];
+}
+
 interface ApprovalReference {
   readonly action: "apply_patch" | "run_command";
   readonly callId: string;
@@ -144,6 +183,26 @@ function isPreExecutionToolError(
     (data.error_category === "permission" ||
       (data.error_code !== undefined &&
         REGISTRY_PRE_EXECUTION_ERROR_CODES.has(data.error_code)));
+}
+
+function finishArgumentsMatch(
+  argumentsJson: string,
+  candidate: CompletionCandidateEvent["data"],
+): boolean {
+  try {
+    const parsed: unknown = JSON.parse(argumentsJson);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+    const record = parsed as Record<string, unknown>;
+    return (
+      Object.keys(record).sort().join(",") === "status,summary" &&
+      record.status === candidate.status &&
+      record.summary === candidate.summary
+    );
+  } catch {
+    return false;
+  }
 }
 
 function patchPathsMatch(
@@ -282,12 +341,16 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   const patchAttempts = new Map<string, MutablePatchAttempt>();
   const commandAttempts = new Map<string, MutableCommandAttempt>();
   const commandExecutions = new Map<string, MutableCommandAttempt>();
+  const completionCandidates = new Map<string, MutableCompletionCandidate>();
+  const completionEvidence = new Map<string, CompletionEvidenceEvent["data"]>();
+  const verifications = new Map<string, MutableVerification>();
   const approvalCalls = new Map<string, ApprovalReference>();
   const steps: MutableAgentStep[] = [];
   let activeStep: MutableAgentStep | undefined;
   let output = "";
   let usage: UsageEvent["data"] | undefined;
   let terminal: TerminalRunEvent | undefined;
+  let verificationGeneration = 0;
 
   events.forEach((event, index) => {
     if (event.session_id !== first.session_id || event.run_id !== first.run_id) {
@@ -347,6 +410,17 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
     } else if (event.type === "text.delta") {
       if (first.data.command === "agent" && activeStep === undefined) {
         throw new Error("agent text delta appears outside a step");
+      }
+      if (first.data.command === "agent") {
+        const profile = first.data.task_profile ?? "read-only";
+        if (
+          (profile === "coding" &&
+            event.data.visibility !== "internal_candidate") ||
+          (profile === "read-only" &&
+            event.data.visibility === "internal_candidate")
+        ) {
+          throw new Error("text delta visibility does not match task profile");
+        }
       }
       output += event.data.delta;
       if (activeStep !== undefined) {
@@ -449,6 +523,26 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         commandAttempt?.completed === undefined
       ) {
         throw new Error("successful run_command lacks completed command evidence");
+      }
+      if (event.data.tool_name === "finish_task") {
+        const completion = completionCandidates.get(event.data.call_id);
+        const effect = completion?.evaluated?.effect;
+        if (completion?.evaluated === undefined) {
+          throw new Error("finish_task result lacks completion evaluation");
+        }
+        if (
+          (effect === "continue" &&
+            (event.data.status !== "error" ||
+              event.data.error_code !== "completion_rejected")) ||
+          (effect === "error" &&
+            (event.data.status !== "error" ||
+              event.data.error_code !== "completion_evaluation_failed")) ||
+          (effect !== "continue" &&
+            effect !== "error" &&
+            event.data.status !== "success")
+        ) {
+          throw new Error("finish_task result does not match completion effect");
+        }
       }
       call.completed = event.data;
     } else if (event.type === "patch.plan.created") {
@@ -606,6 +700,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         throw new Error("patch completion does not match one started apply");
       }
       attempt.applyCompleted = event.data;
+      verificationGeneration += 1;
     } else if (event.type === "command.execution.requested") {
       // PHASE6: a persisted request without a later completion is effect unknown. In
       // particular, replay cannot infer cleanup across the spawn/started persistence window.
@@ -695,6 +790,220 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         throw new Error("command completion does not match active output evidence");
       }
       attempt.completed = event.data;
+    } else if (event.type === "verification.started") {
+      // PHASE7: replay insists that the snapshot was bound before the verified process
+      // started; otherwise a command could mutate source and bless its own new baseline.
+      const attempt = commandExecutions.get(event.data.command_execution_id);
+      if (
+        first.data.command !== "agent" ||
+        (first.data.task_profile ?? "read-only") !== "coding" ||
+        attempt?.executionRequested === undefined ||
+        attempt.executionRequested.purpose !== "verify" ||
+        attempt.started !== undefined ||
+        attempt.completed !== undefined ||
+        attempt.executionRequested.call_id !== event.data.call_id ||
+        attempt.executionRequested.step !== event.data.step ||
+        attempt.executionRequested.action_sha256 !== event.data.action_sha256 ||
+        event.data.generation !== verificationGeneration ||
+        tools.get(event.data.call_id)?.completed !== undefined ||
+        verifications.has(event.data.verification_id)
+      ) {
+        throw new Error("verification start does not match a pending verify command");
+      }
+      verifications.set(event.data.verification_id, { started: event.data });
+    } else if (event.type === "verification.completed") {
+      const verification = verifications.get(event.data.verification_id);
+      const attempt = commandExecutions.get(event.data.command_execution_id);
+      if (
+        first.data.command !== "agent" ||
+        verification === undefined ||
+        verification.completed !== undefined ||
+        attempt?.completed === undefined ||
+        attempt.completed.cleanup_verified !== true ||
+        verification.started.call_id !== event.data.call_id ||
+        verification.started.step !== event.data.step ||
+        verification.started.command_execution_id !==
+          event.data.command_execution_id ||
+        verification.started.action_sha256 !== event.data.action_sha256 ||
+        verification.started.generation !== event.data.started_generation ||
+        event.data.completed_generation !== verificationGeneration ||
+        verification.started.snapshot_sha256 !==
+          event.data.before_snapshot_sha256 ||
+        attempt.completed.duration_ms !== event.data.duration_ms ||
+        attempt.completed.exit_code !== event.data.exit_code ||
+        tools.get(event.data.call_id)?.completed !== undefined
+      ) {
+        throw new Error("verification completion does not match command evidence");
+      }
+      verification.completed = event.data;
+    } else if (event.type === "completion.evidence") {
+      if (
+        first.data.command !== "agent" ||
+        (first.data.task_profile ?? "read-only") !== "coding" ||
+        event.data.evidence.runId !== event.run_id ||
+        event.data.evidence.sessionId !== event.session_id ||
+        completionEvidence.has(event.data.evidence_sha256)
+      ) {
+        throw new Error("completion evidence does not belong to this coding run");
+      }
+      const changedPaths = netChangedPaths(
+        [...patchAttempts.values()].flatMap((attempt) =>
+          attempt.applyCompleted === undefined ? [] : [attempt.applyCompleted]
+        ),
+      );
+      if (
+        !samePaths(changedPaths, evidenceChangedPaths(event.data.evidence))
+      ) {
+        throw new Error("completion evidence changed paths do not match patch journal");
+      }
+      const classifiedExecutions = new Set(
+        [...verifications.values()].map(
+          (verification) => verification.started.command_execution_id,
+        ),
+      );
+      const hasCompletedUnclassifiedVerification = [
+        ...commandExecutions.values(),
+      ].some(
+        (attempt) =>
+          attempt.executionRequested?.purpose === "verify" &&
+          attempt.completed?.cleanup_verified === true &&
+          tools.get(attempt.executionRequested.call_id)?.completed !== undefined &&
+          !classifiedExecutions.has(attempt.executionRequested.execution_id),
+      );
+      if (
+        !completionVerificationsMatchEvents(event.data, (verificationId) => {
+          const verification = verifications.get(verificationId);
+          const attempt =
+            verification === undefined
+              ? undefined
+              : commandExecutions.get(
+                  verification.started.command_execution_id,
+                );
+          if (
+            verification?.completed === undefined ||
+            attempt?.completed === undefined ||
+            attempt.executionRequested === undefined
+          ) {
+            return undefined;
+          }
+          return {
+            commandCompleted: attempt.completed,
+            commandOutput: attempt.output,
+            commandRequested: attempt.executionRequested,
+            verificationCompleted: verification.completed,
+            verificationStarted: verification.started,
+          };
+        }, hasCompletedUnclassifiedVerification)
+      ) {
+        throw new Error("completion verification evidence does not match events");
+      }
+      completionEvidence.set(event.data.evidence_sha256, event.data);
+    } else if (event.type === "completion.candidate") {
+      const call = tools.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        (first.data.task_profile ?? "read-only") !== "coding" ||
+        call === undefined ||
+        call.completed !== undefined ||
+        call.requested.tool_name !== "finish_task" ||
+        call.requested.step !== event.data.step ||
+        completionCandidates.has(event.data.call_id) ||
+        !finishArgumentsMatch(call.requested.arguments_json, event.data)
+      ) {
+        throw new Error("completion candidate does not match a pending finish_task");
+      }
+      completionCandidates.set(event.data.call_id, { candidate: event.data });
+    } else if (event.type === "completion.evaluated") {
+      const completion = completionCandidates.get(event.data.call_id);
+      const call = tools.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        completion === undefined ||
+        completion.evaluated !== undefined ||
+        call?.completed !== undefined ||
+        completion.candidate.step !== event.data.step ||
+        completion.candidate.candidate_sha256 !== event.data.candidate_sha256
+      ) {
+        throw new Error("completion evaluation does not match a pending candidate");
+      }
+      if (
+        completion.candidate.status === "blocked" &&
+        event.data.effect !== "error" &&
+        (event.data.effect !== "incomplete" ||
+          !event.data.reasons.includes("task_blocked"))
+      ) {
+        throw new Error("blocked completion must evaluate to task_blocked");
+      }
+      const changedPaths = netChangedPaths(
+        [...patchAttempts.values()].flatMap((attempt) =>
+          attempt.applyCompleted === undefined ? [] : [attempt.applyCompleted]
+        ),
+      );
+      if (
+        event.data.effect !== "error" &&
+        !samePaths(changedPaths, event.data.changed_paths)
+      ) {
+        throw new Error("completion changed paths do not match patch journal");
+      }
+      const evidence =
+        event.data.evidence_sha256 === undefined
+          ? undefined
+          : completionEvidence.get(event.data.evidence_sha256);
+      if (
+        event.data.effect !== "continue" &&
+        event.data.effect !== "error"
+      ) {
+        const expectedOutcome =
+          event.data.effect === "accept" ? "completed" : "incomplete";
+        if (
+          evidence === undefined ||
+          evidence.outcome !== expectedOutcome ||
+          evidence.report_sha256 !== event.data.report_sha256 ||
+          evidence.evidence.modelNarrative !== completion.candidate.summary ||
+          (evidence.outcome === "incomplete" &&
+            !event.data.reasons.includes(evidence.evidence.reason))
+        ) {
+          throw new Error("completion evaluation lacks matching persisted evidence");
+        }
+        if (
+          !samePaths(
+            event.data.changed_paths,
+            evidenceChangedPaths(evidence.evidence),
+          )
+        ) {
+          throw new Error("completion changed paths do not match persisted evidence");
+        }
+        if (
+          !sameDiffStat(
+            event.data.diff_stat,
+            evidenceDiffStat(evidence.evidence),
+          )
+        ) {
+          throw new Error("completion diff stat does not match persisted evidence");
+        }
+      }
+      if (event.data.effect === "accept") {
+        const allCurrentPassed = event.data.verification_ids.every((id) => {
+          const completed = verifications.get(id)?.completed;
+          return (
+            completed?.status === "passed" &&
+            !completed.stale &&
+            completed.completed_generation === verificationGeneration
+          );
+        });
+        if (
+          evidence === undefined ||
+          !completionVerificationIdsMatch(
+            evidence,
+            event.data.verification_ids,
+          ) ||
+          event.data.verification_ids.length === 0 ||
+          !allCurrentPassed
+        ) {
+          throw new Error("accepted completion references invalid verification evidence");
+        }
+      }
+      completion.evaluated = event.data;
     } else if (isTerminalRunEvent(event)) {
       terminal = event;
       if (index !== events.length - 1) throw new Error("terminal event must be last");
@@ -715,6 +1024,12 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
     throw new Error("run.budget_exceeded output_chars does not match reconstructed text");
   }
   if (
+    terminal.type === "run.incomplete" &&
+    terminal.data.output_chars !== output.length
+  ) {
+    throw new Error("run.incomplete output_chars does not match reconstructed text");
+  }
+  if (
     (terminal.type === "run.failed" || terminal.type === "run.cancelled") &&
     terminal.data.output_chars !== undefined &&
     terminal.data.output_chars !== output.length
@@ -726,10 +1041,10 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   const patchValues = [...patchAttempts.values()];
   const commandValues = [...commandAttempts.values()];
   if (
-    terminal.type === "run.completed" &&
+    (terminal.type === "run.completed" || terminal.type === "run.incomplete") &&
     toolValues.some((call) => call.completed === undefined)
   ) {
-    throw new Error("completed run contains an interrupted tool call");
+    throw new Error(`${terminal.type} contains an interrupted tool call`);
   }
   if (
     terminal.type === "run.completed" &&
@@ -738,6 +1053,13 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       toolValues.filter((call) => call.completed !== undefined).length
   ) {
     throw new Error("run.completed tool_calls does not match reconstructed tools");
+  }
+  if (
+    terminal.type === "run.incomplete" &&
+    terminal.data.tool_calls !==
+      toolValues.filter((call) => call.completed !== undefined).length
+  ) {
+    throw new Error("run.incomplete tool_calls does not match reconstructed tools");
   }
   if (
     terminal.type === "run.completed" &&
@@ -761,21 +1083,107 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   }
 
   if (first.data.command === "agent") {
-    // PHASE4: 不同 terminal 有不同完成证明；成功要求 final step+aggregate usage，
-    // budget terminal 则要求对应 limit/observed 能从事件历史重新计算。
+    // PHASE7: replay validates the profile-specific completion proof; a coding
+    // model final cannot be upgraded into success merely because it is the last line.
     if (usage !== undefined) validateRunUsage(usage, steps);
     if (terminal.type === "run.completed") {
       const final = steps.at(-1)?.completed;
+      const profile = first.data.task_profile ?? "read-only";
       if (
         activeStep !== undefined ||
-        final?.outcome !== "final" ||
-        final.text_chars === 0 ||
-        steps.at(-1)?.sawNonWhitespaceText !== true ||
         terminal.data.steps !== steps.length ||
         terminal.data.model_turns !== steps.length ||
         usage === undefined
       ) {
-        throw new Error("completed agent run lacks a final step or aggregate usage");
+        throw new Error("completed agent run lacks step or aggregate usage evidence");
+      }
+      if (
+        first.data.task_profile !== undefined &&
+        ((profile === "coding" &&
+          terminal.data.completion_mode !== "verified_finish_task") ||
+          (profile === "read-only" &&
+            terminal.data.completion_mode !== "model_final"))
+      ) {
+        throw new Error("run completion mode does not match task profile");
+      }
+      if (terminal.data.completion_mode === "verified_finish_task") {
+        const call =
+          final?.tool_call_id === undefined
+            ? undefined
+            : tools.get(final.tool_call_id);
+        const completion =
+          final?.tool_call_id === undefined
+            ? undefined
+            : completionCandidates.get(final.tool_call_id)?.evaluated;
+        if (
+          profile !== "coding" ||
+          final?.outcome !== "tool_call" ||
+          call?.requested.tool_name !== "finish_task" ||
+          call.completed?.status !== "success" ||
+          completion?.effect !== "accept" ||
+          completion.evidence_sha256 !== terminal.data.evidence_sha256 ||
+          completion.report_sha256 !== terminal.data.report_sha256
+        ) {
+          throw new Error("verified run lacks accepted finish_task evidence");
+        }
+      } else if (
+        final?.outcome !== "final" ||
+        final.text_chars === 0 ||
+        steps.at(-1)?.sawNonWhitespaceText !== true
+      ) {
+        throw new Error("model-final run lacks a nonempty final step");
+      }
+    } else if (terminal.type === "run.incomplete") {
+      const final = steps.at(-1)?.completed;
+      const profile = first.data.task_profile ?? "read-only";
+      if (
+        activeStep !== undefined ||
+        terminal.data.steps !== steps.length ||
+        usage === undefined ||
+        profile !== "coding"
+      ) {
+        throw new Error("incomplete run lacks coding step or usage evidence");
+      }
+      if (terminal.data.evidence_sha256 !== undefined) {
+        const evidence = completionEvidence.get(terminal.data.evidence_sha256);
+        if (
+          evidence?.outcome !== "incomplete" ||
+          evidence.report_sha256 !== terminal.data.report_sha256 ||
+          evidence.evidence.reason !== terminal.data.reason
+        ) {
+          throw new Error("incomplete terminal lacks persisted report evidence");
+        }
+      }
+      if (
+        terminal.data.reason === "completion_signal_required" &&
+        (final?.outcome !== "final" ||
+          final.text_chars === 0 ||
+          steps.at(-1)?.sawNonWhitespaceText !== true)
+      ) {
+        throw new Error("completion_signal_required lacks a natural model final");
+      }
+      if (final?.outcome === "tool_call" && final.tool_call_id !== undefined) {
+        const call = tools.get(final.tool_call_id);
+        const evaluated = completionCandidates.get(
+          final.tool_call_id,
+        )?.evaluated;
+        if (
+          call?.requested.tool_name === "finish_task" &&
+          (call.completed?.status !== "success" ||
+            evaluated?.effect !== "incomplete" ||
+            !evaluated.reasons.includes(terminal.data.reason) ||
+            evaluated.evidence_sha256 !== terminal.data.evidence_sha256 ||
+            evaluated.report_sha256 !== terminal.data.report_sha256)
+        ) {
+          throw new Error("incomplete terminal does not match finish_task evidence");
+        }
+      }
+      if (
+        terminal.data.reason === "task_blocked" &&
+        (final?.tool_call_id === undefined ||
+          tools.get(final.tool_call_id)?.requested.tool_name !== "finish_task")
+      ) {
+        throw new Error("task_blocked terminal lacks finish_task evidence");
       }
     } else if (terminal.type === "run.budget_exceeded") {
       validateBudgetTerminal(first.data, terminal, steps, toolValues);
@@ -804,8 +1212,13 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         throw new Error("agent terminal counts do not match event history");
       }
     }
-  } else if (steps.length > 0) {
-    throw new Error("chat session contains agent steps");
+  } else if (
+    steps.length > 0 ||
+    terminal.type === "run.incomplete" ||
+    (terminal.type === "run.completed" &&
+      terminal.data.completion_mode === "verified_finish_task")
+  ) {
+    throw new Error("chat session contains agent-only completion evidence");
   }
 
   return {
@@ -840,6 +1253,15 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       permission: attempt.permission,
       ...(attempt.started === undefined ? {} : { started: attempt.started }),
     })),
+    completionCandidates: [...completionCandidates.values()].map(
+      (completion) => ({
+        candidate: completion.candidate,
+        ...(completion.evaluated === undefined
+          ? {}
+          : { evaluated: completion.evaluated }),
+      }),
+    ),
+    completionEvidence: [...completionEvidence.values()],
     output,
     patchAttempts: patchValues.map((attempt) => ({
       ...(attempt.applyCompleted === undefined
@@ -873,5 +1295,11 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       requested: call.requested,
     })),
     ...(usage === undefined ? {} : { usage }),
+    verifications: [...verifications.values()].map((verification) => ({
+      ...(verification.completed === undefined
+        ? {}
+        : { completed: verification.completed }),
+      started: verification.started,
+    })),
   };
 }

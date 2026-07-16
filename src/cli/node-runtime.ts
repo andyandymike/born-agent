@@ -25,6 +25,7 @@ import { runExecutable } from "../system/run-executable.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
 import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
 import { redactSensitiveText } from "../security/redact.js";
+import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -45,6 +46,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   // PHASE2: 这里把可测试的接口接到真实 Node 能力：UUID、时钟、文件、timer、SDK。
   // 单元测试会替换这些依赖，因此无需真的访问网络、磁盘或等待超时。
   return {
+    agentModelEvidence: (provider) =>
+      provider === "ollama"
+        ? {
+            backend: "ollama",
+            endpointScope: "literal_loopback",
+            kind: "local_live_verified",
+            remoteBillableRequests: 0,
+          }
+        : null,
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
     createApprovalPrompt: (io) =>
@@ -53,6 +63,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         output: io.stderr,
       }),
     createAgentToolRegistry: async (registryOptions) => {
+      if (registryOptions.taskProfile === "read-only") {
+        return createReadonlyToolRegistry(registryOptions.workspace);
+      }
       const executableRegistry = createDefaultExecutableRegistry({
         execPath: options.execPath,
         hostEnvironment: options.env,
@@ -108,6 +121,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             prepared.actionIdentity,
           ) ?? {},
         permissionEngine,
+        verificationClassifier: classifyTrustedFixtureVerification,
       });
     },
     createSessionWriter: JsonlSessionWriter.create,

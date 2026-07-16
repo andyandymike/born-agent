@@ -6,6 +6,10 @@ import type {
   ResolvedAgentConfig,
 } from "../agent/agent-types.js";
 import { BudgetTracker } from "../agent/budget-tracker.js";
+import {
+  AGENT_SYSTEM_INSTRUCTIONS,
+  READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
+} from "../agent/system-instructions.js";
 import type { ChatClientConfiguration } from "../chat/types.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import {
@@ -44,6 +48,13 @@ export async function executeAgent(
     return 2;
   }
   const config = configResult.value;
+  const modelEvidence = runtime.agentModelEvidence(config.provider);
+  if (config.taskProfile === "coding" && modelEvidence === null) {
+    renderer.renderDiagnostic(
+      "usage/config error: coding profile requires a deterministic fake backend or literal-loopback Ollama",
+    );
+    return 2;
+  }
   const connection = clientConfiguration(config, runtime.env);
   if ("error" in connection) {
     renderer.renderDiagnostic(connection.error);
@@ -83,6 +94,7 @@ export async function executeAgent(
         command: "agent",
         command_approval: config.commandApproval,
         command_timeout_ms: config.commandTimeoutMs,
+        completion_policy: config.completionPolicy,
         edit_approval: config.editApproval,
         input: { role: "user", text: config.task },
         max_duration_ms: config.maxDurationMs,
@@ -92,14 +104,21 @@ export async function executeAgent(
         max_tool_output_bytes: config.maxToolOutputBytes,
         model: config.model,
         provider: config.provider,
+        report_format: config.reportFormat,
+        require_verification: config.requireVerification,
         request_timeout_ms: config.requestTimeoutMs,
-        tools: [
-          "apply_patch",
-          "list_files",
-          "read_file",
-          "run_command",
-          "search",
-        ],
+        task_profile: config.taskProfile,
+        tools:
+          config.taskProfile === "read-only"
+            ? ["list_files", "read_file", "search"]
+            : [
+                "apply_patch",
+                "finish_task",
+                "list_files",
+                "read_file",
+                "run_command",
+                "search",
+              ],
         tools_enabled: true,
         workspace: runtime.cwd,
       },
@@ -112,10 +131,21 @@ export async function executeAgent(
       commandApprovalMode: config.commandApproval,
       commandTimeoutMs: config.commandTimeoutMs,
       maxCommandOutputBytes: config.maxCommandOutputBytes,
+      modelEvidence:
+        modelEvidence ?? {
+          backend: "fake",
+          endpointScope: "in_process",
+          kind: "contract_verified",
+          remoteBillableRequests: 0,
+        },
       now: runtime.now,
       publisher,
       randomUUID: runtime.randomUUID,
+      reportFormat: config.reportFormat,
+      runId,
       secrets: [runtime.env.OPENAI_API_KEY],
+      taskProfile: config.taskProfile,
+      sessionId,
       timestamp: runtime.timestamp,
       workspace: runtime.cwd,
     });
@@ -126,9 +156,17 @@ export async function executeAgent(
       {
         budget,
         clock: runtime,
+        instructions:
+          config.taskProfile === "read-only"
+            ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
+            : AGENT_SYSTEM_INSTRUCTIONS,
         model,
         modelId: config.model,
         publisher,
+        renderCompletionReport: (report, terminal) =>
+          terminal === "completed"
+            ? io.stdout.write(report)
+            : io.stderr.write(report),
         secrets: [runtime.env.OPENAI_API_KEY],
         tools,
       },

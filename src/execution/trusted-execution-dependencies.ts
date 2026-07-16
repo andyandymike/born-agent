@@ -4,6 +4,12 @@ const TRUSTED_TRANSITIVE_DEPENDENCIES: Readonly<
   "fixtures/phase-06-command-execution/long-parent.mjs": Object.freeze([
     "fixtures/phase-06-command-execution/grandchild.mjs",
   ]),
+  "fixtures/phase-07-fix-and-verify/verify.mjs": Object.freeze([
+    "fixtures/phase-07-fix-and-verify/src/clamp.mjs",
+  ]),
+  "fixtures/phase-07-verification-fails/verify.mjs": Object.freeze([
+    "fixtures/phase-07-verification-fails/src/answer.mjs",
+  ]),
 });
 
 export function trustedExecutionDependencies(

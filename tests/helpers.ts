@@ -91,6 +91,12 @@ export function createRuntime(
   };
 
   return {
+    agentModelEvidence: () => ({
+      backend: "fake",
+      endpointScope: "in_process",
+      kind: "contract_verified",
+      remoteBillableRequests: 0,
+    }),
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
     createApprovalPrompt: () => ({

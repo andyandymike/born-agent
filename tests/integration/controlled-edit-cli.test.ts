@@ -143,7 +143,7 @@ describe("born agent Phase 5 controlled edits", () => {
 
     const result = await runEdit({ approval: "approved", workspace });
 
-    expect(result.exitCode, result.memory.readStderr()).toBe(0);
+    expect(result.exitCode, result.memory.readStderr()).toBe(8);
     expect(await readFile(join(workspace, "src/math.ts"), "utf8")).toContain(
       "Math.min(maximum, Math.max(minimum, value))",
     );
@@ -158,7 +158,10 @@ describe("born agent Phase 5 controlled edits", () => {
       applyState: "completed",
       approvalDecided: { decision: "approved" },
     });
-    expect(result.memory.readStdout()).toContain("did not run verification");
+    expect(result.memory.readStdout()).toBe("");
+    expect(result.memory.readStderr()).toContain(
+      "Incomplete: completion_signal_required",
+    );
   });
 
   it("audits denial without changing the target", async () => {
@@ -168,7 +171,7 @@ describe("born agent Phase 5 controlled edits", () => {
 
     const result = await runEdit({ approval: "denied", workspace });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(8);
     expect(await readFile(target)).toEqual(before);
     expect(result.writer.events.some((event) => event.type === "approval.decided"))
       .toBe(true);
@@ -190,7 +193,7 @@ describe("born agent Phase 5 controlled edits", () => {
       workspace,
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(8);
     expect(await readFile(target, "utf8")).toBe(external);
     expect(
       result.writer.events.some((event) => event.type === "patch.apply.started"),

@@ -51,6 +51,22 @@ export async function runCli(
       "default timeout for an approved command",
     )
     .option(
+      "--task-profile <profile>",
+      "task profile: read-only or coding",
+    )
+    .option(
+      "--completion-policy <policy>",
+      "completion policy: verified",
+    )
+    .option(
+      "--require-verification <mode>",
+      "verification requirement: auto",
+    )
+    .option(
+      "--report-format <format>",
+      "deterministic report format: text or json",
+    )
+    .option(
       "--max-tool-output-bytes <bytes>",
       "cumulative UTF-8 tool observation budget",
     )
@@ -69,6 +85,7 @@ export async function runCli(
         options: {
           commandApproval?: string;
           commandTimeoutMs?: string;
+          completionPolicy?: string;
           editApproval?: string;
           maxDurationMs?: string;
           maxCommandOutputBytes?: string;
@@ -77,7 +94,10 @@ export async function runCli(
           maxToolOutputBytes?: string;
           model?: string;
           provider?: string;
+          reportFormat?: string;
+          requireVerification?: string;
           requestTimeoutMs?: string;
+          taskProfile?: string;
           verbose: boolean;
         },
       ) => {
@@ -85,6 +105,7 @@ export async function runCli(
           {
             commandApproval: options.commandApproval,
             commandTimeoutMs: options.commandTimeoutMs,
+            completionPolicy: options.completionPolicy,
             editApproval: options.editApproval,
             maxDurationMs: options.maxDurationMs,
             maxCommandOutputBytes: options.maxCommandOutputBytes,
@@ -93,8 +114,11 @@ export async function runCli(
             maxToolOutputBytes: options.maxToolOutputBytes,
             model: options.model,
             provider: options.provider,
+            reportFormat: options.reportFormat,
+            requireVerification: options.requireVerification,
             requestTimeoutMs: options.requestTimeoutMs,
             task,
+            taskProfile: options.taskProfile,
             verbose: options.verbose,
           },
           runtime,

@@ -39,15 +39,26 @@ describe("Phase 6 production agent registry", () => {
       commandApprovalMode: "deny",
       commandTimeoutMs: 120_000,
       maxCommandOutputBytes: 131_072,
+      modelEvidence: {
+        backend: "fake",
+        endpointScope: "in_process",
+        kind: "contract_verified",
+        remoteBillableRequests: 0,
+      },
       now: () => 0,
       publisher,
       randomUUID: () => "00000000-0000-4000-8000-000000000004",
+      reportFormat: "text",
+      runId: "00000000-0000-4000-8000-000000000002",
+      sessionId: "00000000-0000-4000-8000-000000000001",
+      taskProfile: "coding",
       timestamp: () => "2026-07-17T00:00:00.000Z",
       workspace: process.cwd(),
     });
 
     expect(registry.modelDefinitions.map((tool) => tool.name)).toEqual([
       "apply_patch",
+      "finish_task",
       "list_files",
       "read_file",
       "run_command",

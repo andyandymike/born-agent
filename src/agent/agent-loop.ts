@@ -1,5 +1,6 @@
 import type { ChatUsage } from "../chat/types.js";
 import type { ProviderFailure } from "../chat/stream-types.js";
+import type { CompletionReason } from "../completion/completion-types.js";
 import type { EventPublisher } from "../events/event-publisher.js";
 import type {
   ModelContinuation,
@@ -10,6 +11,7 @@ import type {
 } from "../model/model-turn-types.js";
 import { redactSensitiveText } from "../security/redact.js";
 import type { ToolExecution, ToolRegistryLike } from "../tools/tool-types.js";
+import type { CompletionControlSignal } from "../tools/tool-types.js";
 import type {
   AgentClock,
   AgentLoopConfig,
@@ -45,6 +47,10 @@ export interface AgentLoopDeps {
   readonly model: ModelTurnClient;
   readonly modelId: string;
   readonly publisher: EventPublisher;
+  readonly renderCompletionReport?: (
+    report: string,
+    terminal: "completed" | "incomplete",
+  ) => void;
   readonly secrets?: readonly (string | undefined)[];
   readonly tools: ToolRegistryLike;
 }
@@ -103,6 +109,7 @@ async function consumeModelTurn(
   request: ModelTurnRequest,
   requestAbort: RequestAbortState,
   publisher: EventPublisher,
+  visibility: "internal_candidate" | "user",
 ): Promise<TurnResult> {
   // PHASE4: 一个 model turn 内聚合最多一个 tool call/usage，并把 text delta 立即持久化渲染。
   // provider 的 turn_completed 仍不等于整个 Agent run 完成。
@@ -122,7 +129,7 @@ async function consumeModelTurn(
           sawNonWhitespaceText ||= signal.delta.trim().length > 0;
           textChars += signal.delta.length;
           await publisher.publish({
-            data: { delta: signal.delta },
+            data: { delta: signal.delta, visibility },
             type: "text.delta",
           });
         }
@@ -188,6 +195,8 @@ export async function runAgentLoop(
 ): Promise<AgentTerminal> {
   // PHASE4: 这是独立 AgentLoop 的 orchestration root；外层 executeAgent 负责创建/关闭资源。
   const { budget, clock, publisher } = deps;
+  const taskProfile = config.taskProfile ?? "read-only";
+  const reportFormat = config.reportFormat ?? "text";
   const usages: ChatUsage[] = [];
   const repetition = new RepetitionDetector();
   const runController = new AbortController();
@@ -345,6 +354,42 @@ export async function runAgentLoop(
     return { exitCode: 1, type: "failed" };
   };
 
+  const publishIncomplete = async (
+    reason: CompletionReason,
+    control?: Extract<
+      CompletionControlSignal,
+      { readonly effect: "incomplete" }
+    >,
+  ): Promise<AgentTerminal> => {
+    // PHASE7: A failed verification or missing completion signal is an
+    // understandable task outcome (exit 8), not a provider or process crash.
+    await publishAggregateUsage();
+    const snapshot = budget.snapshot();
+    await publisher.publish({
+      data: {
+        duration_ms: snapshot.elapsedMs,
+        ...(control === undefined
+          ? {}
+          : {
+              evidence_sha256: control.evidenceSha256,
+              report_sha256: control.reportSha256,
+            }),
+        output_chars: publisher.outputLength,
+        reason,
+        steps: snapshot.steps,
+        tool_calls: publisher.completedToolCalls,
+      },
+      type: "run.incomplete",
+    });
+    if (control !== undefined) {
+      deps.renderCompletionReport?.(
+        reportFormat === "json" ? control.reportJson : control.reportText,
+        "incomplete",
+      );
+    }
+    return { exitCode: 8, reason, type: "incomplete" };
+  };
+
   const createRequestAbort = (): RequestAbortState => {
     // PHASE4: 每个 provider request 有子 controller；它同时继承 run abort，并单独记录 request timeout。
     const controller = new AbortController();
@@ -415,6 +460,7 @@ export async function runAgentLoop(
           },
           requestAbort,
           publisher,
+          taskProfile === "coding" ? "internal_candidate" : "user",
         );
       } finally {
         requestAbort.cleanup();
@@ -543,9 +589,22 @@ export async function runAgentLoop(
             reason: "max_duration",
           });
         }
+        if (taskProfile === "coding") {
+          // PHASE7: Natural text has no finish_task call/result identity. It stays
+          // an internal candidate and cannot be upgraded into verified completion.
+          const control = await deps.tools.completion?.createIncomplete(
+            "completion_signal_required",
+            "model returned natural-language final text without finish_task",
+          );
+          return await publishIncomplete(
+            "completion_signal_required",
+            control,
+          );
+        }
         await publishAggregateUsage();
         await publisher.publish({
           data: {
+            completion_mode: "model_final",
             duration_ms: budget.elapsedMs(),
             model_turns: budget.snapshot().steps,
             output_chars: publisher.outputLength,
@@ -632,17 +691,10 @@ export async function runAgentLoop(
         },
         runController.signal,
       );
-      if (runAbortReason === "user") return await publishCancelled();
-      if (runAbortReason === "max_duration") {
-        return await publishBudget({
-          limit: config.maxDurationMs,
-          observed: budget.elapsedMs(),
-          reason: "max_duration",
-        });
-      }
-
       await publisher.publish({
-        // PHASE4: observation 先 persist；只有成功落盘后才可能成为下一 step 的输入。
+        // PHASE7: execute 返回即代表这次 requested call 已有结果；必须先闭合
+        // tool.call.completed，再处理执行期间发生的取消/deadline。finish_task 还会在
+        // execute 内发布 candidate/evaluated，若先终止会留下不可重放的悬空 call。
         data: toolCompletedData(
           turn.call,
           execution,
@@ -651,12 +703,59 @@ export async function runAgentLoop(
         ),
         type: "tool.call.completed",
       });
+      if (runAbortReason === "user") return await publishCancelled();
+      if (runAbortReason === "max_duration") {
+        return await publishBudget({
+          limit: config.maxDurationMs,
+          observed: budget.elapsedMs(),
+          reason: "max_duration",
+        });
+      }
+      const control = execution.control;
+      if (control !== undefined && turn.call.name !== "finish_task") {
+        return await publishInternalFailure(
+          "unexpected_tool_control",
+          "a non-control tool returned a completion signal",
+        );
+      }
       if (!execution.ok && execution.error.category === "system") {
         return await publishInternalFailure(
           execution.error.code,
           execution.error.message,
           execution.error.retryable,
         );
+      }
+      if (turn.call.name === "finish_task" && control === undefined) {
+        return await publishInternalFailure(
+          "missing_completion_control",
+          "finish_task did not return a completion decision",
+        );
+      }
+      if (control?.effect === "accept") {
+        // PHASE7: completion.evaluated and matching tool.call.completed are already
+        // durable here; only now may the terminal and deterministic report appear.
+        await publishAggregateUsage();
+        await publisher.publish({
+          data: {
+            completion_mode: "verified_finish_task",
+            duration_ms: budget.elapsedMs(),
+            evidence_sha256: control.evidenceSha256,
+            model_turns: budget.snapshot().steps,
+            output_chars: publisher.outputLength,
+            report_sha256: control.reportSha256,
+            steps: budget.snapshot().steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.completed",
+        });
+        deps.renderCompletionReport?.(
+          reportFormat === "json" ? control.reportJson : control.reportText,
+          "completed",
+        );
+        return { exitCode: 0, type: "completed" };
+      }
+      if (control?.effect === "incomplete") {
+        return await publishIncomplete(control.reason as CompletionReason, control);
       }
       if (!execution.ok && execution.error.category === "cancelled") {
         return await publishInternalFailure(

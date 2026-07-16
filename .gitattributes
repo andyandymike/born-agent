@@ -1,1 +1,3 @@
 fixtures/phase-06-command-execution/*.mjs text eol=lf
+fixtures/phase-07-*/verify.mjs text eol=lf
+fixtures/phase-07-*/src/*.mjs text eol=lf

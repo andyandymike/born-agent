@@ -26,7 +26,7 @@ import {
   InMemorySessionWriter,
 } from "../helpers.js";
 
-const definitions = ["apply_patch", "list_files", "read_file", "search"].map((name) => ({
+const definitions = ["list_files", "read_file", "search"].map((name) => ({
   description: `fake ${name}`,
   name,
   parameters: {
@@ -137,7 +137,13 @@ async function runAgentScenario(options: {
   const writer = options.writer ?? new InMemorySessionWriter();
   const registry = options.registry ?? new RecordingRegistry();
   const exitCode = await runCli(
-    ["agent", "inspect the fixture", ...(options.args ?? [])],
+    [
+      "agent",
+      "inspect the fixture",
+      "--task-profile",
+      "read-only",
+      ...(options.args ?? []),
+    ],
     memory.io,
     createRuntime({
       createModelTurnClient: () => options.client,
@@ -178,7 +184,6 @@ describe("born agent Phase 4 integration", () => {
       ],
       (request, index) => {
         expect(request.tools.map((tool) => tool.name)).toEqual([
-          "apply_patch",
           "list_files",
           "read_file",
           "search",
@@ -254,7 +259,7 @@ describe("born agent Phase 4 integration", () => {
         : event,
     );
     expect(() => reconstructSession(whitespaceFinal)).toThrow(
-      "completed agent run lacks a final step",
+      "model-final run lacks a nonempty final step",
     );
   });
 
@@ -330,7 +335,12 @@ describe("born agent Phase 4 integration", () => {
       },
     );
     const exitCode = await runCli(
-      ["agent", "recover from the missing reference"],
+      [
+        "agent",
+        "recover from the missing reference",
+        "--task-profile",
+        "read-only",
+      ],
       memory.io,
       createRuntime({
         createModelTurnClient: () => client,
@@ -645,7 +655,7 @@ describe("born agent Phase 4 integration", () => {
     }
   });
 
-  it("aborts an active tool at the global deadline without persisting its result", async () => {
+  it("persists an active tool result before the global-deadline terminal", async () => {
     let now = 0;
     let globalDeadline: (() => void) | undefined;
     const registry = new RecordingRegistry((_invocation, _index, signal) => {
@@ -687,10 +697,66 @@ describe("born agent Phase 4 integration", () => {
       data: { reason: "max_duration" },
       type: "run.budget_exceeded",
     });
-    expect(
-      writer.events.some((event) => event.type === "tool.call.completed"),
-    ).toBe(false);
-    expect(reconstructSession(writer.events).toolCalls[0]?.interrupted).toBe(true);
+    expect(writer.events.find((event) => event.type === "tool.call.completed"))
+      .toMatchObject({
+        data: {
+          call_id: "call_deadline",
+          error_category: "cancelled",
+          status: "error",
+        },
+      });
+    expect(reconstructSession(writer.events).toolCalls[0]).toMatchObject({
+      consumedByModel: false,
+      interrupted: false,
+    });
+  });
+
+  it("persists an active tool result before the user-cancelled terminal", async () => {
+    let cancelListener: (() => void) | undefined;
+    const registry = new RecordingRegistry((_invocation, _index, signal) => {
+      cancelListener?.();
+      expect(signal.aborted).toBe(true);
+      return {
+        error: {
+          category: "cancelled",
+          code: "tool_cancelled",
+          message: "tool execution was cancelled",
+          retryable: false,
+        },
+        ok: false,
+        output: '{"ok":false}',
+        truncated: false,
+      };
+    });
+    const client = scriptedClient([toolTurn("search", "call_cancelled")]);
+    const { exitCode, writer } = await runAgentScenario({
+      client,
+      registry,
+      runtime: {
+        onCancel: (listener) => {
+          cancelListener = listener;
+          return () => undefined;
+        },
+      },
+    });
+
+    expect(exitCode).toBe(130);
+    expect(writer.events.find((event) => event.type === "tool.call.completed"))
+      .toMatchObject({
+        data: {
+          call_id: "call_cancelled",
+          error_category: "cancelled",
+          status: "error",
+        },
+      });
+    expect(writer.events.at(-1)).toMatchObject({
+      data: { reason: "user", tool_calls: 1 },
+      type: "run.cancelled",
+    });
+    expect(reconstructSession(writer.events).toolCalls[0]).toMatchObject({
+      consumedByModel: false,
+      interrupted: false,
+    });
   });
 
   it("records a completed tool result before a between-step global deadline", async () => {

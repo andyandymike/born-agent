@@ -3,6 +3,8 @@ import type { DoctorRuntime } from "../doctor/types.js";
 import type { ApprovalPrompt } from "../approvals/approval-types.js";
 import type { AgentToolRegistryOptions } from "../tools/create-agent-tool-registry.js";
 import type { ToolRegistryLike } from "../tools/tool-types.js";
+import type { ChatProvider } from "../chat/types.js";
+import type { ModelEvidence } from "../completion/completion-types.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -14,6 +16,7 @@ export interface CliIO {
 }
 
 export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
+  agentModelEvidence(provider: ChatProvider): ModelEvidence | null;
   createAgentToolRegistry(
     options: AgentToolRegistryOptions,
   ): Promise<ToolRegistryLike>;

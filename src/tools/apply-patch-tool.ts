@@ -49,6 +49,7 @@ export interface ApplyPatchToolOptions {
   readonly approvalGate: PatchApprovalGate;
   readonly applier: PatchApplierLike;
   readonly now: () => number;
+  readonly onApplied?: (result: PatchApplyResult) => Promise<void> | void;
   readonly planner: PatchPlannerLike;
   readonly publisher: EventPublisher;
   readonly secrets?: readonly (string | undefined)[];
@@ -292,6 +293,15 @@ export function createApplyPatchTool(
         },
         true,
       );
+      try {
+        await options.onApplied?.(result);
+      } catch (error) {
+        throw new FatalToolExecutionError(
+          "ambiguous_patch_state",
+          "patch was persisted but verification generation could not advance",
+          { cause: error, workspaceMayHaveChanged: true },
+        );
+      }
 
       return {
         ok: true,
