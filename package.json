@@ -28,7 +28,8 @@
     "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs"
   },
   "dependencies": {
-    "commander": "15.0.0"
+    "commander": "15.0.0",
+    "openai": "6.47.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

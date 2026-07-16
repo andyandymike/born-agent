@@ -18,6 +18,7 @@ export type ExecutableResult =
 
 export interface DoctorRuntime {
   readonly cwd: string;
+  readonly env: Readonly<Record<string, string | undefined>>;
   readonly nodeVersion: string;
   readonly platform: NodeJS.Platform;
   isReadableDirectory(path: string): Promise<boolean>;
@@ -40,4 +41,3 @@ export interface DoctorReport {
   readonly ok: boolean;
   readonly passed: number;
 }
-

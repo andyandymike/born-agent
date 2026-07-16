@@ -30,10 +30,10 @@ describe("runCli", () => {
 
   it("returns usage error 2 for an unknown command", async () => {
     const memory = createMemoryIO();
-    const exitCode = await runCli(["chat"], memory.io, createRuntime());
+    const exitCode = await runCli(["unknown"], memory.io, createRuntime());
     expect(exitCode).toBe(2);
     expect(memory.readStdout()).toBe("");
-    expect(memory.readStderr()).toContain("unknown command 'chat'");
+    expect(memory.readStderr()).toContain("unknown command 'unknown'");
   });
 
   it("returns success when every doctor check passes", async () => {
@@ -41,7 +41,10 @@ describe("runCli", () => {
     const exitCode = await runCli(["doctor"], memory.io, createRuntime());
     expect(exitCode).toBe(0);
     expect(memory.readStdout()).toContain("[ok] Node.js");
-    expect(memory.readStdout()).toContain("Doctor: 4 passed, 0 failed");
+    expect(memory.readStdout()).toContain("[ok] Provider: openai");
+    expect(memory.readStdout()).toContain("[ok] OpenAI credential: configured");
+    expect(memory.readStdout()).toContain("[ok] Model: gpt-5.6-terra");
+    expect(memory.readStdout()).toContain("Doctor: 7 passed, 0 failed");
     expect(memory.readStderr()).toBe("");
   });
 
@@ -57,8 +60,7 @@ describe("runCli", () => {
     const exitCode = await runCli(["doctor"], memory.io, runtime);
     expect(exitCode).toBe(3);
     expect(memory.readStdout()).toContain("[fail] ripgrep");
-    expect(memory.readStdout()).toContain("Doctor: 3 passed, 1 failed");
+    expect(memory.readStdout()).toContain("Doctor: 6 passed, 1 failed");
     expect(memory.readStderr()).toBe("");
   });
 });
-

@@ -78,7 +78,99 @@ describe("runDoctor", () => {
     const report = await runDoctor(runtime);
     expect(findCheck(report, "Workspace")).toMatchObject({ ok: false });
     expect(commands).toEqual(["git", "rg"]);
-    expect(report.checks).toHaveLength(4);
+    expect(report.checks).toHaveLength(7);
+  });
+
+  it("reports credential state without exposing the API key", async () => {
+    const secret = "sk-doctor-secret";
+    const configured = await runDoctor(
+      createRuntime({ env: { OPENAI_API_KEY: secret } }),
+    );
+    const missing = await runDoctor(createRuntime({ env: {} }));
+    expect(findCheck(configured, "OpenAI credential")).toEqual({
+      detail: "configured",
+      name: "OpenAI credential",
+      ok: true,
+    });
+    expect(JSON.stringify(configured)).not.toContain(secret);
+    expect(findCheck(missing, "OpenAI credential")).toMatchObject({
+      detail: "not configured",
+      ok: false,
+    });
+  });
+
+  it("shows the resolved model and rejects a blank override", async () => {
+    const selected = await runDoctor(
+      createRuntime({
+        env: { BORN_MODEL: "custom-model", OPENAI_API_KEY: "test-key" },
+      }),
+    );
+    const blank = await runDoctor(
+      createRuntime({
+        env: { BORN_MODEL: "   ", OPENAI_API_KEY: "test-key" },
+      }),
+    );
+    expect(findCheck(selected, "Model")).toMatchObject({
+      detail: "custom-model",
+      ok: true,
+    });
+    expect(findCheck(blank, "Model")).toMatchObject({ ok: false });
+  });
+
+  it("checks the Ollama service and selected local model", async () => {
+    const fallback = createRuntime().runExecutable;
+    const report = await runDoctor(
+      createRuntime({
+        env: { BORN_MODEL: "qwen3:1.7b", BORN_PROVIDER: "ollama" },
+        runExecutable: async (command, args, timeout) =>
+          command === "ollama"
+            ? {
+                kind: "completed",
+                exitCode: 0,
+                stderr: "",
+                stdout:
+                  "NAME        ID      SIZE\nqwen3:1.7b  abc123  1.4 GB\n",
+              }
+            : fallback(command, args, timeout),
+      }),
+    );
+
+    expect(findCheck(report, "Provider")).toEqual({
+      detail: "ollama",
+      name: "Provider",
+      ok: true,
+    });
+    expect(findCheck(report, "Ollama service")).toMatchObject({ ok: true });
+    expect(findCheck(report, "Model")).toMatchObject({
+      detail: "qwen3:1.7b",
+      ok: true,
+    });
+    expect(
+      report.checks.some((check) => check.name === "OpenAI credential"),
+    ).toBe(false);
+  });
+
+  it("reports how to pull a missing Ollama model", async () => {
+    const fallback = createRuntime().runExecutable;
+    const report = await runDoctor(
+      createRuntime({
+        env: { BORN_MODEL: "qwen3:8b", BORN_PROVIDER: "ollama" },
+        runExecutable: async (command, args, timeout) =>
+          command === "ollama"
+            ? {
+                kind: "completed",
+                exitCode: 0,
+                stderr: "",
+                stdout:
+                  "NAME        ID      SIZE\nqwen3:1.7b  abc123  1.4 GB\n",
+              }
+            : fallback(command, args, timeout),
+      }),
+    );
+
+    expect(findCheck(report, "Model")).toMatchObject({
+      detail: expect.stringContaining("ollama pull qwen3:8b"),
+      ok: false,
+    });
   });
 });
-
