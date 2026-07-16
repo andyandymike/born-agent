@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
 import { createAgentToolRegistry } from "../../src/tools/create-agent-tool-registry.js";
-import type { ModelTurnSignal } from "../../src/model/model-turn-types.js";
 import { reconstructSession } from "../../src/sessions/reconstruct-session.js";
 import {
   FakeContinuation,
   FakeStreamingChatClient,
 } from "../fakes/fake-chat-client.js";
+import type { FakeModelTurnSignal as ModelTurnSignal } from "../fakes/fake-chat-client.js";
 import {
   createMemoryIO,
   createRuntime,
@@ -126,7 +126,7 @@ async function runEdit(options: {
     createRuntime({
       createAgentToolRegistry,
       createApprovalPrompt: () => ({ request: prompt }),
-      createModelTurnClient: () => client,
+      createModelBackend: () => client,
       createSessionWriter: async () => writer,
       cwd: options.workspace,
       env: {},

@@ -10,6 +10,7 @@ import {
   createMemoryIO,
   InMemorySessionWriter,
 } from "../helpers.js";
+import { testBackendSelected } from "../phase8-event-helpers.js";
 
 const actionSha256 = "a".repeat(64);
 const approvalRequestId = "00000000-0000-4000-8000-000000000090";
@@ -55,6 +56,7 @@ async function startPendingCommand(publisher: EventPublisher): Promise<void> {
     },
     type: "run.started",
   });
+  await publisher.publish(testBackendSelected("ollama", "qwen3:1.7b"));
   await publisher.publish({
     data: {
       input_kind: "user_task",

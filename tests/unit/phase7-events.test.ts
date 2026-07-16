@@ -16,6 +16,10 @@ import {
   createMemoryIO,
   InMemorySessionWriter,
 } from "../helpers.js";
+import {
+  testBackendSelected,
+  testCompleteModelUsage,
+} from "../phase8-event-helpers.js";
 
 const actionSha256 = "a".repeat(64);
 const candidateSha256 = "c".repeat(64);
@@ -196,6 +200,7 @@ async function startCoding(publisher: EventPublisher): Promise<void> {
     },
     type: "run.started",
   });
+  await publisher.publish(testBackendSelected("ollama", "fake"));
 }
 
 async function publishToolStep(
@@ -214,15 +219,7 @@ async function publishToolStep(
     },
     type: "agent.step.started",
   });
-  await publisher.publish({
-    data: {
-      input_tokens: 1,
-      output_tokens: 1,
-      step,
-      total_tokens: 2,
-    },
-    type: "model.usage",
-  });
+  await publisher.publish(testCompleteModelUsage("ollama", step));
   await publisher.publish({
     data: {
       duration_ms: 1,
@@ -1056,10 +1053,7 @@ describe("Phase 7 verification and completion events", () => {
       data: { delta: "I think this is complete", visibility: "internal_candidate" },
       type: "text.delta",
     });
-    await publisher.publish({
-      data: { input_tokens: 1, output_tokens: 1, step: 1, total_tokens: 2 },
-      type: "model.usage",
-    });
+    await publisher.publish(testCompleteModelUsage("ollama", 1));
     await publisher.publish({
       data: {
         duration_ms: 1,
@@ -1247,10 +1241,7 @@ describe("Phase 7 verification and completion events", () => {
       data: { delta: "done", visibility: "internal_candidate" },
       type: "text.delta",
     });
-    await publisher.publish({
-      data: { input_tokens: 1, output_tokens: 1, step: 1, total_tokens: 2 },
-      type: "model.usage",
-    });
+    await publisher.publish(testCompleteModelUsage("ollama", 1));
     await publisher.publish({
       data: { duration_ms: 1, outcome: "final", step: 1, text_chars: 4 },
       type: "agent.step.completed",

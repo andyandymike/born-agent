@@ -6,6 +6,10 @@ import { EventPublisher } from "../../src/events/event-publisher.js";
 import {
   InMemorySessionWriter,
 } from "../helpers.js";
+import {
+  testBackendSelected,
+  testCompleteModelUsage,
+} from "../phase8-event-helpers.js";
 
 function ids() {
   let value = 0;
@@ -72,6 +76,7 @@ async function readyPublisher(writer = new InMemorySessionWriter()) {
     },
     type: "run.started",
   });
+  await publisher.publish(testBackendSelected("ollama", "fake"));
   await publisher.publish({
     data: {
       input_kind: "user_task",
@@ -83,15 +88,7 @@ async function readyPublisher(writer = new InMemorySessionWriter()) {
     },
     type: "agent.step.started",
   });
-  await publisher.publish({
-    data: {
-      input_tokens: 1,
-      output_tokens: 1,
-      step: 1,
-      total_tokens: 2,
-    },
-    type: "model.usage",
-  });
+  await publisher.publish(testCompleteModelUsage("ollama", 1));
   await publisher.publish({
     data: {
       duration_ms: 1,

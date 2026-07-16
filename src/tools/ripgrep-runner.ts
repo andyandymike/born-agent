@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
+import { sanitizeChildEnvironment } from "../security/child-environment.js";
+
 export type RipgrepRunResult =
   | {
       readonly exitCode: number;
@@ -30,19 +32,26 @@ export interface RipgrepRunnerLike {
 export type SpawnRipgrep = (
   args: readonly string[],
   cwd: string,
+  environment: Readonly<Record<string, string>>,
 ) => ChildProcessWithoutNullStreams;
 
-const spawnRipgrep: SpawnRipgrep = (args, cwd) =>
+const spawnRipgrep: SpawnRipgrep = (args, cwd, environment) =>
   // PHASE3: 专用 runner 只能启动固定程序 rg，且 shell:false；它不是通用命令执行器。
   spawn("rg", [...args], {
     cwd,
+    env: { ...environment },
     shell: false,
     stdio: "pipe",
     windowsHide: true,
   });
 
 export class RipgrepRunner implements RipgrepRunnerLike {
-  constructor(private readonly spawnProcess: SpawnRipgrep = spawnRipgrep) {}
+  constructor(
+    private readonly spawnProcess: SpawnRipgrep = spawnRipgrep,
+    private readonly environment: Readonly<
+      Record<string, string | undefined>
+    > = process.env,
+  ) {}
 
   run(
     args: readonly string[],
@@ -56,7 +65,11 @@ export class RipgrepRunner implements RipgrepRunnerLike {
 
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = this.spawnProcess(args, options.cwd);
+        child = this.spawnProcess(
+          args,
+          options.cwd,
+          sanitizeChildEnvironment(this.environment),
+        );
       } catch {
         resolve({ kind: "failed" });
         return;

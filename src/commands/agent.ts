@@ -3,37 +3,24 @@ import { resolveAgentConfig } from "../agent/agent-config.js";
 import type {
   AgentCommandOptions,
   AgentExitCode,
-  ResolvedAgentConfig,
 } from "../agent/agent-types.js";
 import { BudgetTracker } from "../agent/budget-tracker.js";
 import {
   AGENT_SYSTEM_INSTRUCTIONS,
   READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
 } from "../agent/system-instructions.js";
-import type { ChatClientConfiguration } from "../chat/types.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import {
   EventPersistenceError,
   EventPublisher,
 } from "../events/event-publisher.js";
 import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
+import {
+  BackendPreflightError,
+} from "../model/backend-factory.js";
+import type { ModelBackend } from "../model/model-backend.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import { FatalToolExecutionError } from "../tools/tool-types.js";
-
-function clientConfiguration(
-  config: ResolvedAgentConfig,
-  env: Readonly<Record<string, string | undefined>>,
-): ChatClientConfiguration | { readonly error: string } {
-  if (config.provider === "openai") {
-    const apiKey = env.OPENAI_API_KEY?.trim();
-    return apiKey
-      ? { apiKey, provider: "openai" }
-      : { error: "OPENAI_API_KEY is not configured" };
-  }
-  return config.ollamaBaseURL === undefined
-    ? { error: "internal protocol error" }
-    : { baseURL: config.ollamaBaseURL, provider: "ollama" };
-}
 
 export async function executeAgent(
   options: AgentCommandOptions,
@@ -48,6 +35,36 @@ export async function executeAgent(
     return 2;
   }
   const config = configResult.value;
+  let backend: ModelBackend;
+  try {
+    // PHASE8: factory preflight freezes one provider/model and proves required
+    // tools, complete usage and cancellation before a session or request exists.
+    backend = runtime.createModelBackend({
+      ...(config.ollamaBaseURL === undefined
+        ? {}
+        : { endpoint: config.ollamaBaseURL }),
+      model: config.model,
+      provider: config.provider,
+      requirement: {
+        cancellation: true,
+        completeUsageForReportedTokenCeiling: true,
+        streaming: true,
+        tools: true,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof BackendPreflightError ||
+      (error instanceof Error &&
+        "exitCode" in error &&
+        error.exitCode === 2)
+    ) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      return 2;
+    }
+    renderer.renderDiagnostic("internal protocol error");
+    return 1;
+  }
   const modelEvidence = runtime.agentModelEvidence(config.provider);
   if (config.taskProfile === "coding" && modelEvidence === null) {
     renderer.renderDiagnostic(
@@ -55,12 +72,6 @@ export async function executeAgent(
     );
     return 2;
   }
-  const connection = clientConfiguration(config, runtime.env);
-  if ("error" in connection) {
-    renderer.renderDiagnostic(connection.error);
-    return connection.error === "OPENAI_API_KEY is not configured" ? 4 : 1;
-  }
-
   const sessionId = runtime.randomUUID();
   const runId = runtime.randomUUID();
   let writer: SessionWriter;
@@ -124,6 +135,17 @@ export async function executeAgent(
       },
       type: "run.started",
     });
+    await publisher.publish({
+      data: {
+        adapter: backend.identity.adapter,
+        adapter_version: backend.identity.adapterVersion,
+        capabilities: backend.capabilities,
+        config_fingerprint: backend.identity.configFingerprint,
+        model: backend.identity.model,
+        provider: backend.identity.provider,
+      },
+      type: "backend.selected",
+    });
     const tools = await runtime.createAgentToolRegistry({
       approvalMode: config.editApproval,
       approvalPrompt: runtime.createApprovalPrompt(io),
@@ -143,13 +165,12 @@ export async function executeAgent(
       randomUUID: runtime.randomUUID,
       reportFormat: config.reportFormat,
       runId,
-      secrets: [runtime.env.OPENAI_API_KEY],
+      secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
       taskProfile: config.taskProfile,
       sessionId,
       timestamp: runtime.timestamp,
       workspace: runtime.cwd,
     });
-    const model = runtime.createModelTurnClient(connection);
     const terminal = await runAgentLoop(
       config.task,
       config,
@@ -160,14 +181,13 @@ export async function executeAgent(
           config.taskProfile === "read-only"
             ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
             : AGENT_SYSTEM_INSTRUCTIONS,
-        model,
-        modelId: config.model,
+        model: backend,
         publisher,
         renderCompletionReport: (report, terminal) =>
           terminal === "completed"
             ? io.stdout.write(report)
             : io.stderr.write(report),
-        secrets: [runtime.env.OPENAI_API_KEY],
+        secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
         tools,
       },
       userController.signal,

@@ -1,28 +1,4 @@
-export interface ChatRequest {
-  readonly instructions: string;
-  readonly model: string;
-  readonly prompt: string;
-  readonly timeoutMs: number;
-}
-
-export interface ChatUsage {
-  readonly cachedInputTokens?: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly totalTokens: number;
-}
-
-export type ChatProvider = "ollama" | "openai";
-
-export type ChatClientConfiguration =
-  | {
-      readonly apiKey: string;
-      readonly provider: "openai";
-    }
-  | {
-      readonly baseURL: string;
-      readonly provider: "ollama";
-    };
+export type ChatProvider = "anthropic" | "ollama" | "openai";
 
 export interface ChatCommandOptions {
   readonly model: string | undefined;

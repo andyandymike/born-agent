@@ -212,4 +212,69 @@ describe("RunEvent v1 schema", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts Phase 8 backend identity and complete or partial provider usage", () => {
+    const backend = {
+      ...envelope,
+      data: {
+        adapter: "pi-ai",
+        adapter_version: "0.80.7",
+        capabilities: {
+          cancellation: "abort_signal",
+          reasoning: "opaque_passthrough",
+          streaming: true,
+          tools: "strict",
+          usage: "complete",
+        },
+        config_fingerprint: "a".repeat(64),
+        model: "synthetic-tool-model",
+        provider: "anthropic",
+      },
+      type: "backend.selected",
+    };
+    const completeUsage = {
+      ...envelope,
+      data: {
+        cache_read_tokens: null,
+        cache_write_tokens: 0,
+        completeness: "complete",
+        input_tokens: 4,
+        output_tokens: 2,
+        provider: "anthropic",
+        step: 1,
+        total_tokens: 6,
+      },
+      type: "model.usage",
+    };
+    const partialUsage = {
+      ...envelope,
+      data: {
+        cache_read_tokens: null,
+        cache_write_tokens: null,
+        completeness: "partial",
+        input_tokens: 4,
+        output_tokens: null,
+        provider: "custom-provider",
+        step: 1,
+        total_tokens: null,
+      },
+      type: "model.usage",
+    };
+
+    expect(runEventSchema.safeParse(backend).success).toBe(true);
+    expect(runEventSchema.safeParse(completeUsage).success).toBe(true);
+    expect(runEventSchema.safeParse(partialUsage).success).toBe(true);
+    expect(
+      runEventSchema.safeParse({
+        ...partialUsage,
+        data: { ...partialUsage.data, cache_read_tokens: undefined },
+      }).success,
+    ).toBe(false);
+    expect(
+      runEventSchema.safeParse({
+        ...backend,
+        data: { ...backend.data, provider: "invalid provider" },
+      }).success,
+    ).toBe(false);
+  });
 });

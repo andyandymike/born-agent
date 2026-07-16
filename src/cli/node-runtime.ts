@@ -18,7 +18,7 @@ import {
 import { PermissionEngine } from "../permissions/permission-engine.js";
 import { localFreeOnlyPermissionPolicy } from "../permissions/local-free-policy.js";
 import { createTrustedLocalFixturePermissionContext } from "../permissions/trusted-local-fixture-manifest.js";
-import { OpenAIStreamingChatClient } from "../providers/openai/openai-streaming-chat-client.js";
+import { createProductionBackendFactory } from "../model/backend-factory.js";
 import { JsonlSessionWriter } from "../sessions/jsonl-session-writer.js";
 import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
@@ -26,6 +26,7 @@ import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-regist
 import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
+import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog-port.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -45,16 +46,12 @@ export interface NodeRuntimeOptions {
 export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   // PHASE2: 这里把可测试的接口接到真实 Node 能力：UUID、时钟、文件、timer、SDK。
   // 单元测试会替换这些依赖，因此无需真的访问网络、磁盘或等待超时。
+  const backendFactory = createProductionBackendFactory(options.env);
   return {
-    agentModelEvidence: (provider) =>
-      provider === "ollama"
-        ? {
-            backend: "ollama",
-            endpointScope: "literal_loopback",
-            kind: "local_live_verified",
-            remoteBillableRequests: 0,
-          }
-        : null,
+    // PHASE8: loopback selection alone is not live verification. Coding
+    // completion remains closed until a separate immutable Ollama evidence run
+    // exists; read-only runs do not need to claim that stronger status.
+    agentModelEvidence: () => null,
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
     createApprovalPrompt: (io) =>
@@ -64,7 +61,10 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       }),
     createAgentToolRegistry: async (registryOptions) => {
       if (registryOptions.taskProfile === "read-only") {
-        return createReadonlyToolRegistry(registryOptions.workspace);
+        return createReadonlyToolRegistry(
+          registryOptions.workspace,
+          registryOptions.secrets ?? [],
+        );
       }
       const executableRegistry = createDefaultExecutableRegistry({
         execPath: options.execPath,
@@ -125,16 +125,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       });
     },
     createSessionWriter: JsonlSessionWriter.create,
-    createModelTurnClient: (configuration) =>
-      configuration.provider === "openai"
-        ? new OpenAIStreamingChatClient({ apiKey: configuration.apiKey })
-        : new OpenAIStreamingChatClient({
-            apiKey: "ollama",
-            baseURL: configuration.baseURL,
-            includeEncryptedReasoning: false,
-            includeStore: false,
-            providerName: "Ollama",
-          }),
+    createModelBackend: (request) => backendFactory.create(request),
     cwd: options.cwd,
     // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。
     createToolRegistry: createReadonlyToolRegistry,
@@ -148,6 +139,8 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     onCancel: options.onCancel,
     platform: options.platform,
     randomUUID,
+    refreshLocalModelCatalog: (request) =>
+      new NodeOllamaLocalCatalogPort().refresh(request),
     runExecutable,
     setTimer: (listener, delayMs) => setTimeout(listener, delayMs),
     timestamp: () => new Date().toISOString(),

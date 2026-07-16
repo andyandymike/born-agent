@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+import { sanitizeChildEnvironment } from "../security/child-environment.js";
+
 export interface GitArgvResult {
   readonly exitCode: number;
   readonly stderr: Buffer;
@@ -40,7 +42,12 @@ function appendBounded(
 }
 
 export class NodeGitArgvRunner implements GitArgvRunner {
-  constructor(private readonly executable = "git") {}
+  constructor(
+    private readonly executable = "git",
+    private readonly environment: Readonly<
+      Record<string, string | undefined>
+    > = process.env,
+  ) {}
 
   run(
     cwd: string,
@@ -52,7 +59,7 @@ export class NodeGitArgvRunner implements GitArgvRunner {
       const child = spawn(this.executable, [...args], {
         cwd,
         env: {
-          ...process.env,
+          ...sanitizeChildEnvironment(this.environment),
           GIT_EXTERNAL_DIFF: "",
           GIT_PAGER: "cat",
         },

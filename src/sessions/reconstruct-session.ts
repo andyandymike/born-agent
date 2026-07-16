@@ -1,5 +1,9 @@
 import type { RunEvent, TerminalRunEvent } from "../events/run-event.js";
-import { isTerminalRunEvent } from "../events/run-event.js";
+import {
+  isLegacyModelUsageData,
+  isPhase8ModelUsageData,
+  isTerminalRunEvent,
+} from "../events/run-event.js";
 import {
   completionVerificationIdsMatch,
   completionVerificationsMatchEvents,
@@ -13,6 +17,7 @@ import {
 } from "../completion/completion-evidence-bindings.js";
 
 type StartedEvent = Extract<RunEvent, { type: "run.started" }>;
+type BackendSelectedEvent = Extract<RunEvent, { type: "backend.selected" }>;
 type UsageEvent = Extract<RunEvent, { type: "usage" }>;
 type ToolRequestedEvent = Extract<RunEvent, { type: "tool.call.requested" }>;
 type ToolCompletedEvent = Extract<RunEvent, { type: "tool.call.completed" }>;
@@ -104,6 +109,7 @@ export interface ReconstructedCompletionCandidate {
 
 export interface ReconstructedRun {
   readonly agentSteps: readonly ReconstructedAgentStep[];
+  readonly backend?: BackendSelectedEvent["data"];
   readonly commandAttempts: readonly ReconstructedCommandAttempt[];
   readonly completionCandidates: readonly ReconstructedCompletionCandidate[];
   readonly completionEvidence: readonly CompletionEvidenceEvent["data"][];
@@ -245,20 +251,39 @@ function validateRunUsage(
     throw new Error("agent run usage exists without usage for every step");
   }
   const known = modelUsages.filter((value) => value !== undefined);
-  const cached = known
+  if (
+    known.some(
+      (modelUsage) =>
+        isPhase8ModelUsageData(modelUsage) &&
+        modelUsage.completeness !== "complete",
+    )
+  ) {
+    throw new Error("run usage cannot aggregate partial model usage");
+  }
+  const legacyCached = known
+    .filter(isLegacyModelUsageData)
     .map((value) => value.cached_input_tokens)
     .filter((value) => value !== undefined);
+  const phase8Cached = known
+    .filter(isPhase8ModelUsageData)
+    .map((value) => value.cache_read_tokens);
+  const expectedCached =
+    phase8Cached.length > 0
+      ? phase8Cached.every((value) => value !== null)
+        ? phase8Cached.reduce<number>((sum, value) => sum + (value ?? 0), 0)
+        : undefined
+      : legacyCached.length === 0
+        ? undefined
+        : legacyCached.reduce((sum, value) => sum + value, 0);
   if (
     usage.input_tokens !==
-      known.reduce((sum, value) => sum + value.input_tokens, 0) ||
+      known.reduce<number>((sum, value) => sum + (value.input_tokens ?? 0), 0) ||
     usage.output_tokens !==
-      known.reduce((sum, value) => sum + value.output_tokens, 0) ||
+      known.reduce<number>((sum, value) => sum + (value.output_tokens ?? 0), 0) ||
     usage.total_tokens !==
-      known.reduce((sum, value) => sum + value.total_tokens, 0) ||
+      known.reduce<number>((sum, value) => sum + (value.total_tokens ?? 0), 0) ||
     usage.model_turns !== known.length ||
-    (cached.length === 0
-      ? usage.cached_input_tokens !== undefined
-      : usage.cached_input_tokens !== cached.reduce((sum, value) => sum + value, 0)) ||
+    usage.cached_input_tokens !== expectedCached ||
     usage.usage_incomplete === true
   ) {
     throw new Error("run usage does not equal model usage aggregation");
@@ -297,6 +322,16 @@ function validateBudgetTerminal(
       throw new Error("max_duration terminal does not match event history");
     }
   } else if (data.reason === "max_tokens") {
+    if (
+      steps.some(
+        (step) =>
+          step.modelUsage === undefined ||
+          (isPhase8ModelUsageData(step.modelUsage) &&
+            step.modelUsage.completeness !== "complete"),
+      )
+    ) {
+      throw new Error("max_tokens terminal requires complete model usage");
+    }
     const total = steps.reduce(
       (sum, step) => sum + (step.modelUsage?.total_tokens ?? 0),
       0,
@@ -347,6 +382,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   const approvalCalls = new Map<string, ApprovalReference>();
   const steps: MutableAgentStep[] = [];
   let activeStep: MutableAgentStep | undefined;
+  let backend: BackendSelectedEvent["data"] | undefined;
   let output = "";
   let usage: UsageEvent["data"] | undefined;
   let terminal: TerminalRunEvent | undefined;
@@ -366,7 +402,22 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
     }
     if (terminal !== undefined) throw new Error("event appears after terminal event");
 
-    if (event.type === "agent.step.started") {
+    if (event.type === "backend.selected") {
+      // PHASE8: old schema-v1 sessions legitimately have no selection event.
+      // When the event is present, it marks a new writer and must freeze identity
+      // before any model-derived chat or agent event can be replayed.
+      if (
+        index !== 1 ||
+        backend !== undefined ||
+        event.data.provider !== first.data.provider ||
+        event.data.model !== first.data.model
+      ) {
+        throw new Error(
+          "backend.selected must immediately follow and match run.started",
+        );
+      }
+      backend = event.data;
+    } else if (event.type === "agent.step.started") {
       // PHASE4: step 必须连续且不重叠；第一步消费 user_task，后续步骤消费上一步 tool_result。
       if (first.data.command !== "agent") {
         throw new Error("chat session contains agent step events");
@@ -435,6 +486,18 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         activeStep.modelUsage !== undefined
       ) {
         throw new Error("model usage does not match one active step");
+      }
+      let phase8IdentityMismatch: boolean;
+      if (isPhase8ModelUsageData(event.data)) {
+        phase8IdentityMismatch =
+          backend === undefined ||
+          event.data.provider !== backend.provider ||
+          event.data.completeness !== backend.capabilities.usage;
+      } else {
+        phase8IdentityMismatch = backend !== undefined;
+      }
+      if (phase8IdentityMismatch) {
+        throw new Error("model usage does not match selected backend capability");
       }
       activeStep.modelUsage = event.data;
     } else if (event.type === "agent.step.completed") {
@@ -1229,6 +1292,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       ...(step.modelUsage === undefined ? {} : { modelUsage: step.modelUsage }),
       started: step.started,
     })),
+    ...(backend === undefined ? {} : { backend }),
     commandAttempts: commandValues.map((attempt) => ({
       ...(attempt.approvalDecided === undefined
         ? {}

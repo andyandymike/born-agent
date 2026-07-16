@@ -124,7 +124,7 @@ async function runFailure(
     memory.io,
     createRuntime({
       createAgentToolRegistry: failingRegistry(failurePoint),
-      createModelTurnClient: () => failingClient(),
+      createModelBackend: () => failingClient(),
       createSessionWriter: async () => writer,
       env: {},
     }),

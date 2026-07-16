@@ -1,5 +1,6 @@
 import type { CliIO } from "../cli/types.js";
 import type { RunEvent } from "../events/run-event.js";
+import { isPhase8ModelUsageData } from "../events/run-event.js";
 import type { RunEventRenderer } from "../events/event-publisher.js";
 
 function oneLine(value: string): string {
@@ -32,6 +33,15 @@ export class ConsoleEventRenderer implements RunEventRenderer {
           );
         }
         return;
+      case "backend.selected":
+        // PHASE8: verbose output renders only stable, persisted backend identity;
+        // provider SDK objects and opaque continuation state never cross this boundary.
+        if (this.verbose) {
+          this.io.stderr.write(
+            `backend provider=${event.data.provider} model=${oneLine(event.data.model)} adapter=${oneLine(event.data.adapter)} adapter_version=${oneLine(event.data.adapter_version)}\n`,
+          );
+        }
+        return;
       case "text.delta":
         // PHASE7: coding prose is persisted as an internal candidate; only the
         // deterministic report rendered after durable completion may claim success.
@@ -56,13 +66,21 @@ export class ConsoleEventRenderer implements RunEventRenderer {
       case "model.usage":
         // PHASE4: step usage 与末尾聚合 usage 分开显示，便于定位哪一步消耗异常。
         if (this.verbose) {
-          const cached =
-            event.data.cached_input_tokens === undefined
-              ? ""
-              : ` cached_input_tokens=${event.data.cached_input_tokens}`;
-          this.io.stderr.write(
-            `step=${event.data.step} input_tokens=${event.data.input_tokens} output_tokens=${event.data.output_tokens} total_tokens=${event.data.total_tokens}${cached}\n`,
-          );
+          if (isPhase8ModelUsageData(event.data)) {
+            const shown = (value: number | null): string =>
+              value === null ? "unknown" : String(value);
+            this.io.stderr.write(
+              `step=${event.data.step} provider=${event.data.provider} completeness=${event.data.completeness} input_tokens=${shown(event.data.input_tokens)} output_tokens=${shown(event.data.output_tokens)} total_tokens=${shown(event.data.total_tokens)} cache_read_tokens=${shown(event.data.cache_read_tokens)} cache_write_tokens=${shown(event.data.cache_write_tokens)}\n`,
+            );
+          } else {
+            const cached =
+              event.data.cached_input_tokens === undefined
+                ? ""
+                : ` cached_input_tokens=${event.data.cached_input_tokens}`;
+            this.io.stderr.write(
+              `step=${event.data.step} input_tokens=${event.data.input_tokens} output_tokens=${event.data.output_tokens} total_tokens=${event.data.total_tokens}${cached}\n`,
+            );
+          }
         }
         return;
       case "agent.step.completed":

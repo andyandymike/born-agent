@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
-import type { ModelTurnSignal } from "../../src/model/model-turn-types.js";
 import { createReadonlyToolRegistry } from "../../src/tools/create-readonly-tool-registry.js";
 import type { ToolExecution } from "../../src/tools/tool-types.js";
 import {
   FakeContinuation,
   FakeStreamingChatClient,
 } from "../fakes/fake-chat-client.js";
+import type { FakeModelTurnSignal as ModelTurnSignal } from "../fakes/fake-chat-client.js";
 import {
   createMemoryIO,
   createRuntime,
@@ -86,7 +86,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
       ["chat", "inspect the fixture", "--verbose"],
       memory.io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createToolRegistry: async () => registry,
       }),
@@ -99,6 +99,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
     expect(memory.readStderr()).not.toContain("content");
     expect(writer.events.map((event) => event.type)).toEqual([
       "run.started",
+      "backend.selected",
       "tool.call.requested",
       "tool.call.completed",
       "text.delta",
@@ -154,7 +155,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
       ["chat", "read outside"],
       createMemoryIO().io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createToolRegistry: async () => registry,
       }),
@@ -203,7 +204,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
           ["chat", "perform the boundary check"],
           memory.io,
           createRuntime({
-            createModelTurnClient: () => client,
+            createModelBackend: () => client,
             createSessionWriter: async () => writer,
             createToolRegistry: async () => registry,
             cwd: workspace,
@@ -244,7 +245,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
       ["chat", "inspect"],
       createMemoryIO().io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createToolRegistry: async () => registry,
       }),
@@ -267,12 +268,12 @@ describe("born chat Phase 3 read-only tool round trip", () => {
       ["chat", "loop"],
       createMemoryIO().io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createToolRegistry: async () => registry,
       }),
     );
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(5);
     expect(registry.calls).toHaveLength(1);
     expect(client.calls).toHaveLength(2);
     expect(writer.events.at(-1)).toMatchObject({
@@ -290,7 +291,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
     const exitCode = await runCli(
       ["chat", "plain", "--no-tools"],
       createMemoryIO().io,
-      createRuntime({ createModelTurnClient: () => client, createToolRegistry }),
+      createRuntime({ createModelBackend: () => client, createToolRegistry }),
     );
     expect(exitCode).toBe(0);
     expect(createToolRegistry).not.toHaveBeenCalled();
@@ -311,7 +312,7 @@ describe("born chat Phase 3 read-only tool round trip", () => {
       ["chat", "secret"],
       createMemoryIO().io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createToolRegistry: async () => registry,
         env: { OPENAI_API_KEY: secret },

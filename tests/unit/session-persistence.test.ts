@@ -8,6 +8,7 @@ import type { RunEvent } from "../../src/events/run-event.js";
 import { JsonlSessionWriter } from "../../src/sessions/jsonl-session-writer.js";
 import { readSession } from "../../src/sessions/read-session.js";
 import { reconstructSession } from "../../src/sessions/reconstruct-session.js";
+import { testBackendSelected } from "../phase8-event-helpers.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -52,6 +53,7 @@ describe("JSONL session persistence", () => {
       },
       type: "run.started",
     });
+    await publisher.publish(testBackendSelected("ollama", "qwen3:1.7b"));
     await publisher.publish({ data: { delta: "你" }, type: "text.delta" });
     await publisher.publish({ data: { delta: "好" }, type: "text.delta" });
     await publisher.publish({
@@ -156,6 +158,82 @@ describe("JSONL session persistence", () => {
         },
       ]),
     ).toThrow("output_chars");
+  });
+
+  it("replays legacy v1 sessions but validates Phase 8 backend ordering", () => {
+    const common = {
+      run_id: "00000000-0000-4000-8000-000000000002",
+      schema_version: 1 as const,
+      session_id: "00000000-0000-4000-8000-000000000001",
+      timestamp: "2026-07-16T00:00:00.000Z",
+    };
+    const start: RunEvent = {
+      ...common,
+      event_id: "00000000-0000-4000-8000-000000000003",
+      seq: 1,
+      data: {
+        command: "chat",
+        input: { role: "user", text: "hello" },
+        model: "synthetic-model",
+        provider: "anthropic",
+        timeout_ms: 120_000,
+        workspace: "D:\\Code\\bornagent",
+      },
+      type: "run.started",
+    };
+    const selection: RunEvent = {
+      ...common,
+      ...testBackendSelected("anthropic", "synthetic-model"),
+      event_id: "00000000-0000-4000-8000-000000000004",
+      seq: 2,
+    };
+    const text: RunEvent = {
+      ...common,
+      event_id: "00000000-0000-4000-8000-000000000005",
+      seq: 3,
+      data: { delta: "ok" },
+      type: "text.delta",
+    };
+    const terminal: RunEvent = {
+      ...common,
+      event_id: "00000000-0000-4000-8000-000000000006",
+      seq: 4,
+      data: { duration_ms: 1, output_chars: 2 },
+      type: "run.completed",
+    };
+
+    expect(reconstructSession([start, selection, text, terminal])).toMatchObject({
+      backend: { model: "synthetic-model", provider: "anthropic" },
+      output: "ok",
+    });
+    expect(() =>
+      reconstructSession([
+        start,
+        { ...text, seq: 2 },
+        { ...selection, seq: 3 },
+        terminal,
+      ]),
+    ).toThrow("backend.selected");
+    expect(() =>
+      reconstructSession([
+        start,
+        {
+          ...selection,
+          data: { ...selection.data, model: "different-model" },
+        },
+        text,
+        terminal,
+      ]),
+    ).toThrow("backend.selected");
+
+    // No backend.selected remains valid for a persisted Phase 0-7 schema-v1 trace.
+    expect(() =>
+      reconstructSession([
+        start,
+        { ...text, seq: 2 },
+        { ...terminal, seq: 3 },
+      ]),
+    ).not.toThrow();
   });
 
   it("reconstructs paired tools and allows interrupted tools only for failure", () => {

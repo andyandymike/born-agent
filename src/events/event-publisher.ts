@@ -1,5 +1,9 @@
 import type { RunEvent, RunEventDraft } from "./run-event.js";
-import { isTerminalRunEvent } from "./run-event.js";
+import {
+  isLegacyModelUsageData,
+  isPhase8ModelUsageData,
+  isTerminalRunEvent,
+} from "./run-event.js";
 import { runEventSchema } from "./run-event-schema.js";
 import {
   completionVerificationIdsMatch,
@@ -163,6 +167,11 @@ export class EventPublisher {
   private readonly approvals = new Map<string, ApprovalState>();
   private readonly agentSteps = new Map<number, AgentStepState>();
   private command: "agent" | "chat" | undefined;
+  private backendSelected:
+    | Extract<RunEvent, { type: "backend.selected" }>["data"]
+    | undefined;
+  private startedModel: string | undefined;
+  private startedProvider: string | undefined;
   private taskProfile: "read-only" | "coding" | undefined;
   private taskProfileExplicit = false;
   private outputChars = 0;
@@ -229,6 +238,27 @@ export class EventPublisher {
     }
     if (this.started && draft.type === "run.started") {
       throw new Error("run.started can only be published once");
+    }
+    // PHASE8: a new writer freezes and persists the backend immediately after
+    // run.started, before either chat or agent can emit model-derived evidence.
+    if (
+      this.started &&
+      this.backendSelected === undefined &&
+      draft.type !== "backend.selected"
+    ) {
+      throw new Error("backend.selected must immediately follow run.started");
+    }
+    if (draft.type === "backend.selected") {
+      if (this.backendSelected !== undefined) {
+        throw new Error("backend.selected can only be published once");
+      }
+      if (
+        draft.data.provider !== this.startedProvider ||
+        draft.data.model !== this.startedModel
+      ) {
+        throw new Error("backend.selected must match run.started identity");
+      }
+      return;
     }
     if (draft.type === "usage" && this.usagePublished) {
       throw new Error("usage can only be published once");
@@ -455,6 +485,15 @@ export class EventPublisher {
         step.modelUsage !== undefined
       ) {
         throw new Error("model usage must appear once in its active step");
+      }
+      if (
+        !isPhase8ModelUsageData(draft.data) ||
+        draft.data.provider !== this.backendSelected?.provider ||
+        draft.data.completeness !== this.backendSelected.capabilities.usage
+      ) {
+        throw new Error(
+          "new model usage must match the selected backend capability",
+        );
       }
       return;
     }
@@ -913,21 +952,45 @@ export class EventPublisher {
         throw new Error("agent run usage requires usage for every step");
       }
       const known = usages.filter((usage) => usage !== undefined);
-      const cached = known
-        .map((usage) => usage.cached_input_tokens)
+      if (
+        known.some(
+          (modelUsage) =>
+            "completeness" in modelUsage &&
+            modelUsage.completeness !== "complete",
+        )
+      ) {
+        throw new Error("run usage requires complete model usage events");
+      }
+      const inputTokens = known.map((modelUsage) => modelUsage.input_tokens);
+      const outputTokens = known.map((modelUsage) => modelUsage.output_tokens);
+      const totalTokens = known.map((modelUsage) => modelUsage.total_tokens);
+      const legacyCached = known
+        .filter(isLegacyModelUsageData)
+        .map((modelUsage) => modelUsage.cached_input_tokens)
         .filter((value) => value !== undefined);
+      const phase8Cached = known
+        .filter(isPhase8ModelUsageData)
+        .map((modelUsage) => modelUsage.cache_read_tokens);
+      const expectedCached =
+        phase8Cached.length > 0
+          ? phase8Cached.every((value) => value !== null)
+            ? phase8Cached.reduce<number>(
+                (sum, value) => sum + (value ?? 0),
+                0,
+              )
+            : undefined
+          : legacyCached.length === 0
+            ? undefined
+            : legacyCached.reduce((sum, value) => sum + value, 0);
       if (
         draft.data.input_tokens !==
-          known.reduce((sum, usage) => sum + usage.input_tokens, 0) ||
+          inputTokens.reduce<number>((sum, value) => sum + (value ?? 0), 0) ||
         draft.data.output_tokens !==
-          known.reduce((sum, usage) => sum + usage.output_tokens, 0) ||
+          outputTokens.reduce<number>((sum, value) => sum + (value ?? 0), 0) ||
         draft.data.total_tokens !==
-          known.reduce((sum, usage) => sum + usage.total_tokens, 0) ||
+          totalTokens.reduce<number>((sum, value) => sum + (value ?? 0), 0) ||
         draft.data.model_turns !== known.length ||
-        (cached.length === 0
-          ? draft.data.cached_input_tokens !== undefined
-          : draft.data.cached_input_tokens !==
-            cached.reduce((sum, value) => sum + value, 0)) ||
+        draft.data.cached_input_tokens !== expectedCached ||
         draft.data.usage_incomplete === true
       ) {
         throw new Error("run usage does not match model usage events");
@@ -1067,10 +1130,14 @@ export class EventPublisher {
     if (event.type === "run.started") {
       this.started = true;
       this.command = event.data.command;
+      this.startedModel = event.data.model;
+      this.startedProvider = event.data.provider;
       if (event.data.command === "agent") {
         this.taskProfile = event.data.task_profile ?? "read-only";
         this.taskProfileExplicit = event.data.task_profile !== undefined;
       }
+    } else if (event.type === "backend.selected") {
+      this.backendSelected = event.data;
     } else if (event.type === "text.delta") {
       this.outputChars += event.data.delta.length;
       if (this.activeAgentStep !== undefined) {

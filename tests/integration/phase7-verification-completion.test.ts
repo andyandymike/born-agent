@@ -11,14 +11,14 @@ import { runCli } from "../../src/cli/run-cli.js";
 import type { CliRuntime } from "../../src/cli/types.js";
 import { verifyRunReportHash } from "../../src/completion/completion-report-renderer.js";
 import type { RunEvent } from "../../src/events/run-event.js";
-import type {
-  ModelTurnRequest,
-  ModelTurnSignal,
-} from "../../src/model/model-turn-types.js";
 import { runReportSchema, type RunReport } from "../../src/reports/run-report-schema.js";
 import {
   FakeContinuation,
   FakeStreamingChatClient,
+} from "../fakes/fake-chat-client.js";
+import type {
+  FakeModelTurnRequest as ModelTurnRequest,
+  FakeModelTurnSignal as ModelTurnSignal,
 } from "../fakes/fake-chat-client.js";
 import {
   createMemoryIO,
@@ -221,9 +221,12 @@ async function runCodingScenario(options: {
       remoteBillableRequests: 0,
     }),
     createApprovalPrompt: () => ({ request: approval }),
-    createModelTurnClient: (configuration) => {
+    createModelBackend: (configuration) => {
       modelConfigurations.push(configuration.provider);
-      return options.client;
+      return options.client.selectIdentity(
+        configuration.provider as "anthropic" | "ollama" | "openai",
+        configuration.model,
+      );
     },
     createSessionWriter: async () => writer,
     now: () => 0,
@@ -382,7 +385,7 @@ describe("born agent Phase 7 verification and completion integration", () => {
       eventType("usage"),
       eventType("run.completed"),
     ]);
-  });
+  }, 15_000);
 
   it("rejects completed after a failed verification, then reports blocked with exit 8", async () => {
     const target = "fixtures/phase-07-verification-fails/src/answer.mjs";

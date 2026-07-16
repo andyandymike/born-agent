@@ -1,10 +1,7 @@
 import type {
-  ChatClientConfiguration,
   ChatCommandOptions,
-  ChatUsage,
   ResolvedChatConfig,
 } from "./types.js";
-import type { ProviderFailure } from "./stream-types.js";
 import { resolveChatConfig } from "./config.js";
 import {
   READONLY_SYSTEM_INSTRUCTIONS,
@@ -17,11 +14,16 @@ import {
 } from "../events/event-publisher.js";
 import type { RunEventDraft } from "../events/run-event.js";
 import type {
-  ModelContinuation,
-  ModelToolCall,
-  ModelTurnClient,
+  BackendContinuation,
+  ModelBackend,
   ModelTurnRequest,
-} from "../model/model-turn-types.js";
+} from "../model/model-backend.js";
+import {
+  BackendPreflightError,
+  type BackendCreationRequest,
+} from "../model/backend-factory.js";
+import type { ModelUsage } from "../model/model-events.js";
+import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import type {
@@ -41,9 +43,7 @@ export interface StreamingChatRuntime {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   clearTimer(handle: unknown): void;
-  createModelTurnClient(
-    configuration: ChatClientConfiguration,
-  ): ModelTurnClient;
+  createModelBackend(request: BackendCreationRequest): ModelBackend;
   createSessionWriter(
     workspace: string,
     sessionId: string,
@@ -62,11 +62,17 @@ export interface StreamingChatRuntime {
 interface CompletedTurn {
   // PHASE3: consumeModelTurn 只汇总一个回合；是否结束整个 run 由外层固定状态机决定。
   readonly call?: ModelToolCall;
-  readonly continuation: ModelContinuation;
+  readonly continuation: BackendContinuation;
   readonly kind: "completed";
   readonly providerResponseId?: string;
   readonly sawNonWhitespaceText: boolean;
-  readonly usage?: ChatUsage;
+  readonly usage?: ModelUsage;
+}
+
+interface ModelToolCall {
+  readonly argumentsJson: string;
+  readonly callId: string;
+  readonly name: string;
 }
 
 type TurnResult =
@@ -76,21 +82,6 @@ type TurnResult =
 
 function durationMs(runtime: StreamingChatRuntime, startedAt: number): number {
   return Math.max(0, Math.round(runtime.now() - startedAt));
-}
-
-function clientConfiguration(
-  config: ResolvedChatConfig,
-  env: Readonly<Record<string, string | undefined>>,
-): ChatClientConfiguration | { readonly error: string } {
-  if (config.provider === "openai") {
-    const apiKey = env.OPENAI_API_KEY?.trim();
-    return apiKey
-      ? { apiKey, provider: "openai" }
-      : { error: "OPENAI_API_KEY is not configured" };
-  }
-  return config.ollamaBaseURL === undefined
-    ? { error: "internal protocol error" }
-    : { baseURL: config.ollamaBaseURL, provider: "ollama" };
 }
 
 function failureDraft(
@@ -122,10 +113,8 @@ function protocolFailure(code: string, message: string): ProviderFailure {
 }
 
 function exitCodeForProviderFailure(error: ProviderFailure): StreamingChatExitCode {
-  if (error.category === "auth") {
-    return 4;
-  }
-  return error.category === "protocol" ? 1 : 5;
+  if (error.category === "authentication") return 4;
+  return error.category === "timeout" ? 6 : 5;
 }
 
 async function publishCancellation(
@@ -159,7 +148,7 @@ async function publishCancellation(
 }
 
 async function consumeModelTurn(
-  client: ModelTurnClient,
+  backend: ModelBackend,
   request: ModelTurnRequest,
   controller: AbortController,
   publisher: EventPublisher,
@@ -167,37 +156,42 @@ async function consumeModelTurn(
 ): Promise<TurnResult> {
   // PHASE2/3: provider-neutral 主事件泵。text delta 立即走 persist-before-render；
   // tool call、usage 和 opaque continuation 只在当前 model turn 内聚合。
-  let call: ModelToolCall | undefined;
-  let usage: ChatUsage | undefined;
+  const calls = new Map<string, ModelToolCall>();
+  let usage: ModelUsage | undefined;
   let sawNonWhitespaceText = false;
 
-  for await (const signal of client.streamTurn(request, controller.signal)) {
+  for await (const signal of backend.runTurn(request, controller.signal)) {
     if (cancellationReason() !== undefined) {
       return { kind: "aborted" };
     }
     switch (signal.type) {
       case "text_delta":
-        if (signal.delta.length > 0) {
-          sawNonWhitespaceText ||= signal.delta.trim().length > 0;
+        if (signal.text.length > 0) {
+          sawNonWhitespaceText ||= signal.text.trim().length > 0;
           await publisher.publish({
-            data: { delta: signal.delta },
+            data: { delta: signal.text },
             type: "text.delta",
           });
         }
         break;
-      case "tool_call":
-        // PHASE3: 本阶段最多接受一个完整 tool call；发现第二个时一个也不执行。
-        if (call !== undefined) {
+      case "tool_call_delta": {
+        const current = calls.get(signal.callId);
+        if (current !== undefined && current.name !== signal.name) {
           return {
             error: protocolFailure(
-              "multiple_tool_calls",
-              "provider returned more than one tool call",
+              "tool_call_name_changed",
+              "provider changed a tool name while streaming one call",
             ),
             kind: "failed",
           };
         }
-        call = signal.call;
+        calls.set(signal.callId, {
+          argumentsJson: `${current?.argumentsJson ?? ""}${signal.argumentsDelta}`,
+          callId: signal.callId,
+          name: signal.name,
+        });
         break;
+      }
       case "usage":
         if (usage !== undefined) {
           return {
@@ -212,18 +206,55 @@ async function consumeModelTurn(
         break;
       case "failed":
         return { error: signal.error, kind: "failed" };
-      case "turn_completed":
+      case "turn_completed": {
         // PHASE3: 只有 provider 明确完成回合后才把 tool call 和 continuation 交给外层。
+        const declaredUsage = backend.capabilities.usage;
+        if (
+          (declaredUsage === "none" && usage !== undefined) ||
+          (declaredUsage !== "none" &&
+            (usage === undefined || usage.completeness !== declaredUsage))
+        ) {
+          return {
+            error: protocolFailure(
+              "protocol_capability_mismatch",
+              "backend usage events do not match its declared capability",
+            ),
+            kind: "failed",
+          };
+        }
+        if (
+          (signal.outcome === "text" && calls.size !== 0) ||
+          (signal.outcome === "tool_calls" && calls.size === 0)
+        ) {
+          return {
+            error: protocolFailure(
+              "protocol_capability_mismatch",
+              "backend terminal outcome does not match streamed tool calls",
+            ),
+            kind: "failed",
+          };
+        }
+        if (calls.size > 1) {
+          return {
+            error: protocolFailure(
+              "multiple_tool_calls",
+              "provider returned more than one tool call",
+            ),
+            kind: "failed",
+          };
+        }
+        const call = calls.values().next().value as ModelToolCall | undefined;
         return {
           ...(call === undefined ? {} : { call }),
           continuation: signal.continuation,
           kind: "completed",
-          ...(signal.providerResponseId === undefined
+          ...(signal.providerRequestId === undefined
             ? {}
-            : { providerResponseId: signal.providerResponseId }),
+            : { providerResponseId: signal.providerRequestId }),
           sawNonWhitespaceText,
           ...(usage === undefined ? {} : { usage }),
         };
+      }
     }
   }
   return cancellationReason() === undefined
@@ -237,36 +268,58 @@ async function consumeModelTurn(
     : { kind: "aborted" };
 }
 
-function aggregateUsage(usages: readonly (ChatUsage | undefined)[]):
+function aggregateUsage(usages: readonly (ModelUsage | undefined)[]):
   | {
-      readonly usage: ChatUsage;
+      readonly usage: {
+        readonly cachedInputTokens?: number;
+        readonly inputTokens: number;
+        readonly outputTokens: number;
+        readonly totalTokens: number;
+      };
       readonly usageIncomplete: boolean;
     }
   | undefined {
   // PHASE3: 两个 model turn 的 usage 汇总为一个 RunEvent；缺少某回合数据时标记 incomplete，
   // 不把未知 token 数伪造成 0。
-  const known = usages.filter((usage) => usage !== undefined);
+  const known = usages.filter(
+    (
+      usage,
+    ): usage is ModelUsage & {
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly totalTokens: number;
+    } =>
+      usage !== undefined &&
+      usage.inputTokens !== null &&
+      usage.outputTokens !== null &&
+      usage.totalTokens !== null,
+  );
   if (known.length === 0) {
     return undefined;
   }
-  const cached = known
-    .map((usage) => usage.cachedInputTokens)
-    .filter((value) => value !== undefined);
+  const cached = known.map((usage) => usage.cacheReadTokens);
   return {
     usage: {
-      ...(cached.length === 0
+      ...(cached.some((value) => value === null)
         ? {}
-        : { cachedInputTokens: cached.reduce((sum, value) => sum + value, 0) }),
+        : {
+            cachedInputTokens: cached.reduce<number>(
+              (sum, value) => sum + (value ?? 0),
+              0,
+            ),
+          }),
       inputTokens: known.reduce((sum, usage) => sum + usage.inputTokens, 0),
       outputTokens: known.reduce((sum, usage) => sum + usage.outputTokens, 0),
       totalTokens: known.reduce((sum, usage) => sum + usage.totalTokens, 0),
     },
-    usageIncomplete: known.length !== usages.length,
+    usageIncomplete:
+      known.length !== usages.length ||
+      known.some((usage) => usage.completeness !== "complete"),
   };
 }
 
 async function publishUsage(
-  usages: readonly (ChatUsage | undefined)[],
+  usages: readonly (ModelUsage | undefined)[],
   publisher: EventPublisher,
 ): Promise<void> {
   const aggregate = aggregateUsage(usages);
@@ -348,7 +401,7 @@ function toolCompletedDraft(
 
 async function runFixedToolRoundTrip(
   config: ResolvedChatConfig,
-  client: ModelTurnClient,
+  backend: ModelBackend,
   tools: ToolRegistryLike | undefined,
   controller: AbortController,
   publisher: EventPublisher,
@@ -359,13 +412,12 @@ async function runFixedToolRoundTrip(
   // PHASE3 状态机：first turn -> (直接回答 | 一个工具) -> second turn -> terminal。
   // 这里刻意没有 while；通用 AgentLoop、step budget 和重复调用检测属于 Phase 4。
   const first = await consumeModelTurn(
-    client,
+    backend,
     {
       input: { kind: "user_prompt", text: config.prompt },
       instructions: config.toolsEnabled
         ? READONLY_SYSTEM_INSTRUCTIONS
         : SYSTEM_INSTRUCTIONS,
-      model: config.model,
       timeoutMs: config.timeoutMs,
       tools: tools?.modelDefinitions ?? [],
     },
@@ -416,7 +468,7 @@ async function runFixedToolRoundTrip(
     );
   }
 
-  const secrets = [runtime.env.OPENAI_API_KEY];
+  const secrets = [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY];
   // PHASE3: 必须等第一回合完整结束后才记录并执行 tool call。
   // requested 先持久化，保证 session 中存在模型确实提出过该调用的证据。
   await publisher.publish({
@@ -479,7 +531,7 @@ async function runFixedToolRoundTrip(
   }
 
   const second = await consumeModelTurn(
-    client,
+    backend,
     {
       input: {
         callId: first.call.callId,
@@ -488,7 +540,6 @@ async function runFixedToolRoundTrip(
         output: execution.output,
       },
       instructions: READONLY_SYSTEM_INSTRUCTIONS,
-      model: config.model,
       timeoutMs: config.timeoutMs,
       tools: [],
       // PHASE3: 第二回合不再提供工具定义，以机械方式限制最多一次工具执行。
@@ -554,10 +605,36 @@ export async function runStreamingChat(
     return 2;
   }
   const config = configResult.value;
-  const connection = clientConfiguration(config, runtime.env);
-  if ("error" in connection) {
-    renderer.renderDiagnostic(connection.error);
-    return connection.error === "OPENAI_API_KEY is not configured" ? 4 : 1;
+  let backend: ModelBackend;
+  try {
+    // PHASE8: selection, credential routing, loopback policy and capabilities
+    // are frozen before session creation, so a rejected run leaves no partial log
+    // and cannot create a provider request or silently choose a fallback.
+    backend = runtime.createModelBackend({
+      ...(config.ollamaBaseURL === undefined
+        ? {}
+        : { endpoint: config.ollamaBaseURL }),
+      model: config.model,
+      provider: config.provider,
+      requirement: {
+        cancellation: true,
+        completeUsageForReportedTokenCeiling: false,
+        streaming: true,
+        tools: config.toolsEnabled,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof BackendPreflightError ||
+      (error instanceof Error &&
+        "exitCode" in error &&
+        error.exitCode === 2)
+    ) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      return 2;
+    }
+    renderer.renderDiagnostic("internal protocol error");
+    return 1;
   }
 
   const sessionId = runtime.randomUUID();
@@ -614,15 +691,26 @@ export async function runStreamingChat(
       },
       type: "run.started",
     });
+    await publisher.publish({
+      data: {
+        adapter: backend.identity.adapter,
+        adapter_version: backend.identity.adapterVersion,
+        capabilities: backend.capabilities,
+        config_fingerprint: backend.identity.configFingerprint,
+        model: backend.identity.model,
+        provider: backend.identity.provider,
+      },
+      type: "backend.selected",
+    });
     const tools = config.toolsEnabled
       ? await runtime.createToolRegistry(runtime.cwd, [
           runtime.env.OPENAI_API_KEY,
+          runtime.env.ANTHROPIC_API_KEY,
         ])
       : undefined;
-    const client = runtime.createModelTurnClient(connection);
     exitCode = await runFixedToolRoundTrip(
       config,
-      client,
+      backend,
       tools,
       controller,
       publisher,

@@ -3,6 +3,7 @@ import { Command, CommanderError } from "commander";
 import { executeAgent } from "../commands/agent.js";
 import { executeChat } from "../commands/chat.js";
 import { executeDoctor } from "../commands/doctor.js";
+import { executeModels } from "../commands/models.js";
 import type { CliIO, CliRuntime } from "./types.js";
 
 export async function runCli(
@@ -28,7 +29,7 @@ export async function runCli(
     // PHASE4: agent 是独立命令；chat 继续保留 Phase 3 的最多一次工具往返，避免语义偷换。
     .description("Run a budgeted coding AgentLoop over the workspace.")
     .argument("<task>", "repository task to answer; do not paste API keys")
-    .option("--provider <provider>", "model provider: openai or ollama")
+    .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--max-steps <steps>", "maximum model responses")
     // PHASE4: max-duration 覆盖整次 run，request-timeout 只覆盖一轮 provider response。
@@ -131,7 +132,7 @@ export async function runCli(
     .command("chat")
     .description("Stream a response with at most one read-only tool call.")
     .argument("<prompt>", "text prompt to send; do not paste API keys")
-    .option("--provider <provider>", "model provider: openai or ollama")
+    .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--timeout-ms <milliseconds>", "request timeout in milliseconds")
     .option("--no-tools", "disable read-only workspace tools")
@@ -160,6 +161,34 @@ export async function runCli(
             timeoutMs: options.timeoutMs,
             toolsEnabled: options.tools,
             verbose: options.verbose,
+          },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  program
+    .command("models")
+    .description("List the versioned local model capability catalog.")
+    .option("--provider <provider>", "filter by provider")
+    .option("--json", "write the versioned JSON document", false)
+    .option(
+      "--refresh-local",
+      "query literal-loopback Ollama /api/tags with a short timeout",
+      false,
+    )
+    .action(
+      async (options: {
+        json: boolean;
+        provider?: string;
+        refreshLocal: boolean;
+      }) => {
+        commandExitCode = await executeModels(
+          {
+            json: options.json,
+            provider: options.provider,
+            refreshLocal: options.refreshLocal,
           },
           runtime,
           io,

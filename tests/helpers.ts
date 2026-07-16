@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { CliIO, CliRuntime } from "../src/cli/types.js";
+import { BackendPreflightError } from "../src/model/backend-factory.js";
 import type { RunEvent } from "../src/events/run-event.js";
 import type { ExecutableResult } from "../src/doctor/types.js";
 import type { SessionWriter } from "../src/sessions/jsonl-session-writer.js";
@@ -90,6 +91,25 @@ export function createRuntime(
     return `00000000-0000-4000-8000-${String(uuidCounter).padStart(12, "0")}`;
   };
 
+  const environment = overrides.env ?? { OPENAI_API_KEY: "test-api-key" };
+  const createModelBackend =
+    overrides.createModelBackend ??
+    ((request) => {
+      if (
+        (request.provider === "openai" && !environment.OPENAI_API_KEY) ||
+        (request.provider === "anthropic" && !environment.ANTHROPIC_API_KEY)
+      ) {
+        throw new BackendPreflightError(
+          "configuration_credential_missing",
+          `${request.provider.toUpperCase()}_API_KEY is not configured`,
+        );
+      }
+      return new FakeStreamingChatClient(fixedStream(), {
+        model: request.model,
+        provider: request.provider as "anthropic" | "ollama" | "openai",
+      });
+    });
+
   return {
     agentModelEvidence: () => ({
       backend: "fake",
@@ -105,18 +125,17 @@ export function createRuntime(
     createAgentToolRegistry: async () => new FakeToolRegistry(),
     createSessionWriter: async (_workspace, sessionId) =>
       new InMemorySessionWriter(`memory://${sessionId}.jsonl`),
-    createModelTurnClient: () =>
-      new FakeStreamingChatClient(fixedStream()),
     createToolRegistry: async () => new FakeToolRegistry(),
     cwd: resolve("fixture-workspace"),
-    env: { OPENAI_API_KEY: "test-api-key" },
+    env: environment,
     execPath: "C:\\Program Files\\nodejs\\node.exe",
     isReadableDirectory: async () => true,
-    nodeVersion: "22.16.0",
+    nodeVersion: "22.19.0",
     now: Date.now,
     onCancel: () => () => undefined,
     platform: "win32",
     randomUUID,
+    refreshLocalModelCatalog: async () => [],
     runExecutable: async (command): Promise<ExecutableResult> => ({
       kind: "completed",
       exitCode: 0,
@@ -130,5 +149,15 @@ export function createRuntime(
     timestamp: () => "2026-07-16T00:00:00.000Z",
     version: "0.0.0",
     ...overrides,
+    createModelBackend: (request) => {
+      const backend = createModelBackend(request);
+      if (backend instanceof FakeStreamingChatClient) {
+        backend.selectIdentity(
+          request.provider as "anthropic" | "ollama" | "openai",
+          request.model,
+        );
+      }
+      return backend;
+    },
   };
 }

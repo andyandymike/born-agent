@@ -5,6 +5,10 @@ import type { AgentToolRegistryOptions } from "../tools/create-agent-tool-regist
 import type { ToolRegistryLike } from "../tools/tool-types.js";
 import type { ChatProvider } from "../chat/types.js";
 import type { ModelEvidence } from "../completion/completion-types.js";
+import type {
+  OllamaLocalCatalogRefreshRequest,
+  OllamaLocalModelDiscovery,
+} from "../providers/pi/ollama-local-catalog-port.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -21,6 +25,9 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     options: AgentToolRegistryOptions,
   ): Promise<ToolRegistryLike>;
   createApprovalPrompt(io: CliIO): ApprovalPrompt;
+  refreshLocalModelCatalog(
+    request: OllamaLocalCatalogRefreshRequest,
+  ): Promise<readonly OllamaLocalModelDiscovery[]>;
   readonly execPath: string;
   readonly version: string;
 }

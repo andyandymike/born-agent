@@ -56,7 +56,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () =>
+        createModelBackend: () =>
           new FakeStreamingChatClient(controlled.behavior),
       }),
     );
@@ -98,7 +98,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: (selected) => {
+        createModelBackend: (selected) => {
           configuration = selected;
           return new FakeStreamingChatClient(fixedStream(["local answer"]));
         },
@@ -108,8 +108,15 @@ describe("born chat streaming", () => {
 
     expect(exitCode).toBe(0);
     expect(configuration).toEqual({
-      baseURL: "http://localhost:11434/v1",
+      endpoint: "http://127.0.0.1:11434",
+      model: "qwen3:1.7b",
       provider: "ollama",
+      requirement: {
+        cancellation: true,
+        completeUsageForReportedTokenCeiling: false,
+        streaming: true,
+        tools: true,
+      },
     });
     expect(memory.readStdout()).toBe("local answer\n");
     expect(memory.readStderr()).toContain("provider=ollama");
@@ -137,7 +144,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
       }),
     );
 
@@ -150,7 +157,7 @@ describe("born chat streaming", () => {
   it("does not create a session for missing credentials or invalid timeout", async () => {
     const createSessionWriter = vi.fn();
     for (const [argv, env, expected] of [
-      [["chat", "hello"], {}, 4],
+      [["chat", "hello"], {}, 2],
       [["chat", "hello", "--timeout-ms", "999"], { OPENAI_API_KEY: "key" }, 2],
     ] as const) {
       const memory = createMemoryIO();
@@ -176,7 +183,7 @@ describe("born chat streaming", () => {
         memory.io,
         createRuntime({
           createSessionWriter: async () => writer,
-          createModelTurnClient: () => client,
+          createModelBackend: () => client,
           onCancel: (listener) => {
             if (scenario === "cancelled") {
               queueMicrotask(listener);
@@ -216,7 +223,7 @@ describe("born chat streaming", () => {
       memory.io,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () =>
+        createModelBackend: () =>
           new FakeStreamingChatClient(fixedStream(["must not render"])),
       }),
     );
@@ -224,6 +231,9 @@ describe("born chat streaming", () => {
     expect(exitCode).toBe(1);
     expect(memory.readStdout()).toBe("");
     expect(memory.readStderr()).toBe("session storage failed\n");
-    expect(persisted.map((event) => event.type)).toEqual(["run.started"]);
+    expect(persisted.map((event) => event.type)).toEqual([
+      "run.started",
+      "backend.selected",
+    ]);
   });
 });

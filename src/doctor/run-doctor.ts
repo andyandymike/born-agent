@@ -9,14 +9,14 @@ import type {
   ExecutableResult,
 } from "./types.js";
 
-const MINIMUM_NODE_MAJOR = 22;
+const MINIMUM_NODE_VERSION = [22, 19, 0] as const;
 const COMMAND_TIMEOUT_MS = 3_000;
 
 function nodeCheck(version: string): DoctorCheck {
   const match = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(version);
-  const major = match?.[1] ? Number(match[1]) : Number.NaN;
+  const actual = match?.slice(1, 4).map(Number);
 
-  if (!Number.isFinite(major)) {
+  if (actual === undefined || actual.some((part) => !Number.isFinite(part))) {
     return {
       detail: `could not parse version ${version}`,
       name: "Node.js",
@@ -24,9 +24,19 @@ function nodeCheck(version: string): DoctorCheck {
     };
   }
 
-  if (major < MINIMUM_NODE_MAJOR) {
+  let comparison = 0;
+  for (let index = 0; index < MINIMUM_NODE_VERSION.length; index += 1) {
+    const found = actual[index] ?? 0;
+    const required = MINIMUM_NODE_VERSION[index] ?? 0;
+    if (found !== required) {
+      comparison = found > required ? 1 : -1;
+      break;
+    }
+  }
+  const supported = comparison >= 0;
+  if (!supported) {
     return {
-      detail: `v${version.replace(/^v/u, "")} found; v${MINIMUM_NODE_MAJOR}+ required`,
+      detail: `v${version.replace(/^v/u, "")} found; v${MINIMUM_NODE_VERSION.join(".")}+ required`,
       name: "Node.js",
       ok: false,
     };
@@ -112,11 +122,16 @@ async function workspaceCheck(runtime: DoctorRuntime): Promise<DoctorCheck> {
       };
 }
 
-function credentialCheck(runtime: DoctorRuntime): DoctorCheck {
-  const configured = Boolean(runtime.env.OPENAI_API_KEY?.trim());
+function credentialCheck(
+  runtime: DoctorRuntime,
+  provider: "anthropic" | "openai",
+): DoctorCheck {
+  const variable =
+    provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const configured = Boolean(runtime.env[variable]?.trim());
   return {
     detail: configured ? "configured" : "not configured",
-    name: "OpenAI credential",
+    name: `${provider === "anthropic" ? "Anthropic" : "OpenAI"} credential`,
     ok: configured,
   };
 }
@@ -219,9 +234,12 @@ export async function runDoctor(runtime: DoctorRuntime): Promise<DoctorReport> {
   const providerChecks: readonly DoctorCheck[] = provider.ok
     ? [
         providerCheck(provider.value),
-        ...(provider.value === "openai"
-          ? [credentialCheck(runtime), modelCheck(runtime, "openai")]
-          : await ollamaChecks(runtime)),
+        ...(provider.value === "ollama"
+          ? await ollamaChecks(runtime)
+          : [
+              credentialCheck(runtime, provider.value),
+              modelCheck(runtime, provider.value),
+            ]),
       ]
     : [{ detail: provider.error, name: "Provider", ok: false }];
   const checks = [...baseChecks, ...providerChecks];

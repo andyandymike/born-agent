@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
+import { PiModelBackend } from "../../src/providers/pi/pi-model-backend.js";
 import {
-  OpenAIStreamingChatClient,
-  type OpenAIStreamingSdkFactory,
-} from "../../src/providers/openai/openai-streaming-chat-client.js";
+  ProductionPiRuntimePort,
+  type PiRuntimeDriver,
+} from "../../src/providers/pi/production-pi-runtime-port.js";
 import { JsonlSessionWriter } from "../../src/sessions/jsonl-session-writer.js";
 import { readSession } from "../../src/sessions/read-session.js";
 import { reconstructSession } from "../../src/sessions/reconstruct-session.js";
@@ -49,7 +50,7 @@ describe("real JSONL session CLI integration", () => {
       memory.io,
       createRuntime({
         createSessionWriter: JsonlSessionWriter.create,
-        createModelTurnClient: () =>
+        createModelBackend: () =>
           new FakeStreamingChatClient(waitForAbort()),
         cwd,
         onCancel: (listener) => {
@@ -74,30 +75,66 @@ describe("real JSONL session CLI integration", () => {
     const cwd = await workspace();
     const secret = "sk-end-to-end-secret-value";
     const memory = createMemoryIO();
-    const factory: OpenAIStreamingSdkFactory = () => ({
-      responses: {
-        create: async () => {
-          throw {
-            cause: {
-              body: `request body ${secret}`,
-              headers: { authorization: `Bearer ${secret}` },
-            },
-            headers: { authorization: `Bearer ${secret}` },
-            message: `provider exploded ${secret}`,
-            requestID: "req_secret_test",
-            stack: `stack ${secret}`,
-            status: 500,
-          };
+    const sdkFailure = Object.assign(
+      new Error(`provider exploded ${secret}`),
+      {
+        cause: {
+          body: `request body ${secret}`,
+          headers: { authorization: `Bearer ${secret}` },
         },
+        headers: { authorization: `Bearer ${secret}` },
+        requestId: "req_secret_test",
+        stack: `stack ${secret}`,
+        status: 500,
       },
-    });
+    );
+    const driver: PiRuntimeDriver = {
+      model: {
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        contextWindow: 1,
+        cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 },
+        id: "gpt-5.6-terra",
+        input: ["text"],
+        maxTokens: 1,
+        name: "fixture",
+        provider: "openai",
+        reasoning: true,
+      },
+      stream: async function* () {
+        yield await Promise.reject(sdkFailure);
+      },
+    };
     const exitCode = await runCli(
       ["chat", "ordinary prompt"],
       memory.io,
       createRuntime({
         createSessionWriter: JsonlSessionWriter.create,
-        createModelTurnClient: () =>
-          new OpenAIStreamingChatClient({ apiKey: secret }, factory),
+        createModelBackend: () =>
+          new PiModelBackend({
+            capabilities: {
+              cancellation: "abort_signal",
+              reasoning: "opaque_passthrough",
+              streaming: true,
+              tools: "strict",
+              usage: "complete",
+            },
+            identity: {
+              adapter: "pi-ai",
+              adapterVersion: "0.80.7",
+              configFingerprint: "0".repeat(64),
+              model: "gpt-5.6-terra",
+              provider: "openai",
+            },
+            runtime: new ProductionPiRuntimePort(
+              {
+                credential: secret,
+                model: "gpt-5.6-terra",
+                provider: "openai",
+              },
+              async () => driver,
+            ),
+          }),
         cwd,
         env: { OPENAI_API_KEY: secret },
       }),

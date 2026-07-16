@@ -15,6 +15,7 @@ const toolNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u);
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const callIdSchema = z.string().min(1).max(200);
 const stableIdentifierSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/u);
+const providerIdSchema = stableIdentifierSchema;
 const incompleteReasonSchema = z.enum([
   "verification_missing",
   "verification_failed",
@@ -68,7 +69,9 @@ const inputSchema = z
 const commonRunStartedData = {
   input: inputSchema,
   model: z.string().min(1),
-  provider: z.enum(["openai", "ollama"]),
+  // PHASE8: provider ids are registry-owned strings; the event protocol must not
+  // grow a new hard-coded enum branch whenever a backend adapter is registered.
+  provider: providerIdSchema,
   tools: z.array(toolNameSchema).optional(),
   tools_enabled: z.boolean().optional(),
   workspace: z.string().min(1),
@@ -110,6 +113,33 @@ const runStartedSchema = z
       agentRunStartedDataSchema,
     ]),
     type: z.literal("run.started"),
+  })
+  .strict();
+
+const backendCapabilitiesSchema = z
+  .object({
+    cancellation: z.enum(["abort_signal", "unsupported"]),
+    reasoning: z.enum(["opaque_passthrough", "none"]),
+    streaming: z.literal(true),
+    tools: z.enum(["strict", "best_effort", "none"]),
+    usage: z.enum(["complete", "partial", "none"]),
+  })
+  .strict();
+
+const backendSelectedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        adapter: z.string().min(1).max(200),
+        adapter_version: z.string().min(1).max(200),
+        capabilities: backendCapabilitiesSchema,
+        config_fingerprint: sha256Schema,
+        model: z.string().min(1),
+        provider: providerIdSchema,
+      })
+      .strict(),
+    type: z.literal("backend.selected"),
   })
   .strict();
 
@@ -162,20 +192,56 @@ const agentStepStartedSchema = z
   })
   .strict();
 
+const legacyModelUsageDataSchema = z
+  .object({
+    cached_input_tokens: nonnegativeInteger.optional(),
+    input_tokens: nonnegativeInteger,
+    output_tokens: nonnegativeInteger,
+    provider_response_id: z.string().min(1).optional(),
+    step: positiveInteger,
+    total_tokens: nonnegativeInteger,
+  })
+  .strict();
+
+const phase8CompleteModelUsageDataSchema = z
+  .object({
+    cache_read_tokens: nonnegativeInteger.nullable(),
+    cache_write_tokens: nonnegativeInteger.nullable(),
+    completeness: z.literal("complete"),
+    input_tokens: nonnegativeInteger,
+    output_tokens: nonnegativeInteger,
+    provider: providerIdSchema,
+    provider_response_id: z.string().min(1).optional(),
+    step: positiveInteger,
+    total_tokens: nonnegativeInteger,
+  })
+  .strict();
+
+const phase8PartialModelUsageDataSchema = z
+  .object({
+    cache_read_tokens: nonnegativeInteger.nullable(),
+    cache_write_tokens: nonnegativeInteger.nullable(),
+    completeness: z.literal("partial"),
+    input_tokens: nonnegativeInteger.nullable(),
+    output_tokens: nonnegativeInteger.nullable(),
+    provider: providerIdSchema,
+    provider_response_id: z.string().min(1).optional(),
+    step: positiveInteger,
+    total_tokens: nonnegativeInteger.nullable(),
+  })
+  .strict();
+
 const modelUsageSchema = z
   // PHASE4: 每个 step 单独记录 provider usage，run 级 usage 只能由这些事件精确聚合。
   .object({
     ...commonEnvelope,
-    data: z
-      .object({
-        cached_input_tokens: nonnegativeInteger.optional(),
-        input_tokens: nonnegativeInteger,
-        output_tokens: nonnegativeInteger,
-        provider_response_id: z.string().min(1).optional(),
-        step: positiveInteger,
-        total_tokens: nonnegativeInteger,
-      })
-      .strict(),
+    // PHASE8: null means the provider did not report a field. It must not be
+    // rewritten to zero or admitted into the reported-token completion ceiling.
+    data: z.union([
+      legacyModelUsageDataSchema,
+      phase8CompleteModelUsageDataSchema,
+      phase8PartialModelUsageDataSchema,
+    ]),
     type: z.literal("model.usage"),
   })
   .strict();
@@ -292,13 +358,20 @@ const runFailedSchema = z
     data: z
       .object({
         category: z.enum([
+          // PHASE8: new provider failures use provider-neutral categories. The
+          // legacy auth/provider values remain decodable for old schema-v1 logs.
+          "authentication",
+          "permission",
           "auth",
           "rate_limit",
           "quota",
           "network",
           "provider",
           "timeout",
+          "invalid_request",
+          "model_not_found",
           "protocol",
+          "cancelled",
           "storage",
           "internal",
         ]),
@@ -1008,6 +1081,7 @@ const completionEvaluatedSchema = z
 export const runEventSchema = z.discriminatedUnion("type", [
   // PHASE2: type 是判别字段。解析成功后，TypeScript 能依据 event.type 自动缩小 data 类型。
   runStartedSchema,
+  backendSelectedSchema,
   textDeltaSchema,
   agentStepStartedSchema,
   modelUsageSchema,

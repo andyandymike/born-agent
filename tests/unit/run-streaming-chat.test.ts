@@ -49,7 +49,7 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () =>
+        createModelBackend: () =>
           new FakeStreamingChatClient(fixedStream(["hel", "lo"])),
         now: () => times.shift() ?? 142,
       }),
@@ -61,12 +61,13 @@ describe("runStreamingChat", () => {
     expect(renderer.events).toEqual(writer.events);
     expect(writer.events.map((event) => event.type)).toEqual([
       "run.started",
+      "backend.selected",
       "text.delta",
       "text.delta",
       "usage",
       "run.completed",
     ]);
-    expect(writer.events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(writer.events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(reconstructSession(writer.events)).toMatchObject({
       output: "hello",
       terminal: {
@@ -84,7 +85,7 @@ describe("runStreamingChat", () => {
       { ...options, provider: "ollama" },
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: (selected) => {
+        createModelBackend: (selected) => {
           configuration = selected;
           return new FakeStreamingChatClient(fixedStream());
         },
@@ -95,8 +96,15 @@ describe("runStreamingChat", () => {
 
     expect(exitCode).toBe(0);
     expect(configuration).toEqual({
-      baseURL: "http://localhost:11434/v1",
+      endpoint: "http://127.0.0.1:11434",
+      model: "qwen3:1.7b",
       provider: "ollama",
+      requirement: {
+        cancellation: true,
+        completeUsageForReportedTokenCeiling: false,
+        streaming: true,
+        tools: true,
+      },
     });
     expect(writer.events[0]).toMatchObject({
       data: { model: "qwen3:1.7b", provider: "ollama" },
@@ -115,7 +123,7 @@ describe("runStreamingChat", () => {
         createRuntime({ createSessionWriter, env: {} }),
         missingRenderer,
       ),
-    ).resolves.toBe(4);
+    ).resolves.toBe(2);
     await expect(
       runStreamingChat(
         { ...options, timeoutMs: "999" },
@@ -124,9 +132,9 @@ describe("runStreamingChat", () => {
       ),
     ).resolves.toBe(2);
     expect(createSessionWriter).not.toHaveBeenCalled();
-    expect(missingRenderer.diagnostics).toEqual([
-      "OPENAI_API_KEY is not configured",
-    ]);
+    expect(missingRenderer.diagnostics[0]).toContain(
+      "configuration_credential_missing",
+    );
     expect(invalidRenderer.diagnostics[0]).toContain("usage/config error");
   });
 
@@ -137,7 +145,7 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () =>
+        createModelBackend: () =>
           new FakeStreamingChatClient(
             failedStream({
               category: "rate_limit",
@@ -178,7 +186,7 @@ describe("runStreamingChat", () => {
         createRuntime({
           clearTimer,
           createSessionWriter: async () => writer,
-          createModelTurnClient: () => client,
+          createModelBackend: () => client,
           onCancel: (listener) => {
             if (scenario === "cancelled") {
               queueMicrotask(listener);
@@ -221,15 +229,21 @@ describe("runStreamingChat", () => {
       options,
       createRuntime({
         createSessionWriter: async () => writer,
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
       }),
       renderer,
     );
 
     expect(exitCode).toBe(1);
     expect(client.calls[0]?.signal.aborted).toBe(true);
-    expect(writer.events.map((event) => event.type)).toEqual(["run.started"]);
-    expect(rendered.map((event) => event.type)).toEqual(["run.started"]);
+    expect(writer.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "backend.selected",
+    ]);
+    expect(rendered.map((event) => event.type)).toEqual([
+      "run.started",
+      "backend.selected",
+    ]);
     expect(renderer.storageErrors).toBe(1);
     expect(writer.closed).toBe(true);
   });

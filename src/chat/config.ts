@@ -7,8 +7,9 @@ import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 
 export const DEFAULT_PROVIDER: ChatProvider = "openai";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
 export const DEFAULT_OLLAMA_MODEL = "qwen3:1.7b";
-export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1";
+export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = DEFAULT_OPENAI_MODEL;
 export const DEFAULT_TIMEOUT_MS = 120_000;
 export const MINIMUM_TIMEOUT_MS = 1_000;
@@ -26,10 +27,10 @@ export function resolveProvider(
     .trim()
     .toLowerCase();
 
-  return provider === "openai" || provider === "ollama"
+  return provider === "openai" || provider === "anthropic" || provider === "ollama"
     ? { ok: true, value: provider }
     : {
-        error: `provider must be one of: openai, ollama (received ${provider || "empty"})`,
+        error: `provider must be one of: openai, anthropic, ollama (received ${provider || "empty"})`,
         ok: false,
       };
 }
@@ -40,7 +41,11 @@ export function resolveModel(
   provider: ChatProvider = DEFAULT_PROVIDER,
 ): ConfigResult<string> {
   const defaultModel =
-    provider === "ollama" ? DEFAULT_OLLAMA_MODEL : DEFAULT_OPENAI_MODEL;
+    provider === "ollama"
+      ? DEFAULT_OLLAMA_MODEL
+      : provider === "anthropic"
+        ? DEFAULT_ANTHROPIC_MODEL
+        : DEFAULT_OPENAI_MODEL;
   const selected = cliModel ?? environmentModel ?? defaultModel;
   const model = selected.trim();
 

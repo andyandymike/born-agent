@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-import type { ModelToolDefinition } from "../model/model-turn-types.js";
+import type { ModelToolDefinition } from "../model/model-backend.js";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;

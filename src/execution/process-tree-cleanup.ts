@@ -1,3 +1,5 @@
+import { sanitizeChildEnvironment } from "../security/child-environment.js";
+
 export interface ProcessTreeCleanupResult {
   readonly verified: boolean;
   readonly forced: boolean;
@@ -136,17 +138,24 @@ export type TaskkillSpawn = (
   file: string,
   args: readonly string[],
   options: {
+    readonly env: Readonly<Record<string, string>>;
     readonly shell: false;
     readonly stdio: "ignore";
     readonly windowsHide: true;
   },
 ) => TaskkillSpawnedProcess;
 
-export function createTaskkillArgvRunner(spawnFile: TaskkillSpawn): TaskkillArgvRunner {
+export function createTaskkillArgvRunner(
+  spawnFile: TaskkillSpawn,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): TaskkillArgvRunner {
   return async (args) =>
     new Promise<number>((resolve) => {
       // This is an internal fixed executable/argv adapter; no model text is parsed as shell.
       const child = spawnFile("taskkill.exe", args, {
+        // PHASE8: cleanup helpers run outside the reviewed command env, so they
+        // need their own final-boundary provider-credential stripping.
+        env: sanitizeChildEnvironment(environment),
         shell: false,
         stdio: "ignore",
         windowsHide: true,

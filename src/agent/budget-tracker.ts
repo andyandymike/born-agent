@@ -2,7 +2,6 @@ import type {
   AgentBudgetReason,
   AgentLoopConfig,
 } from "./agent-types.js";
-import type { ChatUsage } from "../chat/types.js";
 
 export interface BudgetClock {
   now(): number;
@@ -27,6 +26,12 @@ export interface RemainingBudget {
   readonly toolOutputBytes: number;
 }
 
+interface ReportedTokenUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+}
+
 export class BudgetTracker {
   // PHASE4: Tracker 只记已发生且可审计的消耗；它不主动 abort，也不发布事件。
   private steps = 0;
@@ -49,8 +54,9 @@ export class BudgetTracker {
     return this.steps;
   }
 
-  recordUsage(usage: ChatUsage): void {
-    // PHASE4: token 只采用 provider reported usage，不根据字符数进行猜测。
+  recordUsage(usage: ReportedTokenUsage): void {
+    // PHASE4/8: token 只采用 provider reported complete usage，不根据字符数进行猜测；
+    // capability preflight 和 AgentLoop 的 turn-boundary check 会阻止 partial/none 进入这里。
     this.totalTokens += usage.totalTokens;
   }
 

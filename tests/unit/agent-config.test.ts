@@ -72,7 +72,7 @@ describe("resolveAgentConfig", () => {
         BORN_AGENT_MAX_TOOL_OUTPUT_BYTES: "70000",
         BORN_AGENT_REQUEST_TIMEOUT_MS: "6000",
         BORN_MODEL: "local-model",
-        BORN_OLLAMA_BASE_URL: "http://127.0.0.1:11434/v1/",
+        BORN_OLLAMA_BASE_URL: "http://127.0.0.1:11434/",
       },
     );
 
@@ -84,7 +84,7 @@ describe("resolveAgentConfig", () => {
         maxTokens: 7000,
         maxToolOutputBytes: 70000,
         model: "local-model",
-        ollamaBaseURL: "http://127.0.0.1:11434/v1",
+        ollamaBaseURL: "http://127.0.0.1:11434",
         provider: "ollama",
         requestTimeoutMs: 9000,
       },

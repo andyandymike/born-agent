@@ -16,6 +16,7 @@ export function resolveLoopbackOllamaURL(
       url.protocol !== "http:" ||
       !LOOPBACK_HOSTS.has(url.hostname.toLowerCase()) ||
       url.port !== "11434" ||
+      url.pathname !== "/" ||
       url.username.length > 0 ||
       url.password.length > 0 ||
       url.search.length > 0 ||
@@ -23,11 +24,17 @@ export function resolveLoopbackOllamaURL(
     ) {
       throw new Error("not a literal loopback Ollama URL");
     }
-    return { ok: true, value: selected };
+    // PHASE8: canonicalize the hostname to a numeric loopback address. This
+    // preserves the user-facing localhost form without trusting DNS/hosts-file
+    // resolution at the transport boundary.
+    url.hostname = url.hostname.toLowerCase() === "localhost"
+      ? "127.0.0.1"
+      : url.hostname;
+    return { ok: true, value: url.origin };
   } catch {
     return {
       error:
-        "BORN_OLLAMA_BASE_URL must be an HTTP loopback URL on port 11434",
+        "BORN_OLLAMA_BASE_URL must be a root HTTP loopback URL on port 11434",
       ok: false,
     };
   }

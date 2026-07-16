@@ -6,6 +6,7 @@ import {
 } from "../../src/events/event-publisher.js";
 import type { RunEvent } from "../../src/events/run-event.js";
 import { InMemorySessionWriter } from "../helpers.js";
+import { testBackendSelected } from "../phase8-event-helpers.js";
 
 function createPublisher(
   writer = new InMemorySessionWriter(),
@@ -57,6 +58,7 @@ async function startPendingPatchCall(publisher: EventPublisher): Promise<void> {
     },
     type: "run.started",
   });
+  await publisher.publish(testBackendSelected("ollama", "qwen3:1.7b"));
   await publisher.publish({
     data: {
       input_kind: "user_task",
@@ -100,6 +102,7 @@ describe("EventPublisher", () => {
     });
 
     await publisher.publish(started);
+    await publisher.publish(testBackendSelected("openai", "gpt-test"));
     await publisher.publish({ data: { delta: "hi" }, type: "text.delta" });
     await publisher.publish({
       data: { duration_ms: 10, output_chars: 2 },
@@ -113,6 +116,8 @@ describe("EventPublisher", () => {
       "render:2",
       "persist:3",
       "render:3",
+      "persist:4",
+      "render:4",
     ]);
   });
 
@@ -124,6 +129,7 @@ describe("EventPublisher", () => {
 
     const second = createPublisher().publisher;
     await second.publish(started);
+    await second.publish(testBackendSelected("openai", "gpt-test"));
     await second.publish({
       data: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
       type: "usage",
@@ -171,9 +177,29 @@ describe("EventPublisher", () => {
     expect(render).not.toHaveBeenCalled();
   });
 
+  it("freezes a matching backend as the second event", async () => {
+    const { publisher, writer } = createPublisher();
+    await publisher.publish(started);
+    await expect(
+      publisher.publish({ data: { delta: "too early" }, type: "text.delta" }),
+    ).rejects.toThrow("backend.selected");
+    await expect(
+      publisher.publish(testBackendSelected("ollama", "gpt-test")),
+    ).rejects.toThrow("identity");
+    await publisher.publish(testBackendSelected("openai", "gpt-test"));
+    await expect(
+      publisher.publish(testBackendSelected("openai", "gpt-test")),
+    ).rejects.toThrow("once");
+    expect(writer.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "backend.selected",
+    ]);
+  });
+
   it("pairs tool requests and results before allowing a completed run", async () => {
     const { publisher } = createPublisher();
     await publisher.publish(started);
+    await publisher.publish(testBackendSelected("openai", "gpt-test"));
     await publisher.publish({
       data: {
         arguments_json: "{}",

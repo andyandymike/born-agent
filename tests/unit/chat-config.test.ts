@@ -48,7 +48,7 @@ describe("resolveChatConfig", () => {
       {},
     );
     const environment = resolveChatConfig(baseOptions, {
-      BORN_OLLAMA_BASE_URL: "http://127.0.0.1:11434/v1/",
+      BORN_OLLAMA_BASE_URL: "http://127.0.0.1:11434/",
       BORN_PROVIDER: "ollama",
     });
 
@@ -63,7 +63,7 @@ describe("resolveChatConfig", () => {
     expect(environment).toMatchObject({
       ok: true,
       value: {
-        ollamaBaseURL: "http://127.0.0.1:11434/v1",
+        ollamaBaseURL: "http://127.0.0.1:11434",
         provider: "ollama",
       },
     });

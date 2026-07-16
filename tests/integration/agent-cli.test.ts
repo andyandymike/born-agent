@@ -4,10 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
 import type { RunEvent } from "../../src/events/run-event.js";
-import type {
-  ModelTurnRequest,
-  ModelTurnSignal,
-} from "../../src/model/model-turn-types.js";
 import { reconstructSession } from "../../src/sessions/reconstruct-session.js";
 import { createReadonlyToolRegistry } from "../../src/tools/create-readonly-tool-registry.js";
 import type {
@@ -19,6 +15,10 @@ import {
   FakeContinuation,
   FakeStreamingChatClient,
   waitForAbort,
+} from "../fakes/fake-chat-client.js";
+import type {
+  FakeModelTurnRequest as ModelTurnRequest,
+  FakeModelTurnSignal as ModelTurnSignal,
 } from "../fakes/fake-chat-client.js";
 import {
   createMemoryIO,
@@ -146,7 +146,7 @@ async function runAgentScenario(options: {
     ],
     memory.io,
     createRuntime({
-      createModelTurnClient: () => options.client,
+      createModelBackend: () => options.client,
       createSessionWriter: async () => writer,
       createAgentToolRegistry: async () => registry,
       ...options.runtime,
@@ -219,6 +219,7 @@ describe("born agent Phase 4 integration", () => {
     expect(result.memory.readStderr()).not.toContain("fixture evidence");
     expect(writer.events.map((event) => event.type)).toEqual([
       "run.started",
+      "backend.selected",
       "agent.step.started",
       "model.usage",
       "agent.step.completed",
@@ -343,7 +344,7 @@ describe("born agent Phase 4 integration", () => {
       ],
       memory.io,
       createRuntime({
-        createModelTurnClient: () => client,
+        createModelBackend: () => client,
         createSessionWriter: async () => writer,
         createAgentToolRegistry: async () => registry,
         cwd: workspace,
@@ -395,9 +396,9 @@ describe("born agent Phase 4 integration", () => {
       ],
     ]);
     const { exitCode, writer } = await runAgentScenario({ client });
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(5);
     expect(writer.events.at(-1)).toMatchObject({
-      data: { code: "usage_required_for_budget" },
+      data: { code: "protocol_capability_mismatch" },
       type: "run.failed",
     });
     expect(writer.events.some((event) => event.type === "usage")).toBe(false);
@@ -415,10 +416,18 @@ describe("born agent Phase 4 integration", () => {
           call: { argumentsJson: "{}", callId: "call_b", name: "read_file" },
           type: "tool_call",
         },
+        {
+          type: "usage",
+          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+        },
+        {
+          continuation: new FakeContinuation("multiple-calls"),
+          type: "turn_completed",
+        },
       ],
     ]);
     const { exitCode, writer } = await runAgentScenario({ client, registry });
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(5);
     expect(registry.calls).toHaveLength(0);
     expect(writer.events.at(-1)).toMatchObject({
       data: { category: "protocol", code: "multiple_tool_calls" },
@@ -806,7 +815,10 @@ describe("born agent Phase 4 integration", () => {
     const { exitCode, memory } = await runAgentScenario({ client, writer });
     expect(exitCode).toBe(1);
     expect(client.calls).toHaveLength(0);
-    expect(writer.events.map((event) => event.type)).toEqual(["run.started"]);
+    expect(writer.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "backend.selected",
+    ]);
     expect(memory.readStderr()).toContain("session storage failed");
   });
 

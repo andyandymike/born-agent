@@ -14,14 +14,14 @@ function findCheck(report: Awaited<ReturnType<typeof runDoctor>>, name: string) 
 
 describe("runDoctor", () => {
   it("accepts a supported Node.js version", async () => {
-    const report = await runDoctor(createRuntime({ nodeVersion: "22.0.0" }));
+    const report = await runDoctor(createRuntime({ nodeVersion: "22.19.0" }));
     expect(findCheck(report, "Node.js")).toMatchObject({ ok: true });
   });
 
   it("rejects an older Node.js version", async () => {
-    const report = await runDoctor(createRuntime({ nodeVersion: "20.19.0" }));
+    const report = await runDoctor(createRuntime({ nodeVersion: "22.18.9" }));
     expect(findCheck(report, "Node.js")).toMatchObject({
-      detail: expect.stringContaining("v22+ required"),
+      detail: expect.stringContaining("v22.19.0+ required"),
       ok: false,
     });
   });
@@ -97,6 +97,23 @@ describe("runDoctor", () => {
       detail: "not configured",
       ok: false,
     });
+  });
+
+  it("checks only the selected Anthropic credential", async () => {
+    const secret = "anthropic-doctor-sentinel";
+    const report = await runDoctor(
+      createRuntime({
+        env: { ANTHROPIC_API_KEY: secret, BORN_PROVIDER: "anthropic" },
+      }),
+    );
+    expect(findCheck(report, "Anthropic credential")).toMatchObject({
+      detail: "configured",
+      ok: true,
+    });
+    expect(JSON.stringify(report)).not.toContain(secret);
+    expect(
+      report.checks.some((check) => check.name === "Ollama service"),
+    ).toBe(false);
   });
 
   it("shows the resolved model and rejects a blank override", async () => {

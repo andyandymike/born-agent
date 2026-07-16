@@ -12,6 +12,7 @@ import type {
   PreparedExecution,
 } from "./execution-types.js";
 import { BoundedOutputCapture } from "./output-capture.js";
+import { sanitizeChildEnvironment } from "../security/child-environment.js";
 import type {
   CleanupTimerApi,
   ProcessTreeCleanup,
@@ -83,7 +84,10 @@ export function createNodeSpawnAdapter(spawnProcess: NodeSpawnFunction): SpawnAd
     const child = spawnProcess(file, [...args], {
       cwd: options.cwd,
       detached: options.detached,
-      env: { ...options.environment },
+      // PHASE8: sanitize again at the final spawn boundary. This keeps an
+      // injected/custom PreparedExecution from bypassing ExecutionPreparer's
+      // minimal-environment policy.
+      env: sanitizeChildEnvironment(options.environment),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ModelToolDefinition } from "../model/model-turn-types.js";
+import type { ModelToolDefinition } from "../model/model-backend.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { serializeToolError, toolError } from "./tool-errors.js";
 import {

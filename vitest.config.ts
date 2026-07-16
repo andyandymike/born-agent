@@ -6,6 +6,6 @@ export default defineConfig({
       reporter: ["text", "html"],
     },
     include: ["tests/**/*.test.ts"],
+    setupFiles: ["./tests/setup-network-tripwire.ts"],
   },
 });
-

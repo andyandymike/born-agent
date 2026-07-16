@@ -12,7 +12,7 @@
     "born": "dist/cli.js"
   },
   "engines": {
-    "node": ">=22",
+    "node": ">=22.19.0",
     "pnpm": "11.13.1"
   },
   "packageManager": "pnpm@11.13.1",
@@ -30,8 +30,8 @@
     "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.80.7",
     "commander": "15.0.0",
-    "openai": "6.47.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

@@ -1,14 +1,16 @@
-import type { ChatUsage } from "../chat/types.js";
-import type { ProviderFailure } from "../chat/stream-types.js";
 import type { CompletionReason } from "../completion/completion-types.js";
 import type { EventPublisher } from "../events/event-publisher.js";
 import type {
-  ModelContinuation,
-  ModelToolCall,
-  ModelTurnClient,
+  BackendContinuation,
+  ModelBackend,
   ModelTurnInput,
   ModelTurnRequest,
-} from "../model/model-turn-types.js";
+} from "../model/model-backend.js";
+import type {
+  CompleteModelUsage,
+  ModelUsage,
+} from "../model/model-events.js";
+import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
 import type { ToolExecution, ToolRegistryLike } from "../tools/tool-types.js";
 import type { CompletionControlSignal } from "../tools/tool-types.js";
@@ -25,12 +27,18 @@ type RunAbortReason = "max_duration" | "user";
 
 interface CompletedTurn {
   readonly call?: ModelToolCall;
-  readonly continuation: ModelContinuation;
+  readonly continuation: BackendContinuation;
   readonly kind: "completed";
   readonly providerResponseId?: string;
   readonly sawNonWhitespaceText: boolean;
   readonly textChars: number;
-  readonly usage?: ChatUsage;
+  readonly usage?: ModelUsage;
+}
+
+interface ModelToolCall {
+  readonly argumentsJson: string;
+  readonly callId: string;
+  readonly name: string;
 }
 
 type TurnResult =
@@ -44,8 +52,7 @@ export interface AgentLoopDeps {
   readonly budget: BudgetTracker;
   readonly clock: AgentClock;
   readonly instructions?: string;
-  readonly model: ModelTurnClient;
-  readonly modelId: string;
+  readonly model: ModelBackend;
   readonly publisher: EventPublisher;
   readonly renderCompletionReport?: (
     report: string,
@@ -65,9 +72,9 @@ function protocolFailure(code: string, message: string): ProviderFailure {
   return { category: "protocol", code, message, retryable: false };
 }
 
-function providerExitCode(error: ProviderFailure): 1 | 4 | 5 {
-  if (error.category === "auth") return 4;
-  return error.category === "protocol" ? 1 : 5;
+function providerExitCode(error: ProviderFailure): 4 | 5 | 6 {
+  if (error.category === "authentication") return 4;
+  return error.category === "timeout" ? 6 : 5;
 }
 
 function safeToolArguments(
@@ -105,7 +112,7 @@ function toolCompletedData(
 }
 
 async function consumeModelTurn(
-  client: ModelTurnClient,
+  backend: ModelBackend,
   request: ModelTurnRequest,
   requestAbort: RequestAbortState,
   publisher: EventPublisher,
@@ -113,40 +120,42 @@ async function consumeModelTurn(
 ): Promise<TurnResult> {
   // PHASE4: 一个 model turn 内聚合最多一个 tool call/usage，并把 text delta 立即持久化渲染。
   // provider 的 turn_completed 仍不等于整个 Agent run 完成。
-  let call: ModelToolCall | undefined;
-  let usage: ChatUsage | undefined;
+  const calls = new Map<string, ModelToolCall>();
+  let usage: ModelUsage | undefined;
   let sawNonWhitespaceText = false;
   let textChars = 0;
 
-  for await (const signal of client.streamTurn(
-    request,
-    requestAbort.controller.signal,
-  )) {
+  for await (const signal of backend.runTurn(request, requestAbort.controller.signal)) {
     if (requestAbort.controller.signal.aborted) return { kind: "aborted" };
     switch (signal.type) {
       case "text_delta":
-        if (signal.delta.length > 0) {
-          sawNonWhitespaceText ||= signal.delta.trim().length > 0;
-          textChars += signal.delta.length;
+        if (signal.text.length > 0) {
+          sawNonWhitespaceText ||= signal.text.trim().length > 0;
+          textChars += signal.text.length;
           await publisher.publish({
-            data: { delta: signal.delta, visibility },
+            data: { delta: signal.text, visibility },
             type: "text.delta",
           });
         }
         break;
-      case "tool_call":
-        // PHASE4: 单 response 多 tool call 在执行任何工具前 fail closed；并行工具留给后续阶段。
-        if (call !== undefined) {
+      case "tool_call_delta": {
+        const current = calls.get(signal.callId);
+        if (current !== undefined && current.name !== signal.name) {
           return {
             error: protocolFailure(
-              "multiple_tool_calls",
-              "provider returned more than one tool call",
+              "tool_call_name_changed",
+              "provider changed a tool name while streaming one call",
             ),
             kind: "failed",
           };
         }
-        call = signal.call;
+        calls.set(signal.callId, {
+          argumentsJson: `${current?.argumentsJson ?? ""}${signal.argumentsDelta}`,
+          callId: signal.callId,
+          name: signal.name,
+        });
         break;
+      }
       case "usage":
         if (usage !== undefined) {
           return {
@@ -161,18 +170,57 @@ async function consumeModelTurn(
         break;
       case "failed":
         return { error: signal.error, kind: "failed" };
-      case "turn_completed":
+      case "turn_completed": {
+        // PHASE8: raw provider fragments stop at the backend boundary. Core only
+        // assembles the provider-neutral deltas and validates terminal cardinality.
+        const declaredUsage = backend.capabilities.usage;
+        if (
+          (declaredUsage === "none" && usage !== undefined) ||
+          (declaredUsage !== "none" &&
+            (usage === undefined || usage.completeness !== declaredUsage))
+        ) {
+          return {
+            error: protocolFailure(
+              "protocol_capability_mismatch",
+              "backend usage events do not match its declared capability",
+            ),
+            kind: "failed",
+          };
+        }
+        if (
+          (signal.outcome === "text" && calls.size !== 0) ||
+          (signal.outcome === "tool_calls" && calls.size === 0)
+        ) {
+          return {
+            error: protocolFailure(
+              "protocol_capability_mismatch",
+              "backend terminal outcome does not match streamed tool calls",
+            ),
+            kind: "failed",
+          };
+        }
+        if (calls.size > 1) {
+          return {
+            error: protocolFailure(
+              "multiple_tool_calls",
+              "provider returned more than one tool call",
+            ),
+            kind: "failed",
+          };
+        }
+        const call = calls.values().next().value as ModelToolCall | undefined;
         return {
           ...(call === undefined ? {} : { call }),
           continuation: signal.continuation,
           kind: "completed",
-          ...(signal.providerResponseId === undefined
+          ...(signal.providerRequestId === undefined
             ? {}
-            : { providerResponseId: signal.providerResponseId }),
+            : { providerResponseId: signal.providerRequestId }),
           sawNonWhitespaceText,
           textChars,
           ...(usage === undefined ? {} : { usage }),
         };
+      }
     }
   }
 
@@ -197,7 +245,7 @@ export async function runAgentLoop(
   const { budget, clock, publisher } = deps;
   const taskProfile = config.taskProfile ?? "read-only";
   const reportFormat = config.reportFormat ?? "text";
-  const usages: ChatUsage[] = [];
+  const usages: CompleteModelUsage[] = [];
   const repetition = new RepetitionDetector();
   const runController = new AbortController();
   let runAbortReason: RunAbortReason | undefined;
@@ -237,14 +285,17 @@ export async function runAgentLoop(
     ) {
       return;
     }
-    const cached = usages
-      .map((usage) => usage.cachedInputTokens)
-      .filter((value) => value !== undefined);
+    const cached = usages.map((usage) => usage.cacheReadTokens);
     await publisher.publish({
       data: {
-        ...(cached.length === 0
+        ...(cached.some((value) => value === null)
           ? {}
-          : { cached_input_tokens: cached.reduce((sum, value) => sum + value, 0) }),
+          : {
+              cached_input_tokens: cached.reduce<number>(
+                (sum, value) => sum + (value ?? 0),
+                0,
+              ),
+            }),
         input_tokens: usages.reduce((sum, usage) => sum + usage.inputTokens, 0),
         model_turns: usages.length,
         output_tokens: usages.reduce((sum, usage) => sum + usage.outputTokens, 0),
@@ -454,7 +505,6 @@ export async function runAgentLoop(
           {
             input: pendingInput,
             instructions: deps.instructions ?? AGENT_SYSTEM_INSTRUCTIONS,
-            model: deps.modelId,
             timeoutMs: config.requestTimeoutMs,
             tools: deps.tools.modelDefinitions,
           },
@@ -503,25 +553,34 @@ export async function runAgentLoop(
       // PHASE4: provider 的 turn_completed 只闭合一个 model step；只有后续确认该 turn
       // 没有 tool call 且含非空文本，整个 run 才能发布 run.completed。
       lastProviderResponseId = turn.providerResponseId;
-      if (turn.usage !== undefined) {
-        budget.recordUsage(turn.usage);
-        usages.push(turn.usage);
-        await publisher.publish({
-          data: {
-            ...(turn.usage.cachedInputTokens === undefined
-              ? {}
-              : { cached_input_tokens: turn.usage.cachedInputTokens }),
-            input_tokens: turn.usage.inputTokens,
-            output_tokens: turn.usage.outputTokens,
-            ...(turn.providerResponseId === undefined
-              ? {}
-              : { provider_response_id: turn.providerResponseId }),
-            step,
-            total_tokens: turn.usage.totalTokens,
-          },
-          type: "model.usage",
-        });
+      if (turn.usage === undefined || turn.usage.completeness !== "complete") {
+        // PHASE8: reported-token budgets require authoritative complete usage.
+        // Missing/partial values are protocol drift here, never estimated from text.
+        return await publishFailure(
+          protocolFailure(
+            "protocol_capability_mismatch",
+            "backend did not provide complete usage required by the selected capability",
+          ),
+        );
       }
+      budget.recordUsage(turn.usage);
+      usages.push(turn.usage);
+      await publisher.publish({
+        data: {
+          cache_read_tokens: turn.usage.cacheReadTokens,
+          cache_write_tokens: turn.usage.cacheWriteTokens,
+          completeness: "complete",
+          input_tokens: turn.usage.inputTokens,
+          output_tokens: turn.usage.outputTokens,
+          provider: deps.model.identity.provider,
+          ...(turn.providerResponseId === undefined
+            ? {}
+            : { provider_response_id: turn.providerResponseId }),
+          step,
+          total_tokens: turn.usage.totalTokens,
+        },
+        type: "model.usage",
+      });
 
       if (turn.call !== undefined) {
         // PHASE4: step.completed 先闭合模型决策，随后 tool.call.requested 才记录待执行动作。
@@ -560,15 +619,6 @@ export async function runAgentLoop(
           },
           type: "agent.step.completed",
         });
-      }
-
-      if (turn.usage === undefined) {
-        // PHASE4: token ceiling 只信任 provider reported usage；缺失时不能用字符数猜测，
-        // 也不能在未知消耗上继续下一 step，因此在完整 turn 边界 fail closed。
-        return await publishInternalFailure(
-          "usage_required_for_budget",
-          "provider did not report usage required by the token budget",
-        );
       }
 
       if (turn.call === undefined) {

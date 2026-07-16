@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { sanitizeChildEnvironment } from "../security/child-environment.js";
+
 export const OFFLINE_NODE_GUARD_SOURCE = String.raw`
 import http from "node:http";
 import https from "node:https";
@@ -112,7 +114,8 @@ export function filterExecutionEnvironment(options: {
   // it is defense in depth for trusted fixtures, not an adversarial-code sandbox.
   values.NODE_OPTIONS = OFFLINE_NODE_IMPORT_OPTION;
 
-  const variableNames = Object.keys(values).sort((left, right) =>
+  const sanitizedValues = sanitizeChildEnvironment(values);
+  const variableNames = Object.keys(sanitizedValues).sort((left, right) =>
     left.localeCompare(right),
   );
   return Object.freeze({
@@ -120,6 +123,6 @@ export function filterExecutionEnvironment(options: {
       ...EXECUTION_ENVIRONMENT_POLICY,
       variableNames: Object.freeze(variableNames),
     }),
-    values: Object.freeze({ ...values }),
+    values: sanitizedValues,
   });
 }
