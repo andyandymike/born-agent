@@ -39,6 +39,7 @@ async function invoke(
       argumentsJson: JSON.stringify(args),
       callId: "call_test",
       name,
+      step: 1,
     },
     new AbortController().signal,
   );

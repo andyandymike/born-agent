@@ -131,4 +131,85 @@ describe("RunEvent v1 schema", () => {
   ])("rejects an invalid v1 event", (event) => {
     expect(runEventSchema.safeParse(event).success).toBe(false);
   });
+
+  it("accepts the bounded Phase 5 patch and approval evidence events", () => {
+    const planId = "a".repeat(64);
+    const preSha256 = "b".repeat(64);
+    const postSha256 = "c".repeat(64);
+    const approvalRequestId = "00000000-0000-4000-8000-000000000010";
+    const path = { kind: "modify" as const, path: "src/math.ts" };
+    const shared = { call_id: "call_patch", plan_id: planId, step: 1 };
+
+    const events = [
+      {
+        ...envelope,
+        data: {
+          ...shared,
+          added_lines: 1,
+          patch_sha256: "d".repeat(64),
+          paths: [path],
+          preview: "+return 2;",
+          removed_lines: 1,
+          truncated: false,
+        },
+        type: "patch.plan.created",
+      },
+      {
+        ...envelope,
+        data: {
+          ...shared,
+          action: "apply_patch",
+          added_lines: 1,
+          approval_request_id: approvalRequestId,
+          paths: [path],
+          preview: "+return 2;",
+          removed_lines: 1,
+          truncated: false,
+        },
+        type: "approval.requested",
+      },
+      {
+        ...envelope,
+        data: {
+          ...shared,
+          action: "apply_patch",
+          approval_request_id: approvalRequestId,
+          decision: "approved",
+        },
+        type: "approval.decided",
+      },
+      {
+        ...envelope,
+        data: {
+          ...shared,
+          approval_request_id: approvalRequestId,
+          files: [{ ...path, pre_sha256: preSha256 }],
+        },
+        type: "patch.apply.started",
+      },
+      {
+        ...envelope,
+        data: {
+          ...shared,
+          added_lines: 1,
+          approval_request_id: approvalRequestId,
+          duration_ms: 3,
+          files: [{ ...path, post_sha256: postSha256, pre_sha256: preSha256 }],
+          journal_sha256: "e".repeat(64),
+          removed_lines: 1,
+        },
+        type: "patch.apply.completed",
+      },
+    ];
+
+    expect(events.every((event) => runEventSchema.safeParse(event).success)).toBe(
+      true,
+    );
+    expect(
+      runEventSchema.safeParse({
+        ...events[0],
+        data: { ...events[0]?.data, paths: [{ ...path, path: "../outside.ts" }] },
+      }).success,
+    ).toBe(false);
+  });
 });

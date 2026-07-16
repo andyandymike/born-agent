@@ -3,6 +3,7 @@ import type {
   ChatProvider,
   ResolvedChatConfig,
 } from "./types.js";
+import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 
 export const DEFAULT_PROVIDER: ChatProvider = "openai";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra";
@@ -49,20 +50,7 @@ export function resolveModel(
 }
 
 function resolveOllamaBaseURL(value: string | undefined): ConfigResult<string> {
-  const selected = (value ?? DEFAULT_OLLAMA_BASE_URL).trim().replace(/\/+$/u, "");
-
-  try {
-    const url = new URL(selected);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error("unsupported protocol");
-    }
-    return { ok: true, value: selected };
-  } catch {
-    return {
-      error: "BORN_OLLAMA_BASE_URL must be a valid HTTP(S) URL",
-      ok: false,
-    };
-  }
+  return resolveLoopbackOllamaURL(value ?? DEFAULT_OLLAMA_BASE_URL);
 }
 
 function resolveTimeout(value: string | undefined): ConfigResult<number> {

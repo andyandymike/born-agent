@@ -4,6 +4,7 @@ import type { ModelToolDefinition } from "../model/model-turn-types.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { serializeToolError, toolError } from "./tool-errors.js";
 import {
+  FatalToolExecutionError,
   MAX_TOOL_ARGUMENT_BYTES,
   MAX_TOOL_OUTPUT_BYTES,
   type ToolDefinition,
@@ -130,8 +131,16 @@ export class ToolRegistry implements ToolRegistryLike {
     let result;
     try {
       // PHASE3: executor 只能看到 Zod 验证后的 input，并共享整个 run 的 AbortSignal。
-      result = await definition.execute(parsed.data, { signal });
-    } catch {
+      result = await definition.execute(parsed.data, {
+        callId: invocation.callId,
+        signal,
+        step: invocation.step,
+        toolName: invocation.name,
+      });
+    } catch (error) {
+      // PHASE5: storage/ambiguous mutation failures cannot become an ordinary model observation;
+      // doing so could let the loop continue while the durable audit or workspace state is unknown.
+      if (error instanceof FatalToolExecutionError) throw error;
       result = {
         error: toolError(
           "system",

@@ -26,7 +26,7 @@ import {
   InMemorySessionWriter,
 } from "../helpers.js";
 
-const definitions = ["list_files", "read_file", "search"].map((name) => ({
+const definitions = ["apply_patch", "list_files", "read_file", "search"].map((name) => ({
   description: `fake ${name}`,
   name,
   parameters: {
@@ -142,7 +142,7 @@ async function runAgentScenario(options: {
     createRuntime({
       createModelTurnClient: () => options.client,
       createSessionWriter: async () => writer,
-      createToolRegistry: async () => registry,
+      createAgentToolRegistry: async () => registry,
       ...options.runtime,
     }),
   );
@@ -178,6 +178,7 @@ describe("born agent Phase 4 integration", () => {
       ],
       (request, index) => {
         expect(request.tools.map((tool) => tool.name)).toEqual([
+          "apply_patch",
           "list_files",
           "read_file",
           "search",
@@ -243,6 +244,18 @@ describe("born agent Phase 4 integration", () => {
       data: { steps: 3, tool_calls: 2 },
       type: "run.completed",
     });
+
+    const whitespaceFinal = writer.events.map((event): RunEvent =>
+      event.type === "text.delta"
+        ? {
+            ...event,
+            data: { delta: " ".repeat(event.data.delta.length) },
+          }
+        : event,
+    );
+    expect(() => reconstructSession(whitespaceFinal)).toThrow(
+      "completed agent run lacks a final step",
+    );
   });
 
   it("feeds permission errors back to the model and lets it recover", async () => {
@@ -322,7 +335,7 @@ describe("born agent Phase 4 integration", () => {
       createRuntime({
         createModelTurnClient: () => client,
         createSessionWriter: async () => writer,
-        createToolRegistry: async () => registry,
+        createAgentToolRegistry: async () => registry,
         cwd: workspace,
       }),
     );
@@ -458,6 +471,25 @@ describe("born agent Phase 4 integration", () => {
       consumedByModel: false,
       interrupted: false,
     });
+
+    const earlyMaxSteps = writer.events.map((event): RunEvent => {
+      if (event.type === "run.started" && event.data.command === "agent") {
+        return { ...event, data: { ...event.data, max_steps: 2 } };
+      }
+      if (event.type === "agent.step.started") {
+        return { ...event, data: { ...event.data, max_steps: 2 } };
+      }
+      if (
+        event.type === "run.budget_exceeded" &&
+        event.data.reason === "max_steps"
+      ) {
+        return { ...event, data: { ...event.data, limit: 2 } };
+      }
+      return event;
+    });
+    expect(() => reconstructSession(earlyMaxSteps)).toThrow(
+      "max_steps terminal does not match event history",
+    );
   });
 
   it("stops before tool execution when reported tokens reach the limit", async () => {
@@ -474,7 +506,41 @@ describe("born agent Phase 4 integration", () => {
       data: { limit: 5, observed: 5, reason: "max_tokens" },
       type: "run.budget_exceeded",
     });
-    expect(reconstructSession(writer.events).toolCalls[0]?.interrupted).toBe(true);
+    expect(
+      writer.events.some((event) => event.type === "tool.call.requested"),
+    ).toBe(false);
+    expect(reconstructSession(writer.events).toolCalls).toEqual([]);
+  });
+
+  it("stops before recording a tool request when duration reaches the limit", async () => {
+    let now = 0;
+    const registry = new RecordingRegistry();
+    const client = new FakeStreamingChatClient(async function* () {
+      now = 1_000;
+      yield* toolTurn("search", "call_duration");
+    });
+    const { exitCode, writer } = await runAgentScenario({
+      args: [
+        "--max-duration-ms",
+        "1000",
+        "--request-timeout-ms",
+        "5000",
+      ],
+      client,
+      registry,
+      runtime: { now: () => now },
+    });
+
+    expect(exitCode).toBe(7);
+    expect(registry.calls).toHaveLength(0);
+    expect(writer.events.at(-1)).toMatchObject({
+      data: { limit: 1_000, observed: 1_000, reason: "max_duration" },
+      type: "run.budget_exceeded",
+    });
+    expect(
+      writer.events.some((event) => event.type === "tool.call.requested"),
+    ).toBe(false);
+    expect(reconstructSession(writer.events).toolCalls).toEqual([]);
   });
 
   it("allows a final response to complete after a one-response token jump", async () => {

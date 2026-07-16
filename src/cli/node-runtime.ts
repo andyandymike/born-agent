@@ -2,13 +2,17 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
+import type { ApprovalLineReader } from "../approvals/approval-types.js";
+import { TerminalApprovalPrompt } from "../approvals/terminal-approval-prompt.js";
 import { OpenAIStreamingChatClient } from "../providers/openai/openai-streaming-chat-client.js";
 import { JsonlSessionWriter } from "../sessions/jsonl-session-writer.js";
 import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
+import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
 
 export interface NodeRuntimeOptions {
+  readonly approvalInput: ApprovalLineReader;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly nodeVersion: string;
@@ -23,6 +27,12 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   return {
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
+    createApprovalPrompt: (io) =>
+      new TerminalApprovalPrompt({
+        ...options.approvalInput,
+        output: io.stderr,
+      }),
+    createAgentToolRegistry,
     createSessionWriter: JsonlSessionWriter.create,
     createModelTurnClient: (configuration) =>
       configuration.provider === "openai"

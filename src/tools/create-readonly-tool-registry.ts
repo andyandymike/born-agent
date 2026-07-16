@@ -7,10 +7,9 @@ import { ToolRegistry } from "./tool-registry.js";
 import type { ToolDefinition } from "./tool-types.js";
 import { WorkspacePathPolicy } from "./workspace-path-policy.js";
 
-export async function createReadonlyToolRegistry(
+export async function createReadonlyToolDefinitions(
   workspace: string,
-  secrets: readonly (string | undefined)[] = [],
-): Promise<ToolRegistry> {
+): Promise<readonly ToolDefinition<unknown>[]> {
   // PHASE3: 三个工具共享同一份 canonical workspace 与敏感路径策略，防止各自实现出不同边界。
   const sensitive = new SensitivePathPolicy();
   const paths = await WorkspacePathPolicy.create(workspace, { sensitive });
@@ -21,5 +20,16 @@ export async function createReadonlyToolRegistry(
     createSearchTool(paths, runner, sensitive) as ToolDefinition<unknown>,
     createListFilesTool(paths, runner, sensitive) as ToolDefinition<unknown>,
   ];
+  if (definitions.some((definition) => definition.capability !== "read")) {
+    throw new Error("read-only registry cannot contain mutation tools");
+  }
+  return definitions;
+}
+
+export async function createReadonlyToolRegistry(
+  workspace: string,
+  secrets: readonly (string | undefined)[] = [],
+): Promise<ToolRegistry> {
+  const definitions = await createReadonlyToolDefinitions(workspace);
   return new ToolRegistry(definitions, secrets);
 }

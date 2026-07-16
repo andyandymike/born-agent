@@ -4,10 +4,11 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const workspaceRoot = resolve(import.meta.dirname, "..");
@@ -61,23 +62,51 @@ try {
     "utf8",
   );
 
-  runPnpm(
+  // PHASE5: local_free_only smoke must never let a package-manager cache miss reach
+  // a registry. Extract the local tarball and link already-installed dependencies.
+  const packageRoot = join(installRoot, "node_modules", "bornagent");
+  await mkdir(packageRoot, { recursive: true });
+  const extraction = spawnSync(
+    "tar",
     [
-      "add",
+      "-xf",
       join(temporaryRoot, archiveName),
-      "--ignore-scripts",
-      "--store-dir",
-      join(workspaceRoot, ".cache", "pnpm-store"),
+      "-C",
+      packageRoot,
+      "--strip-components=1",
     ],
-    installRoot,
+    { encoding: "utf8", shell: false },
   );
+  if (extraction.status !== 0) {
+    throw new Error(
+      ["local tarball extraction failed", extraction.stdout, extraction.stderr]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
 
-  const binaryName = process.platform === "win32" ? "born.cmd" : "born";
-  const binaryPath = join(installRoot, "node_modules", ".bin", binaryName);
-  const result = spawnSync(binaryPath, ["--help"], {
+  const packedManifest = JSON.parse(
+    await readFile(join(packageRoot, "package.json"), "utf8"),
+  );
+  for (const dependency of Object.keys(packedManifest.dependencies ?? {})) {
+    const linkPath = join(installRoot, "node_modules", dependency);
+    await mkdir(dirname(linkPath), { recursive: true });
+    await symlink(
+      join(workspaceRoot, "node_modules", dependency),
+      linkPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
+
+  const binEntry = packedManifest.bin?.born;
+  if (typeof binEntry !== "string") {
+    throw new Error("packed manifest is missing bin.born");
+  }
+  const binaryPath = join(packageRoot, binEntry);
+  const result = spawnSync(process.execPath, [binaryPath, "--help"], {
     cwd: installRoot,
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
   });
 
   if (result.status !== 0 || !result.stdout.includes("Usage: born")) {

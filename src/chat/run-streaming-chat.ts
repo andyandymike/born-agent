@@ -439,6 +439,7 @@ async function runFixedToolRoundTrip(
       argumentsJson: first.call.argumentsJson,
       callId: first.call.callId,
       name: first.call.name,
+      step: 1,
     },
     controller.signal,
   );

@@ -26,7 +26,7 @@ export async function runCli(
   program
     .command("agent")
     // PHASE4: agent 是独立命令；chat 继续保留 Phase 3 的最多一次工具往返，避免语义偷换。
-    .description("Run a budgeted read-only AgentLoop over the workspace.")
+    .description("Run a budgeted coding AgentLoop over the workspace.")
     .argument("<task>", "repository task to answer; do not paste API keys")
     .option("--provider <provider>", "model provider: openai or ollama")
     .option("--model <model>", "override the provider model")
@@ -38,6 +38,10 @@ export async function runCli(
       "timeout for each provider request",
     )
     .option("--max-tokens <tokens>", "maximum reported total tokens")
+    .option(
+      "--edit-approval <mode>",
+      "file edit approval: ask or deny",
+    )
     .option(
       "--max-tool-output-bytes <bytes>",
       "cumulative UTF-8 tool observation budget",
@@ -51,6 +55,7 @@ export async function runCli(
       async (
         task: string,
         options: {
+          editApproval?: string;
           maxDurationMs?: string;
           maxSteps?: string;
           maxTokens?: string;
@@ -63,6 +68,7 @@ export async function runCli(
       ) => {
         commandExitCode = await executeAgent(
           {
+            editApproval: options.editApproval,
             maxDurationMs: options.maxDurationMs,
             maxSteps: options.maxSteps,
             maxTokens: options.maxTokens,

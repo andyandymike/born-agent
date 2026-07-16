@@ -10,6 +10,7 @@ import {
 } from "../../src/agent/agent-config.js";
 
 const options = {
+  editApproval: undefined,
   maxDurationMs: undefined,
   maxSteps: undefined,
   maxTokens: undefined,
@@ -26,6 +27,7 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentConfig(options, {})).toEqual({
       ok: true,
       value: {
+        editApproval: "ask",
         maxDurationMs: DEFAULT_AGENT_MAX_DURATION_MS,
         maxSteps: DEFAULT_AGENT_MAX_STEPS,
         maxTokens: DEFAULT_AGENT_MAX_TOKENS,
@@ -81,9 +83,22 @@ describe("resolveAgentConfig", () => {
     [{ ...options, requestTimeoutMs: "nope" }, "request timeout"],
     [{ ...options, maxTokens: "10000001" }, "max tokens"],
     [{ ...options, maxToolOutputBytes: "65535" }, "max tool output bytes"],
+    [{ ...options, editApproval: "always" }, "edit approval"],
   ])("rejects invalid input before a session is created", (input, message) => {
     const result = resolveAgentConfig(input, {});
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain(message);
+  });
+
+  it.each([
+    "https://localhost:11434/v1",
+    "http://ollama.example:11434/v1",
+    "http://127.0.0.1:11435/v1",
+  ])("rejects non-policy Ollama endpoint %s before runtime creation", (baseURL) => {
+    const result = resolveAgentConfig(
+      { ...options, provider: "ollama" },
+      { BORN_OLLAMA_BASE_URL: baseURL },
+    );
+    expect(result).toMatchObject({ ok: false });
   });
 });

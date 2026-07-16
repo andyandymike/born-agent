@@ -560,6 +560,19 @@ export async function runAgentLoop(
         return { exitCode: 0, type: "completed" };
       }
 
+      // PHASE4: token/duration 是执行前置门禁；超限后不能把未被允许的
+      // tool call 持久化成 requested 事实，否则重放会误判为一次被中断的真实动作。
+      if (runAbortReason === "user") return await publishCancelled();
+      if (runAbortReason === "max_duration") {
+        return await publishBudget({
+          limit: config.maxDurationMs,
+          observed: budget.elapsedMs(),
+          reason: "max_duration",
+        });
+      }
+      const afterModel = budget.checkAfterModelForMoreWork();
+      if (afterModel !== undefined) return await publishBudget(afterModel);
+
       const repeated = repetition.observe(
         turn.call.name,
         turn.call.argumentsJson,
@@ -582,18 +595,7 @@ export async function runAgentLoop(
         },
         type: "tool.call.requested",
       });
-      // PHASE4: requested 已成为审计事实后，才允许预算/重复策略决定是否执行真实工具。
-
-      if (runAbortReason === "user") return await publishCancelled();
-      if (runAbortReason === "max_duration") {
-        return await publishBudget({
-          limit: config.maxDurationMs,
-          observed: budget.elapsedMs(),
-          reason: "max_duration",
-        });
-      }
-      const afterModel = budget.checkAfterModelForMoreWork();
-      if (afterModel !== undefined) return await publishBudget(afterModel);
+      // PHASE4: requested 成为审计事实后，仅剩重复策略决定是否执行真实工具。
 
       if (repeated.blocked) {
         const execution: ToolExecution = {
@@ -626,6 +628,7 @@ export async function runAgentLoop(
           argumentsJson: turn.call.argumentsJson,
           callId: turn.call.callId,
           name: turn.call.name,
+          step,
         },
         runController.signal,
       );

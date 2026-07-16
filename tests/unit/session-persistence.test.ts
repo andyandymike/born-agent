@@ -248,3 +248,320 @@ describe("JSONL session persistence", () => {
     ).toThrow("interrupted");
   });
 });
+
+const phase5Common = {
+  run_id: "00000000-0000-4000-8000-000000000202",
+  schema_version: 1 as const,
+  session_id: "00000000-0000-4000-8000-000000000201",
+  timestamp: "2026-07-16T00:00:00.000Z",
+};
+const phase5PlanId = "a".repeat(64);
+const phase5ApprovalId = "00000000-0000-4000-8000-000000000210";
+const phase5Path = { kind: "modify" as const, path: "src/math.ts" };
+
+function phase5Event(
+  seq: number,
+  draft: { readonly data: unknown; readonly type: RunEvent["type"] },
+): RunEvent {
+  return {
+    ...phase5Common,
+    ...draft,
+    event_id: `00000000-0000-4000-8000-${String(300 + seq).padStart(12, "0")}`,
+    seq,
+  } as unknown as RunEvent;
+}
+
+function phase5TraceThroughDecision(
+  decision: "approved" | "denied" = "approved",
+): RunEvent[] {
+  return [
+    phase5Event(1, {
+      data: {
+        command: "agent",
+        edit_approval: "ask",
+        input: { role: "user", text: "change math" },
+        max_duration_ms: 60_000,
+        max_steps: 4,
+        max_tokens: 4_000,
+        max_tool_output_bytes: 64 * 1024,
+        model: "qwen3:1.7b",
+        provider: "ollama",
+        request_timeout_ms: 30_000,
+        tools: ["apply_patch"],
+        tools_enabled: true,
+        workspace: "D:\\Code\\bornagent",
+      },
+      type: "run.started",
+    }),
+    phase5Event(2, {
+      data: {
+        input_kind: "user_task",
+        max_steps: 4,
+        remaining_duration_ms: 60_000,
+        remaining_tokens: 4_000,
+        remaining_tool_output_bytes: 64 * 1024,
+        step: 1,
+      },
+      type: "agent.step.started",
+    }),
+    phase5Event(3, {
+      data: {
+        duration_ms: 2,
+        outcome: "tool_call",
+        step: 1,
+        text_chars: 0,
+        tool_call_id: "call_patch",
+      },
+      type: "agent.step.completed",
+    }),
+    phase5Event(4, {
+      data: {
+        arguments_json: '{"patch":"diff --git a/src/math.ts b/src/math.ts"}',
+        call_id: "call_patch",
+        step: 1,
+        tool_name: "apply_patch",
+      },
+      type: "tool.call.requested",
+    }),
+    phase5Event(5, {
+      data: {
+        added_lines: 1,
+        call_id: "call_patch",
+        patch_sha256: "b".repeat(64),
+        paths: [phase5Path],
+        plan_id: phase5PlanId,
+        preview: "+return 2;",
+        removed_lines: 1,
+        step: 1,
+        truncated: false,
+      },
+      type: "patch.plan.created",
+    }),
+    phase5Event(6, {
+      data: {
+        action: "apply_patch",
+        added_lines: 1,
+        approval_request_id: phase5ApprovalId,
+        call_id: "call_patch",
+        paths: [phase5Path],
+        plan_id: phase5PlanId,
+        preview: "+return 2;",
+        removed_lines: 1,
+        step: 1,
+        truncated: false,
+      },
+      type: "approval.requested",
+    }),
+    phase5Event(7, {
+      data: {
+        action: "apply_patch",
+        approval_request_id: phase5ApprovalId,
+        call_id: "call_patch",
+        decision,
+        plan_id: phase5PlanId,
+        step: 1,
+      },
+      type: "approval.decided",
+    }),
+  ];
+}
+
+function phase5ApplyStarted(seq = 8): RunEvent {
+  return phase5Event(seq, {
+    data: {
+      approval_request_id: phase5ApprovalId,
+      call_id: "call_patch",
+      files: [{ ...phase5Path, pre_sha256: "c".repeat(64) }],
+      plan_id: phase5PlanId,
+      step: 1,
+    },
+    type: "patch.apply.started",
+  });
+}
+
+function phase5ApplyCompleted(
+  seq = 9,
+): Extract<RunEvent, { type: "patch.apply.completed" }> {
+  return phase5Event(seq, {
+    data: {
+      added_lines: 1,
+      approval_request_id: phase5ApprovalId,
+      call_id: "call_patch",
+      duration_ms: 4,
+      files: [
+        {
+          ...phase5Path,
+          post_sha256: "d".repeat(64),
+          pre_sha256: "c".repeat(64),
+        },
+      ],
+      journal_sha256: "e".repeat(64),
+      plan_id: phase5PlanId,
+      removed_lines: 1,
+      step: 1,
+    },
+    type: "patch.apply.completed",
+  }) as Extract<RunEvent, { type: "patch.apply.completed" }>;
+}
+
+describe("Phase 5 session reconstruction", () => {
+  it("reconstructs none, completed, and unknown apply states conservatively", () => {
+    const denied = phase5TraceThroughDecision("denied");
+    denied.push(
+      phase5Event(8, {
+        data: {
+          call_id: "call_patch",
+          duration_ms: 1,
+          error_category: "permission",
+          error_code: "edit_denied",
+          output: '{"ok":false}',
+          retryable: false,
+          status: "error",
+          step: 1,
+          tool_name: "apply_patch",
+          truncated: false,
+        },
+        type: "tool.call.completed",
+      }),
+      phase5Event(9, {
+        data: {
+          category: "internal",
+          code: "stopped_after_test",
+          duration_ms: 5,
+          message: "test terminal",
+          retryable: false,
+          steps: 1,
+          tool_calls: 1,
+        },
+        type: "run.failed",
+      }),
+    );
+    expect(reconstructSession(denied).patchAttempts).toMatchObject([
+      { applyState: "none", approvalDecided: { decision: "denied" } },
+    ]);
+
+    const completed = phase5TraceThroughDecision();
+    completed.push(
+      phase5ApplyStarted(),
+      phase5ApplyCompleted(),
+      phase5Event(10, {
+        data: {
+          call_id: "call_patch",
+          duration_ms: 5,
+          output: '{"ok":true}',
+          status: "success",
+          step: 1,
+          tool_name: "apply_patch",
+          truncated: false,
+        },
+        type: "tool.call.completed",
+      }),
+      phase5Event(11, {
+        data: {
+          category: "internal",
+          code: "stopped_after_test",
+          duration_ms: 6,
+          message: "test terminal",
+          retryable: false,
+          steps: 1,
+          tool_calls: 1,
+        },
+        type: "run.failed",
+      }),
+    );
+    expect(reconstructSession(completed).patchAttempts).toMatchObject([
+      {
+        applyCompleted: { journal_sha256: "e".repeat(64) },
+        applyState: "completed",
+        applyStarted: { call_id: "call_patch" },
+      },
+    ]);
+
+    const interrupted = phase5TraceThroughDecision();
+    interrupted.push(
+      phase5ApplyStarted(),
+      phase5Event(9, {
+        data: {
+          category: "storage",
+          code: "session_write_failed",
+          duration_ms: 5,
+          message: "test terminal",
+          retryable: false,
+          steps: 1,
+          tool_calls: 0,
+        },
+        type: "run.failed",
+      }),
+    );
+    expect(reconstructSession(interrupted).patchAttempts).toMatchObject([
+      { applyState: "unknown", applyStarted: { call_id: "call_patch" } },
+    ]);
+  });
+
+  it("rejects mismatched approval and patch completion evidence", () => {
+    const wrongApproval = phase5TraceThroughDecision();
+    const decision = wrongApproval[6] as Extract<
+      RunEvent,
+      { type: "approval.decided" }
+    >;
+    wrongApproval[6] = {
+      ...decision,
+      data: {
+        ...decision.data,
+        approval_request_id: "00000000-0000-4000-8000-000000000299",
+      },
+    };
+    wrongApproval.push(
+      phase5Event(8, {
+        data: {
+          category: "internal",
+          code: "stopped_after_test",
+          duration_ms: 5,
+          message: "test terminal",
+          retryable: false,
+          steps: 1,
+          tool_calls: 0,
+        },
+        type: "run.failed",
+      }),
+    );
+    expect(() => reconstructSession(wrongApproval)).toThrow(
+      "approval decision",
+    );
+
+    const wrongCompletion = phase5TraceThroughDecision();
+    const completed = phase5ApplyCompleted();
+    const completedFile = completed.data.files[0];
+    if (completedFile === undefined) throw new Error("test fixture is invalid");
+    wrongCompletion.push(
+      phase5ApplyStarted(),
+      {
+        ...completed,
+        data: {
+          ...completed.data,
+          files: [
+            {
+              ...completedFile,
+              path: "src/other.ts",
+            },
+          ],
+        },
+      },
+      phase5Event(10, {
+        data: {
+          category: "internal",
+          code: "stopped_after_test",
+          duration_ms: 5,
+          message: "test terminal",
+          retryable: false,
+          steps: 1,
+          tool_calls: 0,
+        },
+        type: "run.failed",
+      }),
+    );
+    expect(() => reconstructSession(wrongCompletion)).toThrow(
+      "patch completion",
+    );
+  });
+});

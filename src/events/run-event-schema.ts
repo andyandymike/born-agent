@@ -10,6 +10,8 @@ const timestampSchema = z
 const nonnegativeInteger = z.number().int().nonnegative();
 const positiveInteger = z.number().int().positive();
 const toolNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const callIdSchema = z.string().min(1).max(200);
 const utf8StringWithin = (maximumBytes: number) =>
   z
     .string()
@@ -17,6 +19,13 @@ const utf8StringWithin = (maximumBytes: number) =>
       (value) => Buffer.byteLength(value, "utf8") <= maximumBytes,
       `must not exceed ${maximumBytes} UTF-8 bytes`,
     );
+const relativePathSchema = utf8StringWithin(4096).refine(
+  (value) =>
+    !value.startsWith("/") &&
+    !value.includes("\\") &&
+    !value.split("/").includes(".."),
+  "must be a normalized relative path",
+);
 const commonEnvelope = {
   // PHASE2: 每种事件共享同一个 envelope，data 才是不同事件的载荷。
   // schema_version 支持未来迁移；seq 用于发现丢失、乱序或重复写入。
@@ -50,6 +59,8 @@ const agentRunStartedDataSchema = z
   .object({
     ...commonRunStartedData,
     command: z.literal("agent"),
+    // PHASE5: optional preserves replay of schema v1 Phase 4 sessions; all new agent runs emit it.
+    edit_approval: z.enum(["ask", "deny"]).optional(),
     max_duration_ms: positiveInteger,
     max_steps: positiveInteger,
     max_tokens: positiveInteger,
@@ -228,7 +239,7 @@ const toolCallRequestedSchema = z
     data: z
       .object({
         arguments_json: utf8StringWithin(16 * 1024),
-        call_id: z.string().min(1).max(200),
+        call_id: callIdSchema,
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
         provider_response_id: z.string().min(1).optional(),
         step: positiveInteger,
@@ -270,7 +281,7 @@ const toolCallCompletedSchema = z
     ...commonEnvelope,
     data: z
       .object({
-        call_id: z.string().min(1).max(200),
+        call_id: callIdSchema,
         duration_ms: nonnegativeInteger,
         error_category: z
           .enum([
@@ -313,6 +324,119 @@ const toolCallCompletedSchema = z
   })
   .strict();
 
+const patchPathSchema = z
+  .object({
+    kind: z.enum(["create", "modify"]),
+    path: relativePathSchema,
+  })
+  .strict();
+
+const patchPlanCreatedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        added_lines: nonnegativeInteger,
+        call_id: callIdSchema,
+        patch_sha256: sha256Schema,
+        paths: z.array(patchPathSchema).min(1).max(8),
+        plan_id: sha256Schema,
+        preview: utf8StringWithin(32 * 1024),
+        removed_lines: nonnegativeInteger,
+        step: positiveInteger,
+        truncated: z.boolean(),
+      })
+      .strict(),
+    type: z.literal("patch.plan.created"),
+  })
+  .strict();
+
+const approvalRequestedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        action: z.literal("apply_patch"),
+        added_lines: nonnegativeInteger,
+        approval_request_id: uuidSchema,
+        call_id: callIdSchema,
+        paths: z.array(patchPathSchema).min(1).max(8),
+        plan_id: sha256Schema,
+        preview: utf8StringWithin(32 * 1024),
+        removed_lines: nonnegativeInteger,
+        step: positiveInteger,
+        truncated: z.boolean(),
+      })
+      .strict(),
+    type: z.literal("approval.requested"),
+  })
+  .strict();
+
+const approvalDecidedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        action: z.literal("apply_patch"),
+        approval_request_id: uuidSchema,
+        call_id: callIdSchema,
+        decision: z.enum(["approved", "cancelled", "denied"]),
+        plan_id: sha256Schema,
+        step: positiveInteger,
+      })
+      .strict(),
+    type: z.literal("approval.decided"),
+  })
+  .strict();
+
+const patchApplyFileStartedSchema = z
+  .object({
+    kind: z.enum(["create", "modify"]),
+    path: relativePathSchema,
+    pre_sha256: sha256Schema.nullable(),
+  })
+  .strict();
+
+const patchApplyStartedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        approval_request_id: uuidSchema,
+        call_id: callIdSchema,
+        files: z.array(patchApplyFileStartedSchema).min(1).max(8),
+        plan_id: sha256Schema,
+        step: positiveInteger,
+      })
+      .strict(),
+    type: z.literal("patch.apply.started"),
+  })
+  .strict();
+
+const patchApplyFileCompletedSchema = patchApplyFileStartedSchema.extend({
+  post_sha256: sha256Schema,
+});
+
+const patchApplyCompletedSchema = z
+  .object({
+    ...commonEnvelope,
+    data: z
+      .object({
+        added_lines: nonnegativeInteger,
+        approval_request_id: uuidSchema,
+        call_id: callIdSchema,
+        duration_ms: nonnegativeInteger,
+        files: z.array(patchApplyFileCompletedSchema).min(1).max(8),
+        journal_sha256: sha256Schema,
+        plan_id: sha256Schema,
+        removed_lines: nonnegativeInteger,
+        step: positiveInteger,
+      })
+      .strict(),
+    type: z.literal("patch.apply.completed"),
+  })
+  .strict();
+
 export const runEventSchema = z.discriminatedUnion("type", [
   // PHASE2: type 是判别字段。解析成功后，TypeScript 能依据 event.type 自动缩小 data 类型。
   runStartedSchema,
@@ -323,6 +447,11 @@ export const runEventSchema = z.discriminatedUnion("type", [
   usageSchema,
   toolCallRequestedSchema,
   toolCallCompletedSchema,
+  patchPlanCreatedSchema,
+  approvalRequestedSchema,
+  approvalDecidedSchema,
+  patchApplyStartedSchema,
+  patchApplyCompletedSchema,
   runCompletedSchema,
   runFailedSchema,
   runCancelledSchema,

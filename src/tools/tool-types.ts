@@ -48,10 +48,15 @@ export type ToolExecution =
     };
 
 export interface ToolContext {
+  readonly callId: string;
   readonly signal: AbortSignal;
+  readonly step: number;
+  readonly toolName: string;
 }
 
 export interface ToolDefinition<TInput> {
+  // PHASE5: capability 是 Registry 装配时的机械边界；prompt 文字不能保证 chat 保持只读。
+  readonly capability: "mutation" | "read";
   // PHASE3: inputSchema 是参数合同的唯一运行时真相，同时用于本地 Zod 校验和模型 JSON Schema。
   readonly description: string;
   readonly inputSchema: z.ZodType<TInput>;
@@ -63,6 +68,21 @@ export interface ToolInvocation {
   readonly argumentsJson: string;
   readonly callId: string;
   readonly name: string;
+  readonly step: number;
+}
+
+export class FatalToolExecutionError extends Error {
+  readonly workspaceMayHaveChanged: boolean;
+
+  constructor(
+    readonly kind: "ambiguous_patch_state" | "storage" | "user_cancelled",
+    message: string,
+    options: { readonly cause?: unknown; readonly workspaceMayHaveChanged: boolean },
+  ) {
+    super(message, { cause: options.cause });
+    this.name = "FatalToolExecutionError";
+    this.workspaceMayHaveChanged = options.workspaceMayHaveChanged;
+  }
 }
 
 export interface ToolRegistryLike {

@@ -14,6 +14,7 @@ import {
 } from "../events/event-publisher.js";
 import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import { FatalToolExecutionError } from "../tools/tool-types.js";
 
 function clientConfiguration(
   config: ResolvedAgentConfig,
@@ -80,6 +81,7 @@ export async function executeAgent(
     await publisher.publish({
       data: {
         command: "agent",
+        edit_approval: config.editApproval,
         input: { role: "user", text: config.task },
         max_duration_ms: config.maxDurationMs,
         max_steps: config.maxSteps,
@@ -88,15 +90,23 @@ export async function executeAgent(
         model: config.model,
         provider: config.provider,
         request_timeout_ms: config.requestTimeoutMs,
-        tools: ["list_files", "read_file", "search"],
+        tools: ["apply_patch", "list_files", "read_file", "search"],
         tools_enabled: true,
         workspace: runtime.cwd,
       },
       type: "run.started",
     });
-    const tools = await runtime.createToolRegistry(runtime.cwd, [
-      runtime.env.OPENAI_API_KEY,
-    ]);
+    const tools = await runtime.createAgentToolRegistry({
+      approvalMode: config.editApproval,
+      approvalPrompt: runtime.createApprovalPrompt(io),
+      caseInsensitivePaths: runtime.platform === "win32",
+      now: runtime.now,
+      publisher,
+      randomUUID: runtime.randomUUID,
+      secrets: [runtime.env.OPENAI_API_KEY],
+      timestamp: runtime.timestamp,
+      workspace: runtime.cwd,
+    });
     const model = runtime.createModelTurnClient(connection);
     const terminal = await runAgentLoop(
       config.task,
@@ -119,6 +129,63 @@ export async function executeAgent(
     if (!wasUserCancelled) userController.abort();
     if (error instanceof EventPersistenceError) {
       renderer.renderStorageError();
+      exitCode = 1;
+    } else if (error instanceof FatalToolExecutionError && error.kind === "storage") {
+      renderer.renderStorageError();
+      if (error.workspaceMayHaveChanged) {
+        renderer.renderDiagnostic(
+          "workspace may have changed; inspect the run-local diff before continuing",
+        );
+      }
+      exitCode = 1;
+    } else if (
+      error instanceof FatalToolExecutionError &&
+      error.kind === "user_cancelled"
+    ) {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            duration_ms: snapshot.elapsedMs,
+            output_chars: publisher.outputLength,
+            reason: "user",
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.cancelled",
+        });
+        exitCode = 130;
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
+        } else {
+          renderer.renderDiagnostic("internal protocol error");
+        }
+        exitCode = 1;
+      }
+    } else if (error instanceof FatalToolExecutionError) {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            category: "internal",
+            code: "ambiguous_patch_state",
+            duration_ms: snapshot.elapsedMs,
+            message: "workspace state is ambiguous; inspect the diff before continuing",
+            output_chars: publisher.outputLength,
+            retryable: false,
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.failed",
+        });
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
+        } else {
+          renderer.renderDiagnostic("workspace state is ambiguous");
+        }
+      }
       exitCode = 1;
     } else if (wasUserCancelled) {
       try {

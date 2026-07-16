@@ -15,6 +15,7 @@ function definition(
   ),
 ): ToolDefinition<{ path: string | null }> {
   return {
+    capability: "read",
     description: `${name} description`,
     execute,
     inputSchema: z.object({ path: z.string().nullable() }).strict(),
@@ -28,6 +29,7 @@ function erased<T>(value: ToolDefinition<T>): ToolDefinition<unknown> {
 
 function optionalDefinition(): ToolDefinition<{ path?: string | undefined }> {
   return {
+    capability: "read",
     description: "optional",
     execute: async () => ({ ok: true, truncated: false, value: {} }),
     inputSchema: z.object({ path: z.string().optional() }).strict(),
@@ -95,7 +97,7 @@ describe("ToolRegistry", () => {
     ];
     for (const item of cases) {
       const result = await registry.execute(
-        { ...item, callId: "call_1" },
+        { ...item, callId: "call_1", step: 1 },
         new AbortController().signal,
       );
       expect(result.ok).toBe(false);
@@ -123,6 +125,7 @@ describe("ToolRegistry", () => {
         argumentsJson: JSON.stringify({ path: null }),
         callId: "call_1",
         name: "read_file",
+        step: 1,
       },
       new AbortController().signal,
     );
@@ -143,6 +146,7 @@ describe("ToolRegistry", () => {
         argumentsJson: JSON.stringify({ path: null }),
         callId: "call_1",
         name: "read_file",
+        step: 1,
       },
       controller.signal,
     );

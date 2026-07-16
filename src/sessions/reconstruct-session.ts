@@ -8,6 +8,11 @@ type ToolCompletedEvent = Extract<RunEvent, { type: "tool.call.completed" }>;
 type AgentStepStartedEvent = Extract<RunEvent, { type: "agent.step.started" }>;
 type AgentStepCompletedEvent = Extract<RunEvent, { type: "agent.step.completed" }>;
 type ModelUsageEvent = Extract<RunEvent, { type: "model.usage" }>;
+type PatchPlanCreatedEvent = Extract<RunEvent, { type: "patch.plan.created" }>;
+type ApprovalRequestedEvent = Extract<RunEvent, { type: "approval.requested" }>;
+type ApprovalDecidedEvent = Extract<RunEvent, { type: "approval.decided" }>;
+type PatchApplyStartedEvent = Extract<RunEvent, { type: "patch.apply.started" }>;
+type PatchApplyCompletedEvent = Extract<RunEvent, { type: "patch.apply.completed" }>;
 
 export interface ReconstructedToolCall {
   readonly completed?: ToolCompletedEvent["data"];
@@ -23,9 +28,21 @@ export interface ReconstructedAgentStep {
   readonly started: AgentStepStartedEvent["data"];
 }
 
+export type ReconstructedPatchApplyState = "completed" | "none" | "unknown";
+
+export interface ReconstructedPatchAttempt {
+  readonly applyCompleted?: PatchApplyCompletedEvent["data"];
+  readonly applyStarted?: PatchApplyStartedEvent["data"];
+  readonly applyState: ReconstructedPatchApplyState;
+  readonly approvalDecided?: ApprovalDecidedEvent["data"];
+  readonly approvalRequested?: ApprovalRequestedEvent["data"];
+  readonly plan: PatchPlanCreatedEvent["data"];
+}
+
 export interface ReconstructedRun {
   readonly agentSteps: readonly ReconstructedAgentStep[];
   readonly output: string;
+  readonly patchAttempts: readonly ReconstructedPatchAttempt[];
   readonly runId: string;
   readonly sessionId: string;
   readonly started: StartedEvent["data"];
@@ -43,8 +60,48 @@ interface MutableToolCall {
 interface MutableAgentStep {
   completed?: AgentStepCompletedEvent["data"];
   modelUsage?: ModelUsageEvent["data"];
+  sawNonWhitespaceText: boolean;
   started: AgentStepStartedEvent["data"];
   textChars: number;
+}
+
+interface MutablePatchAttempt {
+  applyCompleted?: PatchApplyCompletedEvent["data"];
+  applyStarted?: PatchApplyStartedEvent["data"];
+  approvalDecided?: ApprovalDecidedEvent["data"];
+  approvalRequested?: ApprovalRequestedEvent["data"];
+  plan: PatchPlanCreatedEvent["data"];
+}
+
+function patchPathsMatch(
+  left: readonly { readonly kind: "create" | "modify"; readonly path: string }[],
+  right: readonly { readonly kind: "create" | "modify"; readonly path: string }[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (entry, index) =>
+        entry.kind === right[index]?.kind && entry.path === right[index]?.path,
+    )
+  );
+}
+
+function applyFilesMatch(
+  started: PatchApplyStartedEvent["data"]["files"],
+  completed: PatchApplyCompletedEvent["data"]["files"],
+): boolean {
+  return (
+    started.length === completed.length &&
+    started.every((entry, index) => {
+      const result = completed[index];
+      return (
+        result !== undefined &&
+        entry.kind === result.kind &&
+        entry.path === result.path &&
+        entry.pre_sha256 === result.pre_sha256
+      );
+    })
+  );
 }
 
 function validateRunUsage(
@@ -92,7 +149,11 @@ function validateBudgetTerminal(
     throw new Error("budget terminal tool_calls do not match agent trace");
   }
   if (data.reason === "max_steps") {
-    if (data.limit !== started.max_steps || data.observed !== steps.length) {
+    if (
+      data.limit !== started.max_steps ||
+      data.observed !== steps.length ||
+      data.observed !== data.limit
+    ) {
       throw new Error("max_steps terminal does not match event history");
     }
   } else if (data.reason === "max_duration") {
@@ -145,6 +206,8 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
 
   const eventIds = new Set<string>();
   const tools = new Map<string, MutableToolCall>();
+  const patchAttempts = new Map<string, MutablePatchAttempt>();
+  const approvalCalls = new Map<string, string>();
   const steps: MutableAgentStep[] = [];
   let activeStep: MutableAgentStep | undefined;
   let output = "";
@@ -200,14 +263,21 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         // tool_result step 的存在，才能在重放时把前一工具结果确定为 consumedByModel。
         call.consumedByModel = true;
       }
-      activeStep = { started: event.data, textChars: 0 };
+      activeStep = {
+        sawNonWhitespaceText: false,
+        started: event.data,
+        textChars: 0,
+      };
       steps.push(activeStep);
     } else if (event.type === "text.delta") {
       if (first.data.command === "agent" && activeStep === undefined) {
         throw new Error("agent text delta appears outside a step");
       }
       output += event.data.delta;
-      if (activeStep !== undefined) activeStep.textChars += event.data.delta.length;
+      if (activeStep !== undefined) {
+        activeStep.textChars += event.data.delta.length;
+        activeStep.sawNonWhitespaceText ||= /\S/u.test(event.data.delta);
+      }
     } else if (event.type === "model.usage") {
       // PHASE4: 每个 active step 最多一个 usage，供最终 run usage 和 token budget 交叉核对。
       if (
@@ -258,7 +328,119 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       ) {
         throw new Error("tool result does not match one pending tool call");
       }
+      const patchAttempt = patchAttempts.get(event.data.call_id);
+      if (
+        event.data.tool_name === "apply_patch" &&
+        event.data.status === "success" &&
+        patchAttempt?.applyCompleted === undefined
+      ) {
+        throw new Error("successful apply_patch lacks completed apply evidence");
+      }
+      if (
+        patchAttempt !== undefined &&
+        patchAttempt.approvalRequested === undefined
+      ) {
+        throw new Error("planned apply_patch result lacks approval request");
+      }
+      if (
+        patchAttempt?.approvalRequested !== undefined &&
+        patchAttempt.approvalDecided === undefined
+      ) {
+        throw new Error("apply_patch result appears before approval decision");
+      }
       call.completed = event.data;
+    } else if (event.type === "patch.plan.created") {
+      // PHASE5: patch plan 只能绑定尚未完成的 apply_patch 工具调用。重放器不能因为
+      // JSONL 中出现了一个看似合法的 plan_id，就跳过它与模型原始 tool call 的关联验证。
+      const call = tools.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        call === undefined ||
+        call.completed !== undefined ||
+        call.requested.tool_name !== "apply_patch" ||
+        call.requested.step !== event.data.step ||
+        patchAttempts.has(event.data.call_id)
+      ) {
+        throw new Error("patch plan does not match one pending apply_patch call");
+      }
+      patchAttempts.set(event.data.call_id, { plan: event.data });
+    } else if (event.type === "approval.requested") {
+      const attempt = patchAttempts.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        attempt === undefined ||
+        tools.get(event.data.call_id)?.completed !== undefined ||
+        attempt.approvalRequested !== undefined ||
+        approvalCalls.has(event.data.approval_request_id) ||
+        attempt.plan.plan_id !== event.data.plan_id ||
+        attempt.plan.step !== event.data.step ||
+        attempt.plan.added_lines !== event.data.added_lines ||
+        attempt.plan.removed_lines !== event.data.removed_lines ||
+        attempt.plan.preview !== event.data.preview ||
+        attempt.plan.truncated !== event.data.truncated ||
+        !patchPathsMatch(attempt.plan.paths, event.data.paths)
+      ) {
+        throw new Error("approval request does not match one patch plan");
+      }
+      attempt.approvalRequested = event.data;
+      approvalCalls.set(event.data.approval_request_id, event.data.call_id);
+    } else if (event.type === "approval.decided") {
+      const callId = approvalCalls.get(event.data.approval_request_id);
+      const attempt =
+        callId === undefined ? undefined : patchAttempts.get(callId);
+      if (
+        first.data.command !== "agent" ||
+        callId !== event.data.call_id ||
+        attempt?.approvalRequested === undefined ||
+        attempt.approvalDecided !== undefined ||
+        attempt.plan.plan_id !== event.data.plan_id ||
+        attempt.plan.step !== event.data.step
+      ) {
+        throw new Error("approval decision does not match one pending request");
+      }
+      attempt.approvalDecided = event.data;
+    } else if (event.type === "patch.apply.started") {
+      // PHASE5: started 是磁盘副作用边界；只有同一 request 明确 approved 后才能出现。
+      // 缺少 completed 时不猜测回滚结果，而是在最终重建结果中标记为 unknown。
+      const attempt = patchAttempts.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        attempt?.approvalRequested === undefined ||
+        attempt.approvalDecided?.decision !== "approved" ||
+        attempt.applyStarted !== undefined ||
+        tools.get(event.data.call_id)?.completed !== undefined ||
+        attempt.approvalRequested.approval_request_id !==
+          event.data.approval_request_id ||
+        attempt.plan.plan_id !== event.data.plan_id ||
+        attempt.plan.step !== event.data.step ||
+        !patchPathsMatch(attempt.plan.paths, event.data.files) ||
+        !event.data.files.every((file) =>
+          file.kind === "create"
+            ? file.pre_sha256 === null
+            : file.pre_sha256 !== null,
+        )
+      ) {
+        throw new Error("patch apply does not follow its approved request");
+      }
+      attempt.applyStarted = event.data;
+    } else if (event.type === "patch.apply.completed") {
+      const attempt = patchAttempts.get(event.data.call_id);
+      if (
+        first.data.command !== "agent" ||
+        attempt?.applyStarted === undefined ||
+        attempt.applyCompleted !== undefined ||
+        tools.get(event.data.call_id)?.completed !== undefined ||
+        attempt.applyStarted.approval_request_id !==
+          event.data.approval_request_id ||
+        attempt.plan.plan_id !== event.data.plan_id ||
+        attempt.plan.step !== event.data.step ||
+        attempt.plan.added_lines !== event.data.added_lines ||
+        attempt.plan.removed_lines !== event.data.removed_lines ||
+        !applyFilesMatch(attempt.applyStarted.files, event.data.files)
+      ) {
+        throw new Error("patch completion does not match one started apply");
+      }
+      attempt.applyCompleted = event.data;
     } else if (isTerminalRunEvent(event)) {
       terminal = event;
       if (index !== events.length - 1) throw new Error("terminal event must be last");
@@ -287,6 +469,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   }
 
   const toolValues = [...tools.values()];
+  const patchValues = [...patchAttempts.values()];
   if (
     terminal.type === "run.completed" &&
     toolValues.some((call) => call.completed === undefined)
@@ -301,6 +484,16 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
   ) {
     throw new Error("run.completed tool_calls does not match reconstructed tools");
   }
+  if (
+    terminal.type === "run.completed" &&
+    patchValues.some(
+      (attempt) =>
+        attempt.applyStarted !== undefined &&
+        attempt.applyCompleted === undefined,
+    )
+  ) {
+    throw new Error("completed run contains an unknown patch apply state");
+  }
 
   if (first.data.command === "agent") {
     // PHASE4: 不同 terminal 有不同完成证明；成功要求 final step+aggregate usage，
@@ -312,6 +505,7 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
         activeStep !== undefined ||
         final?.outcome !== "final" ||
         final.text_chars === 0 ||
+        steps.at(-1)?.sawNonWhitespaceText !== true ||
         terminal.data.steps !== steps.length ||
         terminal.data.model_turns !== steps.length ||
         usage === undefined
@@ -358,6 +552,27 @@ export function reconstructSession(events: readonly RunEvent[]): ReconstructedRu
       started: step.started,
     })),
     output,
+    patchAttempts: patchValues.map((attempt) => ({
+      ...(attempt.applyCompleted === undefined
+        ? {}
+        : { applyCompleted: attempt.applyCompleted }),
+      ...(attempt.applyStarted === undefined
+        ? {}
+        : { applyStarted: attempt.applyStarted }),
+      applyState:
+        attempt.applyStarted === undefined
+          ? "none"
+          : attempt.applyCompleted === undefined
+            ? "unknown"
+            : "completed",
+      ...(attempt.approvalDecided === undefined
+        ? {}
+        : { approvalDecided: attempt.approvalDecided }),
+      ...(attempt.approvalRequested === undefined
+        ? {}
+        : { approvalRequested: attempt.approvalRequested }),
+      plan: attempt.plan,
+    })),
     runId: first.run_id,
     sessionId: first.session_id,
     started: first.data,

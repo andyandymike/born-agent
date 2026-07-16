@@ -7,12 +7,14 @@ import type {
   AgentCommandOptions,
   ResolvedAgentConfig,
 } from "./agent-types.js";
+import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 
 export const DEFAULT_AGENT_MAX_STEPS = 8;
 export const DEFAULT_AGENT_MAX_DURATION_MS = 300_000;
 export const DEFAULT_AGENT_REQUEST_TIMEOUT_MS = 120_000;
 export const DEFAULT_AGENT_MAX_TOKENS = 100_000;
 export const DEFAULT_AGENT_MAX_TOOL_OUTPUT_BYTES = 262_144;
+export const DEFAULT_EDIT_APPROVAL = "ask" as const;
 
 // PHASE4: 所有预算统一采用 CLI > 环境变量 > 内置默认值，先在创建 session 前完成验证。
 type ConfigResult<T> =
@@ -57,19 +59,7 @@ function resolveInteger(
 }
 
 function resolveOllamaBaseURL(value: string | undefined): ConfigResult<string> {
-  const selected = (value ?? DEFAULT_OLLAMA_BASE_URL).trim().replace(/\/+$/u, "");
-  try {
-    const url = new URL(selected);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error("unsupported protocol");
-    }
-    return { ok: true, value: selected };
-  } catch {
-    return {
-      error: "BORN_OLLAMA_BASE_URL must be a valid HTTP(S) URL",
-      ok: false,
-    };
-  }
+  return resolveLoopbackOllamaURL(value ?? DEFAULT_OLLAMA_BASE_URL);
 }
 
 export function resolveAgentConfig(
@@ -79,6 +69,11 @@ export function resolveAgentConfig(
   // PHASE4: 配置失败必须发生在 writer/model/tool 初始化前，因此不会留下无意义的半截 session。
   if (options.task.trim().length === 0) {
     return { error: "task must not be empty", ok: false };
+  }
+
+  const editApproval = options.editApproval ?? DEFAULT_EDIT_APPROVAL;
+  if (editApproval !== "ask" && editApproval !== "deny") {
+    return { error: "edit approval must be one of: ask, deny", ok: false };
   }
 
   const provider = resolveProvider(options.provider, env.BORN_PROVIDER);
@@ -137,6 +132,7 @@ export function resolveAgentConfig(
   return {
     ok: true,
     value: {
+      editApproval,
       maxDurationMs: maxDurationMs.value,
       maxSteps: maxSteps.value,
       maxTokens: maxTokens.value,

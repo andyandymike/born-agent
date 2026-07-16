@@ -93,6 +93,10 @@ export function createRuntime(
   return {
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
+    createApprovalPrompt: () => ({
+      request: async () => "denied" as const,
+    }),
+    createAgentToolRegistry: async () => new FakeToolRegistry(),
     createSessionWriter: async (_workspace, sessionId) =>
       new InMemorySessionWriter(`memory://${sessionId}.jsonl`),
     createModelTurnClient: () =>

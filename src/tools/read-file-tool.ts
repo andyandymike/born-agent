@@ -106,6 +106,7 @@ export function createReadFileTool(
 ): ToolDefinition<ReadFileInput> {
   // PHASE3: read_file 的顺序是路径策略 -> 文件大小 -> 二进制/UTF-8 -> 行范围 -> 输出上限。
   return {
+    capability: "read",
     description:
       "Read a UTF-8 text file inside the workspace with 1-based line numbers. Use null for an unspecified line bound.",
     execute: async (input, context) => {

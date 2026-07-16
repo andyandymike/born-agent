@@ -38,8 +38,25 @@ interface ToolCallState {
   readonly step: number;
 }
 
+interface PatchPlanState {
+  readonly callId: string;
+  readonly planId: string;
+  readonly step: number;
+}
+
+interface ApprovalState extends PatchPlanState {
+  decision?: "approved" | "cancelled" | "denied";
+  readonly requestId: string;
+}
+
+interface PatchApplyState extends PatchPlanState {
+  readonly approvalRequestId: string;
+  completed: boolean;
+}
+
 export class EventPublisher {
   private activeAgentStep: number | undefined;
+  private readonly approvals = new Map<string, ApprovalState>();
   private readonly agentSteps = new Map<number, AgentStepState>();
   private command: "agent" | "chat" | undefined;
   private outputChars = 0;
@@ -47,6 +64,8 @@ export class EventPublisher {
   private started = false;
   private terminal = false;
   private readonly toolCalls = new Map<string, ToolCallState>();
+  private readonly patchApplies = new Map<string, PatchApplyState>();
+  private readonly patchPlans = new Map<string, PatchPlanState>();
   private usagePublished = false;
 
   constructor(private readonly options: EventPublisherOptions) {}
@@ -108,7 +127,12 @@ export class EventPublisher {
       this.command === "chat" &&
       (draft.type === "agent.step.started" ||
         draft.type === "agent.step.completed" ||
+        draft.type === "approval.decided" ||
+        draft.type === "approval.requested" ||
         draft.type === "model.usage" ||
+        draft.type === "patch.apply.completed" ||
+        draft.type === "patch.apply.started" ||
+        draft.type === "patch.plan.created" ||
         draft.type === "run.budget_exceeded")
     ) {
       throw new Error("chat run cannot publish agent events");
@@ -128,6 +152,13 @@ export class EventPublisher {
         requested.step !== draft.data.step
       ) {
         throw new Error("tool result must match one pending tool call");
+      }
+      if (
+        requested.name === "apply_patch" &&
+        draft.data.status === "success" &&
+        this.patchApplies.get(draft.data.call_id)?.completed !== true
+      ) {
+        throw new Error("successful apply_patch result requires completed apply evidence");
       }
     }
     if (
@@ -231,6 +262,71 @@ export class EventPublisher {
         step.toolCallId !== draft.data.call_id
       ) {
         throw new Error("agent tool request must match a tool_call step");
+      }
+      return;
+    }
+    if (draft.type === "patch.plan.created") {
+      const call = this.toolCalls.get(draft.data.call_id);
+      if (
+        call?.name !== "apply_patch" ||
+        call.completed ||
+        call.step !== draft.data.step ||
+        this.patchPlans.has(draft.data.call_id)
+      ) {
+        throw new Error("patch plan must match one pending apply_patch call");
+      }
+      return;
+    }
+    if (draft.type === "approval.requested") {
+      const plan = this.patchPlans.get(draft.data.call_id);
+      if (
+        plan?.planId !== draft.data.plan_id ||
+        plan.step !== draft.data.step ||
+        this.approvals.has(draft.data.approval_request_id) ||
+        [...this.approvals.values()].some(
+          (approval) => approval.callId === draft.data.call_id,
+        )
+      ) {
+        throw new Error("approval request must match one patch plan");
+      }
+      return;
+    }
+    if (draft.type === "approval.decided") {
+      const approval = this.approvals.get(draft.data.approval_request_id);
+      if (
+        approval === undefined ||
+        approval.decision !== undefined ||
+        approval.callId !== draft.data.call_id ||
+        approval.planId !== draft.data.plan_id ||
+        approval.step !== draft.data.step
+      ) {
+        throw new Error("approval decision must match one pending request");
+      }
+      return;
+    }
+    if (draft.type === "patch.apply.started") {
+      const approval = this.approvals.get(draft.data.approval_request_id);
+      if (
+        approval?.decision !== "approved" ||
+        approval.callId !== draft.data.call_id ||
+        approval.planId !== draft.data.plan_id ||
+        approval.step !== draft.data.step ||
+        this.patchApplies.has(draft.data.call_id)
+      ) {
+        throw new Error("patch apply must follow its approved request");
+      }
+      return;
+    }
+    if (draft.type === "patch.apply.completed") {
+      const apply = this.patchApplies.get(draft.data.call_id);
+      if (
+        apply === undefined ||
+        apply.completed ||
+        apply.approvalRequestId !== draft.data.approval_request_id ||
+        apply.planId !== draft.data.plan_id ||
+        apply.step !== draft.data.step
+      ) {
+        throw new Error("patch completion must match one started apply");
       }
       return;
     }
@@ -343,6 +439,33 @@ export class EventPublisher {
     } else if (event.type === "tool.call.completed") {
       const requested = this.toolCalls.get(event.data.call_id);
       if (requested !== undefined) requested.completed = true;
+    } else if (event.type === "patch.plan.created") {
+      this.patchPlans.set(event.data.call_id, {
+        callId: event.data.call_id,
+        planId: event.data.plan_id,
+        step: event.data.step,
+      });
+    } else if (event.type === "approval.requested") {
+      this.approvals.set(event.data.approval_request_id, {
+        callId: event.data.call_id,
+        planId: event.data.plan_id,
+        requestId: event.data.approval_request_id,
+        step: event.data.step,
+      });
+    } else if (event.type === "approval.decided") {
+      const approval = this.approvals.get(event.data.approval_request_id);
+      if (approval !== undefined) approval.decision = event.data.decision;
+    } else if (event.type === "patch.apply.started") {
+      this.patchApplies.set(event.data.call_id, {
+        approvalRequestId: event.data.approval_request_id,
+        callId: event.data.call_id,
+        completed: false,
+        planId: event.data.plan_id,
+        step: event.data.step,
+      });
+    } else if (event.type === "patch.apply.completed") {
+      const apply = this.patchApplies.get(event.data.call_id);
+      if (apply !== undefined) apply.completed = true;
     }
     if (isTerminalRunEvent(event)) this.terminal = true;
   }

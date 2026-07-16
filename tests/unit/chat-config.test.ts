@@ -76,6 +76,12 @@ describe("resolveChatConfig", () => {
     expect(
       resolveChatConfig(
         { ...baseOptions, provider: "ollama" },
+        { BORN_OLLAMA_BASE_URL: "http://remote.example:11434/v1" },
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      resolveChatConfig(
+        { ...baseOptions, provider: "ollama" },
         { BORN_OLLAMA_BASE_URL: "file:///tmp/ollama" },
       ),
     ).toMatchObject({ ok: false });

@@ -92,6 +92,7 @@ export function createSearchTool(
 ): ToolDefinition<SearchInput> {
   // PHASE3: search 只组装固定 rg argv，不拼接 shell 字符串；query 永远只是一个参数值。
   return {
+    capability: "read",
     description:
       "Search workspace text with ripgrep. mode is literal or regex; path and glob must be null when unused.",
     execute: async (input, context) => {

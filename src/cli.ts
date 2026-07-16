@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createInterface } from "node:readline";
+
 import packageJson from "../package.json" with { type: "json" };
 
 import { createNodeRuntime } from "./cli/node-runtime.js";
@@ -15,11 +17,34 @@ function oneLineError(error: unknown, secret: string | undefined): string {
   return message.replace(/\s+/gu, " ").trim();
 }
 
+function readApprovalLine(signal: AbortSignal): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = createInterface({ input: process.stdin, terminal: false });
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      input.close();
+      resolve(value);
+    };
+    const onAbort = () => finish(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+    input.once("line", (line) => finish(line));
+    input.once("close", () => finish(null));
+    if (signal.aborted) onAbort();
+  });
+}
+
 try {
   process.exitCode = await runCli(
     process.argv.slice(2),
     { stderr: process.stderr, stdout: process.stdout },
     createNodeRuntime({
+      approvalInput: {
+        interactive: process.stdin.isTTY === true && process.stderr.isTTY === true,
+        readLine: readApprovalLine,
+      },
       cwd: process.cwd(),
       env: process.env,
       nodeVersion: process.versions.node,

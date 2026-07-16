@@ -84,6 +84,41 @@ export class ConsoleEventRenderer implements RunEventRenderer {
           );
         }
         return;
+      case "patch.plan.created":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `patch plan=${event.data.plan_id.slice(0, 12)} files=${event.data.paths.length} +${event.data.added_lines} -${event.data.removed_lines}${event.data.truncated ? " preview_truncated=true" : ""}\n`,
+          );
+        }
+        return;
+      case "approval.requested":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `approval=${event.data.approval_request_id} requested action=${event.data.action}\n`,
+          );
+        }
+        return;
+      case "approval.decided":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `approval=${event.data.approval_request_id} decision=${event.data.decision}\n`,
+          );
+        }
+        return;
+      case "patch.apply.started":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `patch plan=${event.data.plan_id.slice(0, 12)} apply=started\n`,
+          );
+        }
+        return;
+      case "patch.apply.completed":
+        if (this.verbose) {
+          this.io.stderr.write(
+            `patch plan=${event.data.plan_id.slice(0, 12)} apply=completed duration_ms=${event.data.duration_ms}\n`,
+          );
+        }
+        return;
       case "run.completed":
         if (!this.hasOutput) {
           this.io.stdout.write("\n");

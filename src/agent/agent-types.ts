@@ -1,6 +1,7 @@
 import type { ChatProvider } from "../chat/types.js";
 
 export interface AgentCommandOptions {
+  readonly editApproval: string | undefined;
   readonly maxDurationMs: string | undefined;
   readonly maxSteps: string | undefined;
   readonly maxTokens: string | undefined;
@@ -12,6 +13,8 @@ export interface AgentCommandOptions {
   readonly verbose: boolean;
 }
 
+export type EditApprovalMode = "ask" | "deny";
+
 export interface AgentLoopConfig {
   // PHASE4: 这些都是一次 run 的硬边界；requestTimeoutMs 例外，它只约束单个模型请求。
   readonly maxDurationMs: number;
@@ -22,6 +25,7 @@ export interface AgentLoopConfig {
 }
 
 export interface ResolvedAgentConfig extends AgentLoopConfig {
+  readonly editApproval: EditApprovalMode;
   readonly model: string;
   readonly ollamaBaseURL?: string;
   readonly provider: ChatProvider;

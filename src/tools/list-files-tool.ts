@@ -37,6 +37,7 @@ export function createListFilesTool(
 ): ToolDefinition<ListFilesInput> {
   // PHASE3: list_files 复用 rg --files，因此遵守仓库 ignore 规则，也不自行无限递归目录树。
   return {
+    capability: "read",
     description:
       "List files inside the workspace using repository ignore rules. path and glob must be null when unused.",
     execute: async (input, context) => {
