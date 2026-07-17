@@ -12,6 +12,7 @@ import {
 import type { CliIO, CliRuntime } from "./types.js";
 import { executeTui } from "../tui/run-tui.js";
 import { executeMcpInspect, executeMcpList } from "../commands/mcp.js";
+import { executeSandboxDoctor } from "../commands/sandbox-doctor.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -43,6 +44,12 @@ export async function runCli(
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
+    .option("--executor <executor>", "command executor: local or docker")
+    .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
+    .option("--sandbox-memory-mib <mib>", "Docker memory limit (256..8192 MiB)")
+    .option("--sandbox-cpus <cpus>", "Docker CPU limit (0.25..8)")
+    .option("--sandbox-pids <count>", "Docker PID limit (32..1024)")
+    .option("--sandbox-tmp-mib <mib>", "Docker tmpfs limit (16..1024 MiB)")
     .option("--max-steps <steps>", "maximum model responses")
     // PHASE4: max-duration 覆盖整次 run，request-timeout 只覆盖一轮 provider response。
     .option("--max-duration-ms <milliseconds>", "whole-run wall clock budget")
@@ -120,6 +127,8 @@ export async function runCli(
           contextReserveOutputTokens?: string;
           contextWindowTokens?: string;
           editApproval?: string;
+          executor?: string;
+          dockerImage?: string;
           maxDurationMs?: string;
           maxCommandOutputBytes?: string;
           maxSteps?: string;
@@ -131,6 +140,10 @@ export async function runCli(
           reportFormat?: string;
           requireVerification?: string;
           requestTimeoutMs?: string;
+          sandboxCpus?: string;
+          sandboxMemoryMib?: string;
+          sandboxPids?: string;
+          sandboxTmpMib?: string;
           taskProfile?: string;
           verbose: boolean;
         },
@@ -145,6 +158,8 @@ export async function runCli(
             contextReserveOutputTokens: options.contextReserveOutputTokens,
             contextWindowTokens: options.contextWindowTokens,
             editApproval: options.editApproval,
+            executor: options.executor,
+            dockerImage: options.dockerImage,
             maxDurationMs: options.maxDurationMs,
             maxCommandOutputBytes: options.maxCommandOutputBytes,
             maxSteps: options.maxSteps,
@@ -156,6 +171,10 @@ export async function runCli(
             reportFormat: options.reportFormat,
             requireVerification: options.requireVerification,
             requestTimeoutMs: options.requestTimeoutMs,
+            sandboxCpus: options.sandboxCpus,
+            sandboxMemoryMiB: options.sandboxMemoryMib,
+            sandboxPids: options.sandboxPids,
+            sandboxTmpMiB: options.sandboxTmpMib,
             task,
             taskProfile: options.taskProfile,
             verbose: options.verbose,
@@ -219,6 +238,12 @@ export async function runCli(
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
+    .option("--executor <executor>", "command executor: local or docker")
+    .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
+    .option("--sandbox-memory-mib <mib>", "Docker memory limit")
+    .option("--sandbox-cpus <cpus>", "Docker CPU limit")
+    .option("--sandbox-pids <count>", "Docker PID limit")
+    .option("--sandbox-tmp-mib <mib>", "Docker tmpfs limit")
     .option("--max-steps <steps>", "maximum model responses")
     .option("--max-duration-ms <milliseconds>", "whole-run wall clock budget")
     .option("--request-timeout-ms <milliseconds>", "timeout for each provider request")
@@ -249,6 +274,8 @@ export async function runCli(
           contextReserveOutputTokens?: string;
           contextWindowTokens?: string;
           editApproval?: string;
+          executor?: string;
+          dockerImage?: string;
           maxCommandOutputBytes?: string;
           maxDurationMs?: string;
           maxSteps?: string;
@@ -260,6 +287,10 @@ export async function runCli(
           reportFormat?: string;
           requireVerification?: string;
           requestTimeoutMs?: string;
+          sandboxCpus?: string;
+          sandboxMemoryMib?: string;
+          sandboxPids?: string;
+          sandboxTmpMib?: string;
           resume?: string;
           taskProfile?: string;
         },
@@ -275,6 +306,8 @@ export async function runCli(
             contextReserveOutputTokens: options.contextReserveOutputTokens,
             contextWindowTokens: options.contextWindowTokens,
             editApproval: options.editApproval,
+            executor: options.executor,
+            dockerImage: options.dockerImage,
             maxCommandOutputBytes: options.maxCommandOutputBytes,
             maxDurationMs: options.maxDurationMs,
             maxSteps: options.maxSteps,
@@ -286,6 +319,10 @@ export async function runCli(
             reportFormat: options.reportFormat,
             requireVerification: options.requireVerification,
             requestTimeoutMs: options.requestTimeoutMs,
+            sandboxCpus: options.sandboxCpus,
+            sandboxMemoryMiB: options.sandboxMemoryMib,
+            sandboxPids: options.sandboxPids,
+            sandboxTmpMiB: options.sandboxTmpMib,
             resumeSessionId: options.resume,
             task,
             taskProfile: options.taskProfile,
@@ -405,6 +442,40 @@ export async function runCli(
             allowDegradedResume: options.allowDegradedResume,
             message: options.message,
             sessionId,
+          },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  const sandbox = program
+    .command("sandbox")
+    .description("Inspect the local-only Docker isolation backend.");
+
+  sandbox
+    .command("doctor")
+    .description("Validate Docker daemon and one already-present digest-pinned image.")
+    .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
+    .option("--sandbox-memory-mib <mib>", "Docker memory limit (256..8192 MiB)")
+    .option("--sandbox-cpus <cpus>", "Docker CPU limit (0.25..8)")
+    .option("--sandbox-pids <count>", "Docker PID limit (32..1024)")
+    .option("--sandbox-tmp-mib <mib>", "Docker tmpfs limit (16..1024 MiB)")
+    .action(
+      async (options: {
+        dockerImage?: string;
+        sandboxCpus?: string;
+        sandboxMemoryMib?: string;
+        sandboxPids?: string;
+        sandboxTmpMib?: string;
+      }) => {
+        commandExitCode = await executeSandboxDoctor(
+          {
+            dockerImage: options.dockerImage,
+            sandboxCpus: options.sandboxCpus,
+            sandboxMemoryMiB: options.sandboxMemoryMib,
+            sandboxPids: options.sandboxPids,
+            sandboxTmpMiB: options.sandboxTmpMib,
           },
           runtime,
           io,

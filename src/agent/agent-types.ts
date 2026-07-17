@@ -9,6 +9,8 @@ export interface AgentCommandOptions {
   readonly contextReserveOutputTokens?: string | undefined;
   readonly contextWindowTokens?: string | undefined;
   readonly editApproval: string | undefined;
+  readonly executor?: string | undefined;
+  readonly dockerImage?: string | undefined;
   readonly maxDurationMs: string | undefined;
   readonly maxCommandOutputBytes: string | undefined;
   readonly maxSteps: string | undefined;
@@ -20,6 +22,10 @@ export interface AgentCommandOptions {
   readonly reportFormat: string | undefined;
   readonly requireVerification: string | undefined;
   readonly requestTimeoutMs: string | undefined;
+  readonly sandboxCpus?: string | undefined;
+  readonly sandboxMemoryMiB?: string | undefined;
+  readonly sandboxPids?: string | undefined;
+  readonly sandboxTmpMiB?: string | undefined;
   readonly task: string;
   readonly taskProfile: string | undefined;
   readonly verbose: boolean;
@@ -31,6 +37,23 @@ export type CompletionPolicyMode = "verified";
 export type ReportFormat = "text" | "json";
 export type RequireVerificationMode = "auto";
 export type TaskProfile = "coding" | "read-only";
+export type ExecutionBackendKind = "docker" | "local";
+
+export interface ResolvedDockerSandboxConfig {
+  readonly expectedLockfileSha256?: string;
+  readonly image: string;
+  readonly imagePath: string;
+  readonly limits: {
+    readonly cpus: number;
+    readonly memoryMiB: number;
+    readonly pids: number;
+    readonly tmpMiB: number;
+  };
+  readonly runtime: string;
+  readonly runtimeVersion: string;
+  readonly supportsCUtf8: boolean;
+  readonly wrapperSha256: string;
+}
 
 export interface AgentLoopConfig {
   // PHASE4: 这些都是一次 run 的硬边界；requestTimeoutMs 例外，它只约束单个模型请求。
@@ -52,6 +75,8 @@ export interface ResolvedAgentConfig extends AgentLoopConfig {
   readonly contextReserveOutputTokens?: number;
   readonly contextWindowTokens?: number;
   readonly editApproval: EditApprovalMode;
+  readonly executor: ExecutionBackendKind;
+  readonly dockerSandbox?: ResolvedDockerSandboxConfig;
   readonly model: string;
   readonly maxCommandOutputBytes: number;
   readonly mcpServerIds?: readonly string[];

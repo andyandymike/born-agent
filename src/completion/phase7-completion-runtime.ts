@@ -325,6 +325,9 @@ export class Phase7CompletionRuntime implements CompletionRuntimeLike {
       cwd: context.prepared.actionIdentity.canonicalCwd,
       durationMs: completed.durationMs,
       executionId: completed.commandExecutionId,
+      ...(context.prepared.environmentEvidence === undefined
+        ? {}
+        : { executionEnvironment: context.prepared.environmentEvidence }),
       exitCode: verificationExitCode,
       generationAtCompletion: completed.completedGeneration,
       generationAtStart: completed.generation,
@@ -338,6 +341,9 @@ export class Phase7CompletionRuntime implements CompletionRuntimeLike {
         truncated: result.truncated,
       },
       purpose: "verify",
+      ...(result.sandboxEphemeralChanges === undefined
+        ? {}
+        : { sandboxEphemeralChanges: result.sandboxEphemeralChanges }),
       stale: completed.status === "stale",
       verificationId: completed.verificationId,
     };

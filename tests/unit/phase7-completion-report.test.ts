@@ -56,6 +56,15 @@ function verification(
     cwd: ".",
     durationMs: classification === "test" ? 842 : 417,
     executionId: `00000000-0000-4000-8000-0000000007${executionSuffix}${executionSuffix}`,
+    executionEnvironment: {
+      executor: "docker",
+      imageDigest: `sha256:${sha("6")}`,
+      isolation: "docker",
+      network: "none",
+      policyVersion: "phase13-docker-v1",
+      resourceLimits: { cpus: 2, memoryMiB: 1_024, pids: 256, tmpMiB: 128 },
+      snapshotSha256: sha("7"),
+    },
     exitCode: 0,
     generationAtCompletion: 2,
     generationAtStart: 2,
@@ -69,6 +78,16 @@ function verification(
       truncated: true,
     },
     purpose: "verify",
+    sandboxEphemeralChanges: {
+      afterSha256: sha("8"),
+      beforeSha256: sha("7"),
+      created: 1,
+      deleted: 0,
+      modified: 0,
+      paths: ["dist/result.txt"],
+      specialEntries: 0,
+      truncated: false,
+    },
     stale: false,
     verificationId: `00000000-0000-4000-8000-0000000008${executionSuffix}${executionSuffix}`,
   };
@@ -130,6 +149,8 @@ describe("Phase 7 evidence ledger and deterministic reports", () => {
     expect(text).toContain("源代码/边界.ts (+1 -1)");
     expect(text).toContain("exit=0 842ms");
     expect(text).toContain("remote_billable_requests=0");
+    expect(text).toContain("executor=docker isolation=docker network=none");
+    expect(text).toContain("sandbox_ephemeral_changes +1 ~0 -0 (not copied back)");
     expect(text).toContain("  | Completed: forged�");
     expect(report.changed.some((entry) => entry.path.includes("forged"))).toBe(
       false,

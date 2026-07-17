@@ -833,7 +833,8 @@ export class EventPublisher {
         execution.completed ||
         execution.callId !== draft.data.call_id ||
         execution.step !== draft.data.step ||
-        execution.actionSha256 !== draft.data.action_sha256
+        execution.actionSha256 !== draft.data.action_sha256 ||
+        execution.requestedData.executor !== draft.data.executor
       ) {
         throw new Error("command start must match one execution request");
       }
@@ -852,6 +853,7 @@ export class EventPublisher {
         execution.callId !== draft.data.call_id ||
         execution.step !== draft.data.step ||
         execution.actionSha256 !== draft.data.action_sha256 ||
+        execution.requestedData.executor !== draft.data.executor ||
         draft.data.chunk_index !== expectedIndex
       ) {
         throw new Error("command output must be contiguous for one active execution");
@@ -873,6 +875,7 @@ export class EventPublisher {
         execution.callId !== draft.data.call_id ||
         execution.step !== draft.data.step ||
         execution.actionSha256 !== draft.data.action_sha256 ||
+        execution.requestedData.executor !== draft.data.executor ||
         execution.stdoutBytes !== draft.data.stdout_bytes ||
         execution.stderrBytes !== draft.data.stderr_bytes
       ) {

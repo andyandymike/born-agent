@@ -122,6 +122,17 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "run.failed",
   "run.incomplete",
   "run.started",
+  "sandbox.container.cleaned",
+  "sandbox.container.create.requested",
+  "sandbox.container.created",
+  "sandbox.container.exited",
+  "sandbox.container.inspected",
+  "sandbox.container.start.requested",
+  "sandbox.container.started",
+  "sandbox.container.stopping",
+  "sandbox.snapshot.changed",
+  "sandbox.snapshot.cleaned",
+  "sandbox.snapshot.created",
   "session.lock.recovered",
   "session.resume.requested",
   "session.tail.recovered",
@@ -302,6 +313,10 @@ function reduceKnownEvent(
           command: event.data.command,
           completionProof: "none",
           currentStep: 1,
+          executionEnvironment:
+            event.data.command === "agent" && event.data.executor === "docker"
+              ? `docker:${event.data.docker_sandbox!.image}; network=none; limits=${event.data.docker_sandbox!.limits.cpus}cpu/${event.data.docker_sandbox!.limits.memory_mib}MiB/${event.data.docker_sandbox!.limits.pids}pids`
+              : "local; isolation=none",
           id: event.runId,
           model: sanitize(event.data.model),
           provider: sanitize(event.data.provider),
@@ -1010,6 +1025,48 @@ function reduceKnownEvent(
     case "mcp.server.stopping":
     case "mcp.tool.call.completed":
     case "mcp.tool.call.started":
+      return state;
+    case "sandbox.snapshot.created":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Docker snapshot ready (${event.data.file_count} files, network=none)`,
+        runId: event.runId,
+      });
+    case "sandbox.container.started":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: "Docker sandbox started",
+        runId: event.runId,
+      });
+    case "sandbox.snapshot.changed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `ephemeral sandbox changes: +${event.data.created} ~${event.data.modified} -${event.data.deleted}`,
+        runId: event.runId,
+      });
+    case "sandbox.container.cleaned":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: "Docker sandbox cleaned",
+        runId: event.runId,
+      });
+    case "sandbox.snapshot.cleaned":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: "Docker snapshot cleaned",
+        runId: event.runId,
+      });
+    case "sandbox.container.create.requested":
+    case "sandbox.container.created":
+    case "sandbox.container.exited":
+    case "sandbox.container.inspected":
+    case "sandbox.container.start.requested":
+    case "sandbox.container.stopping":
       return state;
     default:
       return assertNever(event);

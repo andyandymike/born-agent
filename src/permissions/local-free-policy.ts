@@ -10,7 +10,7 @@ import type {
 
 export const LOCAL_FREE_PERMISSION_POLICY_ID =
   "bornagent.local-free-only-command-policy";
-export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "1";
+export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "2";
 export const PHASE6_FIXTURE_CWD = "fixtures/phase-06-command-execution";
 export const PHASE7_FIXTURE_CWDS = Object.freeze([
   "fixtures/phase-07-fix-and-verify",
@@ -18,6 +18,7 @@ export const PHASE7_FIXTURE_CWDS = Object.freeze([
 ]);
 
 export const LOCAL_FREE_PERMISSION_RULE_IDS = Object.freeze({
+  askDockerSandbox: "local-free.ask.docker-sandbox-command.v1",
   askReviewedFixture: "local-free.ask.reviewed-phase6-fixture.v1",
   askReviewedMcpCall: "local-free.ask.reviewed-offline-mcp-call.v1",
   askReviewedMcpStart: "local-free.ask.reviewed-offline-mcp-start.v1",
@@ -66,6 +67,17 @@ export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
     const hardDeny = evaluateHardDeny(action);
     if (hardDeny !== null) {
       return hardDeny;
+    }
+
+    if (action.executionEnvironment?.executor === "docker") {
+      // PHASE13: Permission still authorizes one exact command; Docker is the
+      // separate isolation boundary. This rule only admits a digest-pinned,
+      // network-none action whose snapshot/image/resources are already hashed.
+      return {
+        effect: "ask",
+        reasonCode: "offline_docker_sandbox_command_requires_user_approval",
+        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askDockerSandbox,
+      };
     }
 
     if (!isPhase6ReviewedFixtureShape(action)) {

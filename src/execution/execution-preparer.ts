@@ -248,9 +248,20 @@ export class ExecutionPreparer {
       actionSha256,
       executionInputsSha256,
       review: Object.freeze({
+        environmentLines: Object.freeze([
+          "executor: local",
+          "isolation: none",
+          "network: host policy",
+        ]),
         lifecycleScripts: inputs.reviewedLifecycleScripts,
         warning:
           "Approved repository code may perform additional host side effects; local execution is not a sandbox.",
+      }),
+      environmentEvidence: Object.freeze({
+        executor: "local",
+        isolation: "none",
+        network: "host",
+        policyVersion: "local-executor-v1",
       }),
       request: Object.freeze({
         args: Object.freeze([...intent.args]),

@@ -128,6 +128,27 @@ const agentRunStartedDataSchema = z
     command_approval: z.enum(["ask", "deny"]).optional(),
     command_timeout_ms: positiveInteger.optional(),
     completion_policy: z.literal("verified").optional(),
+    executor: z.enum(["local", "docker"]).optional(),
+    docker_sandbox: z
+      .object({
+        image: utf8StringWithin(500).refine(
+          (value) => /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/u.test(value),
+          "Docker image must be digest pinned",
+        ),
+        image_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        limits: z
+          .object({
+            cpus: z.number().min(0.25).max(8),
+            memory_mib: z.number().int().min(256).max(8_192),
+            pids: z.number().int().min(32).max(1_024),
+            tmp_mib: z.number().int().min(16).max(1_024),
+          })
+          .strict(),
+        network: z.literal("none"),
+        snapshot_mode: z.literal("disposable_copy"),
+      })
+      .strict()
+      .optional(),
     max_duration_ms: positiveInteger,
     max_command_output_bytes: positiveInteger.optional(),
     max_steps: positiveInteger,
@@ -144,7 +165,17 @@ const agentRunStartedDataSchema = z
     // PHASE7: optional only keeps Phase 0-6 schema-v1 logs replayable; new agent runs persist the profile explicitly.
     task_profile: z.enum(["read-only", "coding"]).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      (value.executor === "docker") !== (value.docker_sandbox !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "docker executor must carry Docker sandbox run evidence",
+      });
+    }
+  });
 const runStartedSchema = z
   .object({
     ...commonEnvelope,
@@ -754,7 +785,7 @@ const commandEventIdentity = {
   action_sha256: sha256Schema,
   call_id: callIdSchema,
   execution_id: uuidSchema,
-  executor: z.literal("local"),
+  executor: z.enum(["local", "docker"]),
   step: positiveInteger,
 };
 

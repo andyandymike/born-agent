@@ -51,8 +51,24 @@ export interface ReviewedLifecycleScript {
 }
 
 export interface ExecutionReview {
+  readonly environmentLines?: readonly string[];
   readonly lifecycleScripts: readonly ReviewedLifecycleScript[];
   readonly warning: string;
+}
+
+export interface ExecutionEnvironmentEvidence {
+  readonly executor: "docker" | "local";
+  readonly imageDigest?: string | undefined;
+  readonly isolation: "docker" | "none";
+  readonly network: "host" | "none";
+  readonly policyVersion: string;
+  readonly resourceLimits?: {
+    readonly cpus: number;
+    readonly memoryMiB: number;
+    readonly pids: number;
+    readonly tmpMiB: number;
+  } | undefined;
+  readonly snapshotSha256?: string | undefined;
 }
 
 export type NormalizedExecutionAction = CommandActionIdentity;
@@ -62,8 +78,16 @@ export interface PreparedExecution {
   readonly actionIdentity: CommandActionIdentity;
   readonly actionSha256: string;
   readonly executionInputsSha256: string;
+  readonly environmentEvidence?: ExecutionEnvironmentEvidence;
   readonly review: ExecutionReview;
+  bindExecutionContext?(context: {
+    readonly executionId: string;
+  }): PreparedExecution;
   revalidate(): Promise<"current" | "stale">;
+}
+
+export interface ExecutionPreparerLike {
+  prepare(intent: ExecutionIntent): Promise<PreparedExecution>;
 }
 
 export interface ExecutionResult {
@@ -80,6 +104,18 @@ export interface ExecutionResult {
   readonly processIdentity?: string;
   readonly cleanupVerified: boolean;
   readonly errorCode?: string;
+  readonly sandboxEphemeralChanges?: SandboxEphemeralChangeEvidence | undefined;
+}
+
+export interface SandboxEphemeralChangeEvidence {
+  readonly afterSha256: string;
+  readonly beforeSha256: string;
+  readonly created: number;
+  readonly deleted: number;
+  readonly modified: number;
+  readonly paths: readonly string[];
+  readonly specialEntries: number;
+  readonly truncated: boolean;
 }
 
 export type ExecutionSignal =

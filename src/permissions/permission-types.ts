@@ -10,6 +10,23 @@ export interface EnvironmentPolicyIdentity {
   readonly version: string;
 }
 
+export interface DockerCommandEnvironmentIdentity {
+  readonly executor: "docker";
+  readonly imageDigest: string;
+  readonly imageReference: string;
+  readonly network: "none";
+  readonly policyVersion: string;
+  readonly resourceLimits: {
+    readonly cpus: number;
+    readonly memoryMiB: number;
+    readonly pids: number;
+    readonly tmpMiB: number;
+  };
+  readonly snapshotSha256: string;
+  readonly sourceStateSha256: string;
+  readonly wrapperSha256: string;
+}
+
 export interface BinaryFingerprint {
   /** Internal canonical identity. It must not be copied into display text or events. */
   readonly canonicalIdentity: string;
@@ -49,6 +66,12 @@ export interface NormalizedCommandAction {
   /** Workspace-relative POSIX form; `.` is the workspace root. */
   readonly canonicalCwd: string;
   readonly environmentPolicy: EnvironmentPolicyIdentity;
+  /**
+   * Absent means the legacy/local host executor. Docker actions always carry
+   * their complete isolation identity so a local approval can never authorize
+   * a container action (or vice versa).
+   */
+  readonly executionEnvironment?: DockerCommandEnvironmentIdentity;
   readonly executionInputs: ExecutionInputFingerprints;
   readonly lifecycleScripts: LifecycleScriptFingerprints | null;
   readonly logicalExecutable: string;

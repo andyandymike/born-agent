@@ -124,6 +124,22 @@ export function agentPolicySha256(config: ResolvedAgentConfig): string {
   return sha256Canonical({
     command_approval: config.commandApproval,
     edit_approval: config.editApproval,
+    executor: config.executor,
+    ...(config.dockerSandbox === undefined
+      ? {}
+      : {
+          docker_sandbox: {
+            expected_lockfile_sha256:
+              config.dockerSandbox.expectedLockfileSha256 ?? null,
+            image: config.dockerSandbox.image,
+            image_path: config.dockerSandbox.imagePath,
+            limits: config.dockerSandbox.limits,
+            runtime: config.dockerSandbox.runtime,
+            runtime_version: config.dockerSandbox.runtimeVersion,
+            supports_c_utf8: config.dockerSandbox.supportsCUtf8,
+            wrapper_sha256: config.dockerSandbox.wrapperSha256,
+          },
+        }),
     permission_policy: {
       id: LOCAL_FREE_PERMISSION_POLICY_ID,
       version: LOCAL_FREE_PERMISSION_POLICY_VERSION,

@@ -179,6 +179,7 @@ describe("Phase 11 durable TUI reducer", () => {
           "command": "agent",
           "completionProof": "accepted",
           "currentStep": 1,
+          "executionEnvironment": "local; isolation=none",
           "id": "22222222-2222-4222-8222-222222222222",
           "model": "fake-model",
           "provider": "fake",

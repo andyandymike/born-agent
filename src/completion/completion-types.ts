@@ -1,3 +1,8 @@
+import type {
+  ExecutionEnvironmentEvidence,
+  SandboxEphemeralChangeEvidence,
+} from "../execution/execution-types.js";
+
 export const COMPLETION_REASON_CODES = [
   "verification_missing",
   "verification_failed",
@@ -80,12 +85,14 @@ export interface VerificationEvidence {
   readonly cwd: string;
   readonly durationMs: number;
   readonly executionId: string;
+  readonly executionEnvironment?: ExecutionEnvironmentEvidence | undefined;
   readonly exitCode: number | null;
   readonly generationAtCompletion: number;
   readonly generationAtStart: number;
   readonly inputsKnown: boolean;
   readonly output: CommandOutputEvidence;
   readonly purpose: "verify";
+  readonly sandboxEphemeralChanges?: SandboxEphemeralChangeEvidence | undefined;
   readonly stale: boolean;
   readonly verificationId?: string | undefined;
 }

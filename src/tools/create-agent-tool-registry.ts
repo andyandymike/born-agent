@@ -1,7 +1,9 @@
 import type {
   CommandApprovalMode,
   EditApprovalMode,
+  ExecutionBackendKind,
   ReportFormat,
+  ResolvedDockerSandboxConfig,
   TaskProfile,
 } from "../agent/agent-types.js";
 import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
@@ -12,8 +14,11 @@ import { ChangeJournal } from "../changes/change-journal.js";
 import { AtomicPatchApplier } from "../changes/patch-applier.js";
 import { PatchPlanner } from "../changes/patch-planner.js";
 import type { EventPublisher } from "../events/event-publisher.js";
-import type { ExecutionPreparer } from "../execution/execution-preparer.js";
-import type { Executor, PreparedExecution } from "../execution/execution-types.js";
+import type {
+  ExecutionPreparerLike,
+  Executor,
+  PreparedExecution,
+} from "../execution/execution-types.js";
 import type {
   PermissionContext,
   PermissionEngineLike,
@@ -31,6 +36,7 @@ import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.j
 import { ToolRegistry } from "./tool-registry.js";
 import { createRunCommandTool } from "./run-command-tool.js";
 import type { RegisteredTool, ToolDefinition, ToolRegistration } from "./tool-types.js";
+import type { SandboxEventAppender } from "../execution/docker/sandbox-event-schema.js";
 
 export interface AgentToolRegistryOptions {
   readonly additionalTools?: readonly RegisteredTool[];
@@ -40,6 +46,8 @@ export interface AgentToolRegistryOptions {
   readonly caseInsensitivePaths: boolean;
   readonly commandApprovalMode: CommandApprovalMode;
   readonly commandTimeoutMs: number;
+  readonly dockerSandbox?: ResolvedDockerSandboxConfig;
+  readonly executorKind?: ExecutionBackendKind;
   readonly maxCommandOutputBytes: number;
   readonly modelEvidence: ModelEvidence;
   readonly now: () => number;
@@ -47,6 +55,7 @@ export interface AgentToolRegistryOptions {
   readonly randomUUID: () => string;
   readonly reportFormat: ReportFormat;
   readonly runId: string;
+  readonly sandboxEvents?: SandboxEventAppender;
   readonly secrets?: readonly (string | undefined)[];
   readonly taskProfile: TaskProfile;
   readonly sessionId: string;
@@ -55,7 +64,7 @@ export interface AgentToolRegistryOptions {
 }
 
 export interface AgentToolRegistryDependencies {
-  readonly executionPreparer: ExecutionPreparer;
+  readonly executionPreparer: ExecutionPreparerLike;
   readonly executor: Executor;
   readonly permissionContext: (prepared: PreparedExecution) => PermissionContext;
   readonly permissionEngine: PermissionEngineLike;

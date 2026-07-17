@@ -13,6 +13,7 @@ import {
 } from "../../src/permissions/default-policy.js";
 import {
   LOCAL_FREE_PERMISSION_POLICY_ID,
+  LOCAL_FREE_PERMISSION_POLICY_VERSION,
   LOCAL_FREE_PERMISSION_RULE_IDS,
   PHASE6_FIXTURE_CWD,
   localFreeOnlyPermissionPolicy,
@@ -229,7 +230,7 @@ describe("Phase 6 permission policies", () => {
     expect(reviewed).toEqual({
       effect: "ask",
       policyId: LOCAL_FREE_PERMISSION_POLICY_ID,
-      policyVersion: "1",
+      policyVersion: LOCAL_FREE_PERMISSION_POLICY_VERSION,
       reasonCode: "reviewed_offline_fixture_requires_user_approval",
       ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedFixture,
     });

@@ -6,7 +6,9 @@ import {
 import type {
   AgentCommandOptions,
   ResolvedAgentConfig,
+  ResolvedDockerSandboxConfig,
 } from "./agent-types.js";
+import { parseDigestPinnedImageReference } from "../execution/docker/docker-policy.js";
 import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 import {
   DeterministicTokenEstimator,
@@ -33,6 +35,11 @@ export const DEFAULT_CONTEXT_RESERVE_OUTPUT_TOKENS = 4_096;
 export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.8;
 export const DEFAULT_CONTEXT_FIXED_SAFETY_MARGIN_TOKENS = 256;
 export const DEFAULT_ARTIFACT_CAPTURE_BYTES = 4_194_304;
+export const DEFAULT_EXECUTOR = "local" as const;
+export const DEFAULT_SANDBOX_MEMORY_MIB = 1_024;
+export const DEFAULT_SANDBOX_CPUS = 2;
+export const DEFAULT_SANDBOX_PIDS = 256;
+export const DEFAULT_SANDBOX_TMP_MIB = 128;
 
 // PHASE4: 所有预算统一采用 CLI > 环境变量 > 内置默认值，先在创建 session 前完成验证。
 export type ConfigResult<T> =
@@ -76,6 +83,106 @@ function resolveThreshold(
         error: "context compaction threshold must be a decimal from 0.50 to 0.95",
         ok: false,
       };
+}
+
+function resolveCpuLimit(
+  cliValue: string | undefined,
+  environmentValue: string | undefined,
+): ConfigResult<number> {
+  const selected = cliValue ?? environmentValue;
+  if (selected === undefined) return { ok: true, value: DEFAULT_SANDBOX_CPUS };
+  if (!/^(?:\d+)(?:\.\d{1,2})?$/u.test(selected)) {
+    return { error: "sandbox CPUs must be from 0.25 to 8", ok: false };
+  }
+  const value = Number(selected);
+  return value >= 0.25 && value <= 8
+    ? { ok: true, value }
+    : { error: "sandbox CPUs must be from 0.25 to 8", ok: false };
+}
+
+export interface DockerSandboxConfigInput {
+  readonly dockerImage?: string | undefined;
+  readonly sandboxCpus?: string | undefined;
+  readonly sandboxMemoryMiB?: string | undefined;
+  readonly sandboxPids?: string | undefined;
+  readonly sandboxTmpMiB?: string | undefined;
+}
+
+export function resolveDockerSandboxConfig(
+  options: DockerSandboxConfigInput,
+  env: Readonly<Record<string, string | undefined>>,
+): ConfigResult<ResolvedDockerSandboxConfig> {
+  const image = options.dockerImage ?? env.BORN_DOCKER_IMAGE;
+  const wrapperSha256 = env.BORN_DOCKER_WRAPPER_SHA256;
+  if (image === undefined) {
+    return { error: "docker executor requires --docker-image or BORN_DOCKER_IMAGE", ok: false };
+  }
+  try {
+    parseDigestPinnedImageReference(image);
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Docker image reference is invalid",
+      ok: false,
+    };
+  }
+  if (wrapperSha256 === undefined || !/^[a-f0-9]{64}$/u.test(wrapperSha256)) {
+    return {
+      error: "docker executor requires BORN_DOCKER_WRAPPER_SHA256 as lowercase SHA-256",
+      ok: false,
+    };
+  }
+  const expectedLockfileSha256 = env.BORN_DOCKER_LOCKFILE_SHA256;
+  if (
+    expectedLockfileSha256 !== undefined &&
+    !/^[a-f0-9]{64}$/u.test(expectedLockfileSha256)
+  ) {
+    return { error: "BORN_DOCKER_LOCKFILE_SHA256 must be lowercase SHA-256", ok: false };
+  }
+  const cpus = resolveCpuLimit(options.sandboxCpus, env.BORN_SANDBOX_CPUS);
+  if (!cpus.ok) return cpus;
+  const memoryMiB = resolveInteger(
+    options.sandboxMemoryMiB,
+    env.BORN_SANDBOX_MEMORY_MIB,
+    DEFAULT_SANDBOX_MEMORY_MIB,
+    { label: "sandbox memory MiB", maximum: 8_192, minimum: 256 },
+  );
+  if (!memoryMiB.ok) return memoryMiB;
+  const pids = resolveInteger(
+    options.sandboxPids,
+    env.BORN_SANDBOX_PIDS,
+    DEFAULT_SANDBOX_PIDS,
+    { label: "sandbox PIDs", maximum: 1_024, minimum: 32 },
+  );
+  if (!pids.ok) return pids;
+  const tmpMiB = resolveInteger(
+    options.sandboxTmpMiB,
+    env.BORN_SANDBOX_TMP_MIB,
+    DEFAULT_SANDBOX_TMP_MIB,
+    { label: "sandbox tmp MiB", maximum: 1_024, minimum: 16 },
+  );
+  if (!tmpMiB.ok) return tmpMiB;
+  const imagePath = env.BORN_DOCKER_IMAGE_PATH ?? "/usr/local/bin:/usr/bin:/bin";
+  const runtime = env.BORN_DOCKER_RUNTIME ?? "node";
+  const runtimeVersion = env.BORN_DOCKER_RUNTIME_VERSION ?? "phase13";
+  const supportsCUtf8 = env.BORN_DOCKER_C_UTF8 !== "0";
+  return {
+    ok: true,
+    value: Object.freeze({
+      ...(expectedLockfileSha256 === undefined ? {} : { expectedLockfileSha256 }),
+      image,
+      imagePath,
+      limits: Object.freeze({
+        cpus: cpus.value,
+        memoryMiB: memoryMiB.value,
+        pids: pids.value,
+        tmpMiB: tmpMiB.value,
+      }),
+      runtime,
+      runtimeVersion,
+      supportsCUtf8,
+      wrapperSha256,
+    }),
+  };
 }
 
 function resolveInteger(
@@ -148,6 +255,13 @@ export function resolveAgentConfig(
   if (reportFormat !== "text" && reportFormat !== "json") {
     return { error: "report format must be one of: text, json", ok: false };
   }
+  const executor = options.executor ?? env.BORN_EXECUTOR ?? DEFAULT_EXECUTOR;
+  if (executor !== "local" && executor !== "docker") {
+    return { error: "executor must be one of: local, docker", ok: false };
+  }
+  const dockerSandbox =
+    executor === "docker" ? resolveDockerSandboxConfig(options, env) : undefined;
+  if (dockerSandbox !== undefined && !dockerSandbox.ok) return dockerSandbox;
   const mcpServerIds = [...(options.mcpServerIds ?? [])];
   if (
     mcpServerIds.length > 4 ||
@@ -281,6 +395,10 @@ export function resolveAgentConfig(
         ? {}
         : { contextWindowTokens: contextWindowTokens.value }),
       editApproval,
+      executor,
+      ...(dockerSandbox?.value === undefined
+        ? {}
+        : { dockerSandbox: dockerSandbox.value }),
       maxDurationMs: maxDurationMs.value,
       maxCommandOutputBytes: maxCommandOutputBytes.value,
       maxSteps: maxSteps.value,

@@ -57,6 +57,11 @@ import {
   type WorkspaceResumeFingerprint,
   workspaceResumeFingerprintSha256,
 } from "../resume/workspace-resume-fingerprint.js";
+import type {
+  Phase13SandboxRunEventData,
+  Phase13SandboxRunEventType,
+  SandboxEventAppender,
+} from "../execution/docker/sandbox-event-schema.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
@@ -207,6 +212,25 @@ export async function executeAgent(
         command_approval: config.commandApproval,
         command_timeout_ms: config.commandTimeoutMs,
         completion_policy: config.completionPolicy,
+        executor: config.executor,
+        ...(config.dockerSandbox === undefined
+          ? {}
+          : {
+              docker_sandbox: {
+                image: config.dockerSandbox.image,
+                image_digest: config.dockerSandbox.image.slice(
+                  config.dockerSandbox.image.lastIndexOf("@") + 1,
+                ),
+                limits: {
+                  cpus: config.dockerSandbox.limits.cpus,
+                  memory_mib: config.dockerSandbox.limits.memoryMiB,
+                  pids: config.dockerSandbox.limits.pids,
+                  tmp_mib: config.dockerSandbox.limits.tmpMiB,
+                },
+                network: "none" as const,
+                snapshot_mode: "disposable_copy" as const,
+              },
+            }),
         edit_approval: config.editApproval,
         input: { role: "user", text: config.task },
         max_duration_ms: config.maxDurationMs,
@@ -526,6 +550,26 @@ export async function executeAgent(
         workspaceRealPath: loadedMcp.workspaceRealPath,
       });
     }
+    const sandboxEvents: SandboxEventAppender | undefined =
+      config.executor === "docker"
+        ? writer.appendRunEvent === undefined
+          ? undefined
+          : {
+              append: async <TType extends Phase13SandboxRunEventType>(
+                type: TType,
+                data: Phase13SandboxRunEventData<TType>,
+              ): Promise<void> => {
+                try {
+                  await writer.appendRunEvent!(runId, type, data);
+                } catch (error) {
+                  throw new EventPersistenceError(error);
+                }
+              },
+            }
+        : undefined;
+    if (config.executor === "docker" && sandboxEvents === undefined) {
+      throw new TypeError("Docker executor requires durable Phase 13 event storage");
+    }
     const tools = await runtime.createAgentToolRegistry({
       ...(additionalTools.length === 0 ? {} : { additionalTools }),
       approvalMode: config.editApproval,
@@ -534,6 +578,10 @@ export async function executeAgent(
       caseInsensitivePaths: runtime.platform === "win32",
       commandApprovalMode: config.commandApproval,
       commandTimeoutMs: config.commandTimeoutMs,
+      ...(config.dockerSandbox === undefined
+        ? {}
+        : { dockerSandbox: config.dockerSandbox }),
+      executorKind: config.executor,
       maxCommandOutputBytes: config.maxCommandOutputBytes,
       modelEvidence:
         modelEvidence ?? {
@@ -547,6 +595,7 @@ export async function executeAgent(
       randomUUID: runtime.randomUUID,
       reportFormat: config.reportFormat,
       runId,
+      ...(sandboxEvents === undefined ? {} : { sandboxEvents }),
       secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
       taskProfile: config.taskProfile,
       sessionId,

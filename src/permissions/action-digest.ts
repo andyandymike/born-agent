@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   BinaryFingerprint,
   CommandActionIdentity,
+  DockerCommandEnvironmentIdentity,
   EnvironmentPolicyIdentity,
   ExecutionInputFingerprints,
   LifecycleScriptFingerprints,
@@ -91,6 +92,13 @@ export function computeActionSha256(
       argv: [...action.argv],
       canonicalCwd: action.canonicalCwd,
       environmentPolicy: environmentPolicyForDigest(action.environmentPolicy),
+      ...(action.executionEnvironment === undefined
+        ? {}
+        : {
+            executionEnvironment: dockerEnvironmentForDigest(
+              action.executionEnvironment,
+            ),
+          }),
       executionInputsSha256,
       logicalExecutable: action.logicalExecutable,
       outputLimitBytes: action.outputLimitBytes,
@@ -120,6 +128,10 @@ export function createCommandActionIdentity(
   const packageManager = normalizePackageManager(input.packageManager);
   const lifecycleScripts = normalizeLifecycle(input.lifecycleScripts);
   const executionInputs = normalizeExecutionInputs(input.executionInputs);
+  const executionEnvironment =
+    input.executionEnvironment === undefined
+      ? undefined
+      : normalizeDockerEnvironment(input.executionEnvironment);
 
   if (lifecycleScripts !== null && packageManager === null) {
     throw new TypeError(
@@ -133,6 +145,7 @@ export function createCommandActionIdentity(
     binary,
     canonicalCwd,
     environmentPolicy,
+    ...(executionEnvironment === undefined ? {} : { executionEnvironment }),
     executionInputs,
     lifecycleScripts,
     logicalExecutable,
@@ -156,6 +169,48 @@ export function createCommandActionIdentity(
     ...normalized,
     actionSha256,
     executionInputsSha256,
+  });
+}
+
+function normalizeDockerEnvironment(
+  value: DockerCommandEnvironmentIdentity,
+): DockerCommandEnvironmentIdentity {
+  if (value.executor !== "docker" || value.network !== "none") {
+    throw new TypeError("Docker command environment must use executor=docker and network=none");
+  }
+  assertSha256(value.imageDigest.replace(/^sha256:/u, ""), "executionEnvironment.imageDigest");
+  if (value.imageDigest !== `sha256:${value.imageDigest.slice("sha256:".length)}`) {
+    throw new TypeError("executionEnvironment.imageDigest must use sha256:<hex>");
+  }
+  assertNonEmpty(value.imageReference, "executionEnvironment.imageReference");
+  if (!value.imageReference.endsWith(`@${value.imageDigest}`)) {
+    throw new TypeError("executionEnvironment image reference must match its digest");
+  }
+  assertNonEmpty(value.policyVersion, "executionEnvironment.policyVersion");
+  assertSha256(value.snapshotSha256, "executionEnvironment.snapshotSha256");
+  assertSha256(value.sourceStateSha256, "executionEnvironment.sourceStateSha256");
+  assertSha256(value.wrapperSha256, "executionEnvironment.wrapperSha256");
+  const limits = value.resourceLimits;
+  if (
+    !Number.isFinite(limits.cpus) ||
+    limits.cpus < 0.25 ||
+    limits.cpus > 8 ||
+    !Number.isSafeInteger(limits.memoryMiB) ||
+    !Number.isSafeInteger(limits.pids) ||
+    !Number.isSafeInteger(limits.tmpMiB)
+  ) {
+    throw new TypeError("executionEnvironment resource limits are invalid");
+  }
+  return Object.freeze({
+    executor: "docker",
+    imageDigest: value.imageDigest,
+    imageReference: value.imageReference,
+    network: "none",
+    policyVersion: value.policyVersion,
+    resourceLimits: Object.freeze({ ...limits }),
+    snapshotSha256: value.snapshotSha256,
+    sourceStateSha256: value.sourceStateSha256,
+    wrapperSha256: value.wrapperSha256,
   });
 }
 
@@ -281,6 +336,27 @@ function environmentPolicyForDigest(
     id: value.id,
     variableNames: [...value.variableNames],
     version: value.version,
+  };
+}
+
+function dockerEnvironmentForDigest(
+  value: DockerCommandEnvironmentIdentity,
+): CanonicalJsonValue {
+  return {
+    executor: value.executor,
+    imageDigest: value.imageDigest,
+    imageReference: value.imageReference,
+    network: value.network,
+    policyVersion: value.policyVersion,
+    resourceLimits: {
+      cpus: value.resourceLimits.cpus,
+      memoryMiB: value.resourceLimits.memoryMiB,
+      pids: value.resourceLimits.pids,
+      tmpMiB: value.resourceLimits.tmpMiB,
+    },
+    snapshotSha256: value.snapshotSha256,
+    sourceStateSha256: value.sourceStateSha256,
+    wrapperSha256: value.wrapperSha256,
   };
 }
 

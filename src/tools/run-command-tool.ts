@@ -5,11 +5,9 @@ import {
   EventPersistenceError,
   type EventPublisher,
 } from "../events/event-publisher.js";
-import type {
-  ExecutionPreparer,
-} from "../execution/execution-preparer.js";
 import {
   ExecutionPreparationError,
+  type ExecutionPreparerLike,
   type ExecutionResult,
   type Executor,
   type PreparedExecution,
@@ -63,7 +61,7 @@ export interface RunCommandToolOptions {
     prepared: PreparedExecution,
   ) => PermissionContext;
   readonly permissionEngine: PermissionEngineLike;
-  readonly preparer: ExecutionPreparer;
+  readonly preparer: ExecutionPreparerLike;
   readonly publisher: EventPublisher;
   readonly randomUUID: () => string;
   readonly secrets?: readonly (string | undefined)[];
@@ -159,7 +157,7 @@ function executionIdentity(
     action_sha256: prepared.actionSha256,
     call_id: callId,
     execution_id: executionId,
-    executor: "local" as const,
+    executor: prepared.environmentEvidence?.executor ?? ("local" as const),
     step,
   };
 }
@@ -352,7 +350,7 @@ export function createRunCommandTool(
   return {
     capability: "mutation",
     description:
-      "Run one policy-controlled executable with an exact argv array. This is local execution, not an OS sandbox, and may require user approval.",
+      "Run one policy-controlled executable with an exact argv array in the configured local or Docker executor; local execution is not an OS sandbox and either backend may require user approval.",
     execute: async (input, context) => {
       let prepared: PreparedExecution;
       try {
@@ -400,10 +398,15 @@ export function createRunCommandTool(
               callId: context.callId,
               cwd: prepared.actionIdentity.canonicalCwd,
               executable: prepared.actionIdentity.logicalExecutable,
+              executor:
+                prepared.environmentEvidence?.executor ?? "local",
               purpose: prepared.actionIdentity.purpose,
-              reviewLines: prepared.review.lifecycleScripts.map((script) =>
-                sanitizeDisplayText(`${script.name}: ${script.body}`, secrets),
-              ),
+              reviewLines: [
+                ...(prepared.review.environmentLines ?? []),
+                ...prepared.review.lifecycleScripts.map(
+                  (script) => `${script.name}: ${script.body}`,
+                ),
+              ].map((line) => sanitizeDisplayText(line, secrets)),
               riskWarning: prepared.review.warning,
               step: context.step,
             },
@@ -452,6 +455,8 @@ export function createRunCommandTool(
       }
 
       const executionId = options.randomUUID();
+      prepared =
+        prepared.bindExecutionContext?.({ executionId }) ?? prepared;
       const identity = executionIdentity(
         prepared,
         executionId,

@@ -14,6 +14,7 @@ export interface CommandApprovalRequest {
   readonly args: readonly string[];
   readonly callId: string;
   readonly cwd: string;
+  readonly executor?: "docker" | "local";
   readonly executable: string;
   readonly purpose: "inspect" | "verify";
   readonly reviewLines?: readonly string[];
@@ -36,6 +37,7 @@ export class CommandApprovalGate {
     const approvalRequestId = this.options.randomUUID();
     const previewSource = [
       `cwd: ${request.cwd}`,
+      `executor: ${request.executor ?? "local"}`,
       `executable: ${request.executable}`,
       ...request.args.map((argument, index) => `argv[${index}]: ${argument}`),
       ...(request.reviewLines ?? []).map((line) => `review: ${line}`),
@@ -74,6 +76,7 @@ export class CommandApprovalGate {
               actionSha256: request.actionSha256,
               args: request.args,
               cwd: request.cwd,
+              executor: request.executor ?? "local",
               executable: request.executable,
               purpose: request.purpose,
               reviewLines: request.reviewLines ?? [],

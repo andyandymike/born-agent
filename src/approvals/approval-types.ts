@@ -22,6 +22,7 @@ export interface CommandApprovalPreview {
   readonly actionSha256: string;
   readonly args: readonly string[];
   readonly cwd: string;
+  readonly executor?: "docker" | "local";
   readonly executable: string;
   readonly purpose: "inspect" | "verify";
   readonly reviewLines: readonly string[];

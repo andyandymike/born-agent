@@ -74,6 +74,17 @@ export class SessionProjectionError extends Error {
 }
 
 const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
+  "sandbox.container.cleaned",
+  "sandbox.container.create.requested",
+  "sandbox.container.created",
+  "sandbox.container.exited",
+  "sandbox.container.inspected",
+  "sandbox.container.start.requested",
+  "sandbox.container.started",
+  "sandbox.container.stopping",
+  "sandbox.snapshot.changed",
+  "sandbox.snapshot.cleaned",
+  "sandbox.snapshot.created",
   "artifact.capture.truncated",
   "artifact.stored",
   "backend.canonical_boundary.created",

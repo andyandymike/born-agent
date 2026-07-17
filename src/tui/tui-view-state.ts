@@ -20,6 +20,7 @@ export interface RunView {
   readonly command: "agent" | "chat";
   readonly completionProof: "accepted" | "candidate" | "none" | "rejected";
   readonly currentStep: number | null;
+  readonly executionEnvironment?: string;
   readonly id: string;
   readonly model: string;
   readonly provider: string;

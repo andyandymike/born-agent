@@ -383,6 +383,7 @@ describe("Phase 9 deterministic exact checkpoint crash fixture", () => {
       commandTimeoutMs: 120_000,
       completionPolicy: "verified" as const,
       editApproval: "ask" as const,
+      executor: "local" as const,
       maxCommandOutputBytes: 131_072,
       maxDurationMs: 300_000,
       maxSteps: 8,

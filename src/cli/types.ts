@@ -14,6 +14,8 @@ import type {
   OllamaLocalCatalogRefreshRequest,
   OllamaLocalModelDiscovery,
 } from "../providers/pi/ollama-local-catalog-port.js";
+import type { ResolvedDockerSandboxConfig } from "../agent/agent-types.js";
+import type { DockerSandboxDoctorReport } from "../execution/docker/docker-doctor.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -40,6 +42,9 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   refreshLocalModelCatalog(
     request: OllamaLocalCatalogRefreshRequest,
   ): Promise<readonly OllamaLocalModelDiscovery[]>;
+  readonly runDockerSandboxDoctor?: (
+    config: ResolvedDockerSandboxConfig,
+  ) => Promise<DockerSandboxDoctorReport>;
   readonly execPath: string;
   readonly observeSessionWriter?: (writer: SessionWriter) => void;
   readonly tuiHost?: TuiHost;

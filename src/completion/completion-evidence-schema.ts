@@ -92,6 +92,39 @@ const commandOutput = z
   })
   .strict();
 
+const executionEnvironment = z
+  .object({
+    executor: z.enum(["local", "docker"]),
+    imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+    isolation: z.enum(["none", "docker"]),
+    network: z.enum(["host", "none"]),
+    policyVersion: boundedString(128),
+    resourceLimits: z
+      .object({
+        cpus: z.number().min(0.25).max(8),
+        memoryMiB: z.number().int().min(256).max(8_192),
+        pids: z.number().int().min(32).max(1_024),
+        tmpMiB: z.number().int().min(16).max(1_024),
+      })
+      .strict()
+      .optional(),
+    snapshotSha256: sha256.optional(),
+  })
+  .strict();
+
+const sandboxEphemeralChanges = z
+  .object({
+    afterSha256: sha256,
+    beforeSha256: sha256,
+    created: nonnegativeInteger,
+    deleted: nonnegativeInteger,
+    modified: nonnegativeInteger,
+    paths: z.array(relativePath).max(256),
+    specialEntries: nonnegativeInteger,
+    truncated: z.boolean(),
+  })
+  .strict();
+
 const verification = z
   .object({
     actionSha256: sha256,
@@ -104,12 +137,14 @@ const verification = z
     cwd: relativeCwd,
     durationMs: nonnegativeInteger,
     executionId: z.string().uuid(),
+    executionEnvironment: executionEnvironment.optional(),
     exitCode: z.number().int().nullable(),
     generationAtCompletion: nonnegativeInteger,
     generationAtStart: nonnegativeInteger,
     inputsKnown: z.boolean(),
     output: commandOutput,
     purpose: z.literal("verify"),
+    sandboxEphemeralChanges: sandboxEphemeralChanges.optional(),
     stale: z.boolean(),
     verificationId: z.string().uuid().optional(),
   })

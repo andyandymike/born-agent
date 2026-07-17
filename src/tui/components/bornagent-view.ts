@@ -90,7 +90,7 @@ export class BornAgentViewComponent implements Component {
     const runLabel =
       run === null
         ? "idle"
-        : `${run.status}:${run.provider}/${run.model}:${run.taskProfile}`;
+        : `${run.status}:${run.provider}/${run.model}:${run.taskProfile}:${run.executionEnvironment ?? "local; isolation=none"}`;
     const blocked = session.actionBlocked ? " blocked" : "";
     const compacting = context.compacting ? " compacting" : "";
     return (

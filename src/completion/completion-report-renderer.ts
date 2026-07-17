@@ -54,6 +54,37 @@ function verificationReport(
     cwd: verification.cwd,
     duration_ms: verification.durationMs,
     execution_id: verification.executionId,
+    ...(verification.executionEnvironment === undefined
+      ? {}
+      : {
+          execution_environment: {
+            executor: verification.executionEnvironment.executor,
+            ...(verification.executionEnvironment.imageDigest === undefined
+              ? {}
+              : { image_digest: verification.executionEnvironment.imageDigest }),
+            isolation: verification.executionEnvironment.isolation,
+            network: verification.executionEnvironment.network,
+            policy_version: verification.executionEnvironment.policyVersion,
+            ...(verification.executionEnvironment.resourceLimits === undefined
+              ? {}
+              : {
+                  resource_limits: {
+                    cpus: verification.executionEnvironment.resourceLimits.cpus,
+                    memory_mib:
+                      verification.executionEnvironment.resourceLimits.memoryMiB,
+                    pids: verification.executionEnvironment.resourceLimits.pids,
+                    tmp_mib:
+                      verification.executionEnvironment.resourceLimits.tmpMiB,
+                  },
+                }),
+            ...(verification.executionEnvironment.snapshotSha256 === undefined
+              ? {}
+              : {
+                  snapshot_sha256:
+                    verification.executionEnvironment.snapshotSha256,
+                }),
+          },
+        }),
     exit_code: verification.exitCode,
     generation: verification.generationAtCompletion,
     output: {
@@ -64,6 +95,21 @@ function verificationReport(
       total_bytes: verification.output.totalBytes,
       truncated: verification.output.truncated,
     },
+    ...(verification.sandboxEphemeralChanges === undefined
+      ? {}
+      : {
+          sandbox_ephemeral_changes: {
+            after_sha256: verification.sandboxEphemeralChanges.afterSha256,
+            before_sha256: verification.sandboxEphemeralChanges.beforeSha256,
+            created: verification.sandboxEphemeralChanges.created,
+            deleted: verification.sandboxEphemeralChanges.deleted,
+            modified: verification.sandboxEphemeralChanges.modified,
+            paths: [...verification.sandboxEphemeralChanges.paths],
+            special_entries:
+              verification.sandboxEphemeralChanges.specialEntries,
+            truncated: verification.sandboxEphemeralChanges.truncated,
+          },
+        }),
   };
 }
 
@@ -179,6 +225,17 @@ function renderVerifications(lines: string[], report: RunReport): void {
     lines.push(
       `    output bytes=${verification.output.total_bytes} truncated=${String(verification.output.truncated)} stdout=${JSON.stringify(safeText(verification.output.stdout_summary))} stderr=${JSON.stringify(safeText(verification.output.stderr_summary))}`,
     );
+    if (verification.execution_environment !== undefined) {
+      lines.push(
+        `    environment executor=${verification.execution_environment.executor} isolation=${verification.execution_environment.isolation} network=${verification.execution_environment.network}`,
+      );
+    }
+    if (verification.sandbox_ephemeral_changes !== undefined) {
+      const changes = verification.sandbox_ephemeral_changes;
+      lines.push(
+        `    sandbox_ephemeral_changes +${changes.created} ~${changes.modified} -${changes.deleted} (not copied back)`,
+      );
+    }
   }
 }
 

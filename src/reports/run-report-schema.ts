@@ -54,6 +54,39 @@ const outputReportSchema = z
   })
   .strict();
 
+const executionEnvironmentReportSchema = z
+  .object({
+    executor: z.enum(["local", "docker"]),
+    image_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+    isolation: z.enum(["none", "docker"]),
+    network: z.enum(["host", "none"]),
+    policy_version: utf8Within(128),
+    resource_limits: z
+      .object({
+        cpus: z.number().min(0.25).max(8),
+        memory_mib: z.number().int().min(256).max(8_192),
+        pids: z.number().int().min(32).max(1_024),
+        tmp_mib: z.number().int().min(16).max(1_024),
+      })
+      .strict()
+      .optional(),
+    snapshot_sha256: sha256Schema.optional(),
+  })
+  .strict();
+
+const sandboxEphemeralChangesReportSchema = z
+  .object({
+    after_sha256: sha256Schema,
+    before_sha256: sha256Schema,
+    created: nonnegativeInteger,
+    deleted: nonnegativeInteger,
+    modified: nonnegativeInteger,
+    paths: z.array(relativePathSchema).max(256),
+    special_entries: nonnegativeInteger,
+    truncated: z.boolean(),
+  })
+  .strict();
+
 export const verificationReportSchema = z
   .object({
     action_sha256: sha256Schema,
@@ -64,9 +97,11 @@ export const verificationReportSchema = z
     cwd: cwdSchema,
     duration_ms: nonnegativeInteger,
     execution_id: z.string().uuid(),
+    execution_environment: executionEnvironmentReportSchema.optional(),
     exit_code: z.number().int().nullable(),
     generation: nonnegativeInteger,
     output: outputReportSchema,
+    sandbox_ephemeral_changes: sandboxEphemeralChangesReportSchema.optional(),
   })
   .strict();
 

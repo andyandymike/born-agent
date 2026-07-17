@@ -418,6 +418,17 @@ function lastBackend(run: ReconstructedRunProjection) {
 }
 
 const NON_LEGACY_RUN_EVENTS = new Set([
+  "sandbox.container.cleaned",
+  "sandbox.container.create.requested",
+  "sandbox.container.created",
+  "sandbox.container.exited",
+  "sandbox.container.inspected",
+  "sandbox.container.start.requested",
+  "sandbox.container.started",
+  "sandbox.container.stopping",
+  "sandbox.snapshot.changed",
+  "sandbox.snapshot.cleaned",
+  "sandbox.snapshot.created",
   "artifact.capture.truncated",
   "artifact.stored",
   "backend.canonical_boundary.created",
@@ -510,7 +521,9 @@ function historicalAgentOptions(
         ? undefined
         : String(started.command_timeout_ms),
     completionPolicy: started.completion_policy,
+    dockerImage: started.docker_sandbox?.image,
     editApproval: started.edit_approval,
+    executor: started.executor,
     maxDurationMs: String(started.max_duration_ms),
     maxCommandOutputBytes:
       started.max_command_output_bytes === undefined
@@ -525,6 +538,22 @@ function historicalAgentOptions(
     reportFormat: started.report_format,
     requireVerification: started.require_verification,
     requestTimeoutMs: String(started.request_timeout_ms),
+    sandboxCpus:
+      started.docker_sandbox === undefined
+        ? undefined
+        : String(started.docker_sandbox.limits.cpus),
+    sandboxMemoryMiB:
+      started.docker_sandbox === undefined
+        ? undefined
+        : String(started.docker_sandbox.limits.memory_mib),
+    sandboxPids:
+      started.docker_sandbox === undefined
+        ? undefined
+        : String(started.docker_sandbox.limits.pids),
+    sandboxTmpMiB:
+      started.docker_sandbox === undefined
+        ? undefined
+        : String(started.docker_sandbox.limits.tmp_mib),
     task,
     taskProfile: started.task_profile ?? "read-only",
     verbose: false,

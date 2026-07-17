@@ -30,6 +30,11 @@ import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog
 import type { TuiHost } from "../tui/tui-host.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
 import { McpServerLauncher } from "../mcp/mcp-server-launcher.js";
+import { DockerExecutionPreparer } from "../execution/docker/docker-execution-preparer.js";
+import { DockerExecutor } from "../execution/docker/docker-executor.js";
+import { NodeDockerCliAdapter } from "../execution/docker/docker-cli-adapter.js";
+import { NodeWorkspaceSnapshotSource } from "../execution/snapshot/node-workspace-snapshot-adapters.js";
+import { runDockerSandboxDoctor } from "../execution/docker/docker-doctor.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -130,7 +135,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         workspace: registryOptions.workspace,
       });
       const cleanup = createCleanup();
-      const executor = new LocalExecutor({
+      const localExecutor = new LocalExecutor({
         clock: { now: () => performance.now() },
         platform: options.platform,
         processTreeCleanup: cleanup,
@@ -139,14 +144,66 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         spawn: createNodeSpawnAdapter(spawn),
         timers,
       });
+      const executorKind = registryOptions.executorKind ?? "local";
+      // PHASE13: The factory chooses an isolation backend only after permission
+      // policy/config are frozen. Permission authorizes the exact action;
+      // LocalExecutor or DockerExecutor separately controls its OS boundary.
+      const executionBackend =
+        executorKind === "local"
+          ? { executor: localExecutor, preparer: executionPreparer }
+          : await (async () => {
+              if (
+                registryOptions.dockerSandbox === undefined ||
+                registryOptions.sandboxEvents === undefined ||
+                !["linux", "win32"].includes(options.platform)
+              ) {
+                throw new TypeError("Docker executor requires validated config, durable sandbox events, and a supported host platform");
+              }
+              const docker = new NodeDockerCliAdapter(options.env);
+              const source = await NodeWorkspaceSnapshotSource.create(
+                registryOptions.workspace,
+              );
+              const sandbox = registryOptions.dockerSandbox;
+              return {
+                executor: new DockerExecutor({
+                  clock: { now: () => performance.now() },
+                  events: registryOptions.sandboxEvents,
+                  randomUUID,
+                  redact: (value) =>
+                    redactSensitiveText(value, registryOptions.secrets ?? []),
+                  runtime: docker,
+                }),
+                preparer: new DockerExecutionPreparer({
+                  hostPlatform: options.platform as "linux" | "win32",
+                  imageInspector: docker,
+                  imagePolicy: {
+                    ...(sandbox.expectedLockfileSha256 === undefined
+                      ? {}
+                      : { expectedLockfileSha256: sandbox.expectedLockfileSha256 }),
+                    image: sandbox.image,
+                    imagePath: sandbox.imagePath,
+                    runtime: sandbox.runtime,
+                    runtimeVersion: sandbox.runtimeVersion,
+                    supportsCUtf8: sandbox.supportsCUtf8,
+                    wrapperSha256: sandbox.wrapperSha256,
+                  },
+                  limits: sandbox.limits,
+                  localPreparer: executionPreparer,
+                  runId: registryOptions.runId,
+                  source,
+                }),
+              };
+            })();
       return createAgentToolRegistry({
         ...registryOptions,
-        executionPreparer,
-        executor,
+        executionPreparer: executionBackend.preparer,
+        executor: executionBackend.executor,
         permissionContext: (prepared) =>
-          createTrustedLocalFixturePermissionContext(
-            prepared.actionIdentity,
-          ) ?? {},
+          prepared.environmentEvidence?.executor === "docker"
+            ? {}
+            : createTrustedLocalFixturePermissionContext(
+                prepared.actionIdentity,
+              ) ?? {},
         permissionEngine,
         verificationClassifier: classifyTrustedFixtureVerification,
       });
@@ -169,6 +226,8 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     refreshLocalModelCatalog: (request) =>
       new NodeOllamaLocalCatalogPort().refresh(request),
     runExecutable,
+    runDockerSandboxDoctor: (config) =>
+      runDockerSandboxDoctor(config, new NodeDockerCliAdapter(options.env)),
     setTimer: (listener, delayMs) => setTimeout(listener, delayMs),
     timestamp: () => new Date().toISOString(),
     ...(options.tuiHost === undefined ? {} : { tuiHost: options.tuiHost }),
