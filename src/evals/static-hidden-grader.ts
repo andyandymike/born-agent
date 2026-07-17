@@ -15,7 +15,17 @@ export interface HiddenGradeResult {
   readonly secondaryCodes: readonly string[];
 }
 
-export class StaticHiddenGrader {
+export interface EvalHiddenGrader {
+  preflight?(): Promise<void>;
+  grade(
+    task: LoadedEvalTaskAsset,
+    workspacePath: string,
+    signal?: AbortSignal,
+  ): Promise<HiddenGradeResult>;
+}
+
+/** Test-only host grader; production eval wiring uses DockerHiddenGrader. */
+export class StaticHiddenGrader implements EvalHiddenGrader {
   public async grade(task: LoadedEvalTaskAsset, workspacePath: string): Promise<HiddenGradeResult> {
     const protocol = task.task.manifest.acceptance.find((acceptance) => acceptance.kind === "protocol");
     if (protocol !== undefined) {

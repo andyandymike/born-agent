@@ -227,6 +227,10 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       version: options.version,
       nodeVersion: options.nodeVersion,
       platform: options.platform,
+      dockerEnvironment: options.env,
+      ...(options.env.BORN_DOCKER_IMAGE === undefined
+        ? {}
+        : { graderImage: options.env.BORN_DOCKER_IMAGE }),
     }),
     isReadableDirectory,
     nodeVersion: options.nodeVersion,

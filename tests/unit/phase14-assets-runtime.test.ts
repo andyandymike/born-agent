@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareNodeAttemptWorkspace } from "../../src/evals/attempt-workspace-node.js";
 import { NodeEvalRuntime } from "../../src/evals/eval-runtime.js";
 import { loadEvalAssets } from "../../src/evals/eval-suite-loader.js";
+import { StaticHiddenGrader } from "../../src/evals/static-hidden-grader.js";
 
 const temporaryRoots: string[] = [];
 
@@ -52,6 +53,35 @@ describe("Phase 14 checked-in assets and fresh Git attempts", () => {
 });
 
 describe("Phase 14 zero-cost Node eval runtime", () => {
+  it("does not expose the host-only grader shortcut through production wiring", async () => {
+    const root = await temporaryWorkspace();
+    const runtime = new NodeEvalRuntime({
+      randomUUID: () => "00000000-0000-4000-8000-000000000001",
+      timestamp: () => "2026-07-17T00:00:00.000Z",
+      workspace: root,
+    });
+    const result = await runtime.run({
+      json: true,
+      model: "deterministic-v1",
+      provider: "fake",
+      suite: "smoke",
+      task: "read-paths",
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/digest-pinned local grader image/u);
+    await expect(
+      readdir(
+        path.join(
+          root,
+          ".bornagent",
+          "evals",
+          "eval-20260717000000-000000000001",
+          "attempts",
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  }, 15_000);
+
   it("refuses remote and full runs before attempts, then runs and compares targeted fake attempts", async () => {
     const root = await temporaryWorkspace();
     const catalogRefresh = vi.fn(async () => []);
@@ -61,6 +91,7 @@ describe("Phase 14 zero-cost Node eval runtime", () => {
       timestamp: () => "2026-07-17T00:00:00.000Z",
       randomUUID: () => `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
       ollamaCatalog: { refresh: catalogRefresh } as never,
+      hiddenGrader: new StaticHiddenGrader(),
     });
 
     const forbidden = await runtime.run({ suite: "smoke", provider: "openai", model: "never", json: true });
@@ -74,6 +105,9 @@ describe("Phase 14 zero-cost Node eval runtime", () => {
     expect(fullSummary).toMatchObject({ fullSuiteExecution: "not_run_by_policy", exitCode: 2 });
     expect(fullSummary.denominators).toMatchObject({ scheduled: 20, valid: 0 });
     await expect(readdir(path.join(root, ".bornagent", "evals", fullSummary.evalRunId, "attempts"))).rejects.toMatchObject({ code: "ENOENT" });
+    const localFull = await runtime.run({ suite: "full", provider: "ollama", model: "not-inspected", json: true });
+    expect(localFull.exitCode).toBe(2);
+    expect(catalogRefresh).not.toHaveBeenCalled();
 
     const invalid = await runtime.run({ suite: "smoke", task: "edit-clamp", provider: "fake", model: "harness-invalid-v1", repetitions: "1", json: true });
     expect(invalid.exitCode).toBe(1);
@@ -101,5 +135,5 @@ describe("Phase 14 zero-cost Node eval runtime", () => {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
     }
-  }, 30_000);
+  }, 90_000);
 });

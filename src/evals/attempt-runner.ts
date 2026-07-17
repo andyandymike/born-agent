@@ -11,7 +11,7 @@ import type { EvalTurnGuard, EvalExecutionSource } from "./eval-no-cost-policy.j
 import type { EvalAttemptReport } from "./eval-report-schema.js";
 import type { EvalReportStore } from "./eval-report-store.js";
 import type { LoadedEvalTaskAsset } from "./eval-suite-loader.js";
-import type { StaticHiddenGrader } from "./static-hidden-grader.js";
+import type { EvalHiddenGrader } from "./static-hidden-grader.js";
 
 function isPrivate(relativePath: string): boolean {
   return relativePath === ".git" || relativePath.startsWith(".git/") || relativePath === ".bornagent" || relativePath.startsWith(".bornagent/");
@@ -66,7 +66,7 @@ export class AttemptRunner {
   public constructor(
     private readonly reports: EvalReportStore,
     private readonly driver: EvalAgentDriver,
-    private readonly grader: StaticHiddenGrader,
+    private readonly grader: EvalHiddenGrader,
   ) {}
 
   public async run(input: {
@@ -116,7 +116,11 @@ export class AttemptRunner {
       pathPolicyPassed = patchDecision.decision === "approved";
       const projection = collectTerminalEvalObservations(true, driverResult.events);
       observationSha256 = projection.observationsSha256;
-      const grade = await this.grader.grade(input.task, prepared.workspacePath);
+      const grade = await this.grader.grade(
+        input.task,
+        prepared.workspacePath,
+        input.signal,
+      );
       gradersPassed = grade.passed;
       evidence = { ...driverResult.evidence, ...(pathPolicyPassed ? {} : { permission: true }), secondaryCodes: [...(driverResult.evidence.secondaryCodes ?? []), ...grade.secondaryCodes, ...(pathPolicyPassed ? [] : ["changed_path_policy_failed"])] };
     } catch (error) {

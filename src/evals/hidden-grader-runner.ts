@@ -8,6 +8,12 @@ export interface GraderContainerSpec {
   readonly runAs: string;
   readonly mounts: readonly { readonly source: string; readonly target: string; readonly readOnly: true }[];
   readonly environment: Readonly<Record<string, never>>;
+  readonly command: {
+    readonly args: readonly string[];
+    readonly cwd: string;
+    readonly executable: string;
+    readonly timeoutMs: number;
+  };
 }
 
 export interface HiddenGraderPort {
@@ -22,6 +28,9 @@ export interface HiddenGraderRequest {
   readonly graderPath: string;
   readonly runnerPath: string;
   readonly observationsPath: string;
+  readonly supervisorCommand?: GraderContainerSpec["command"];
+  readonly workerCommand?: GraderContainerSpec["command"];
+  readonly expectedExit?: number;
 }
 
 function assertDigestImage(image: string): void {
@@ -47,6 +56,12 @@ export class HiddenGraderRunner {
         Object.freeze({ source: request.runnerPath, target: "/runner", readOnly: true }),
       ]),
       environment: Object.freeze({}),
+      command: request.workerCommand ?? Object.freeze({
+        args: Object.freeze(["/runner/worker.mjs"]),
+        cwd: "/runner",
+        executable: "node",
+        timeoutMs: 30_000,
+      }),
     });
     const supervisor: GraderContainerSpec = Object.freeze({
       phase: "supervisor",
@@ -59,6 +74,15 @@ export class HiddenGraderRunner {
         Object.freeze({ source: request.observationsPath, target: "/observations", readOnly: true }),
       ]),
       environment: Object.freeze({}),
+      command: request.supervisorCommand ?? Object.freeze({
+        args: Object.freeze([
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl",
+        ]),
+        cwd: "/grader",
+        executable: "node",
+        timeoutMs: 30_000,
+      }),
     });
 
     let workerStarted = false;
@@ -75,7 +99,7 @@ export class HiddenGraderRunner {
       workerStarted = false;
       supervisorStarted = true;
       const supervisorResult = await this.port.runSupervisor(supervisor, workerResult.observationsPath, signal);
-      result = supervisorResult.exitCode === 0;
+      result = supervisorResult.exitCode === (request.expectedExit ?? 0);
     } catch (error) {
       failure = error;
     } finally {

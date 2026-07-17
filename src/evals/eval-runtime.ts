@@ -18,7 +18,8 @@ import { evalNoCostEvidenceSchema, parseEvalAttemptReport, type EvalAttemptRepor
 import { loadEvalAssets, type LoadedEvalAssets } from "./eval-suite-loader.js";
 import { selectEvalTaskIds } from "./eval-suite-schema.js";
 import { buildEvalRunSummary, parseEvalRunSummary, renderEvalSummary, summaryAsComparable, type EvalRunSummary } from "./eval-summary.js";
-import { StaticHiddenGrader } from "./static-hidden-grader.js";
+import type { EvalHiddenGrader } from "./static-hidden-grader.js";
+import { DockerHiddenGrader } from "./docker-hidden-grader.js";
 
 export interface NodeEvalRuntimeOptions {
   readonly workspace: string;
@@ -30,6 +31,9 @@ export interface NodeEvalRuntimeOptions {
   readonly version?: string;
   readonly nodeVersion?: string;
   readonly platform?: NodeJS.Platform;
+  readonly hiddenGrader?: EvalHiddenGrader;
+  readonly graderImage?: string;
+  readonly dockerEnvironment?: Readonly<Record<string, string | undefined>>;
 }
 
 function parseRepetitions(value: string | undefined, fallback: number): number {
@@ -112,6 +116,24 @@ export class NodeEvalRuntime implements EvalCliRuntime {
     return loadEvalAssets(this.#assetsRoot);
   }
 
+  private hiddenGrader(): EvalHiddenGrader {
+    if (this.options.hiddenGrader !== undefined) return this.options.hiddenGrader;
+    if (this.options.graderImage === undefined) {
+      throw new EvalCoreError(
+        "eval_cli_invalid",
+        "targeted/smoke eval requires a configured digest-pinned local grader image",
+        2,
+      );
+    }
+    return new DockerHiddenGrader({
+      ...(this.options.dockerEnvironment === undefined
+        ? {}
+        : { environment: this.options.dockerEnvironment }),
+      image: this.options.graderImage,
+      randomUUID: this.#randomUUID,
+    });
+  }
+
   private async source(options: EvalRunCliOptions): Promise<EvalExecutionSource> {
     const provider = options.provider.trim().toLowerCase();
     if (provider === "fake" || provider === "mock") return Object.freeze({ kind: "in_process_test", provider });
@@ -128,6 +150,32 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       throw new EvalCoreError("eval_no_cost_source_forbidden", "the exact Ollama model tag/digest is not already installed", 2);
     }
     return Object.freeze({ kind: "local_ollama", provider: "ollama", endpoint, installedModelTag: installed.tag, installedModelDigest: installed.digest });
+  }
+
+  private fullPlanningSource(options: EvalRunCliOptions): EvalExecutionSource {
+    const provider = options.provider.trim().toLowerCase();
+    if (provider === "fake" || provider === "mock") {
+      return Object.freeze({ kind: "in_process_test", provider });
+    }
+    if (provider !== "ollama") {
+      preflightEvalNoCostPolicy({ kind: "forbidden_remote", provider });
+      throw new EvalCoreError(
+        "eval_no_cost_source_forbidden",
+        "remote eval provider is forbidden",
+        2,
+      );
+    }
+    // PHASE14: a forbidden full plan validates only the literal-loopback shape.
+    // It must not refresh Ollama, inspect/pull a model, or manufacture an
+    // attempt merely to refuse execution.
+    return Object.freeze({
+      endpoint: options.ollamaEndpoint ?? "http://127.0.0.1:11434",
+      installedModelDigest:
+        options.ollamaModelDigest ?? `sha256:${"0".repeat(64)}`,
+      installedModelTag: options.model,
+      kind: "local_ollama",
+      provider: "ollama",
+    });
   }
 
   public async list(options: { readonly json: boolean }): Promise<EvalCliResult> {
@@ -151,7 +199,10 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       if (options.suite !== "smoke" && options.suite !== "full") throw new EvalCoreError("eval_cli_invalid", "suite must be smoke or full", 2);
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(options.provider) || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,511}$/u.test(options.model)) throw new EvalCoreError("eval_cli_invalid", "provider/model identity is malformed", 2);
       if (options.suite === "full" && options.task !== undefined) throw new EvalCoreError("eval_full_suite_forbidden", "--suite full cannot be narrowed with --task", 2);
-      const source = await this.source(options);
+      const source =
+        options.suite === "full"
+          ? this.fullPlanningSource(options)
+          : await this.source(options);
       const guard = preflightEvalNoCostPolicy(source);
       const suiteTaskIds = selectEvalTaskIds(assets.suite, options.suite);
       const selectedTaskIds = options.task === undefined ? suiteTaskIds : [options.task];
@@ -212,7 +263,9 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       const stopCancel = this.#onCancel(() => controller.abort());
       const reports = new EvalReportStore(this.#reports);
       const driver: EvalAgentDriver = source.kind === "in_process_test" ? new InProcessEvalAgentDriver() : new LocalOllamaEvalAgentDriver();
-      const runner = new AttemptRunner(reports, driver, new StaticHiddenGrader());
+      const grader = this.hiddenGrader();
+      await grader.preflight?.();
+      const runner = new AttemptRunner(reports, driver, grader);
       const attempts: EvalAttemptReport[] = [];
       try {
         for (const taskId of selectedTaskIds) {
