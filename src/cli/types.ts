@@ -17,6 +17,11 @@ import type {
 import type { ResolvedDockerSandboxConfig } from "../agent/agent-types.js";
 import type { DockerSandboxDoctorReport } from "../execution/docker/docker-doctor.js";
 import type { EvalCliRuntime } from "../evals/eval-cli.js";
+import type { DecodedRunEvent } from "../events/event-decoder-registry.js";
+import type {
+  ContainerRecoveryEventAppender,
+  ContainerRecoveryResult,
+} from "../execution/docker/container-reconciliation-runtime.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -48,6 +53,10 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   ) => Promise<DockerSandboxDoctorReport>;
   readonly execPath: string;
   readonly evalRuntime?: EvalCliRuntime;
+  readonly reconcileDockerContainers?: (input: {
+    readonly appender: ContainerRecoveryEventAppender;
+    readonly events: readonly DecodedRunEvent[];
+  }) => Promise<ContainerRecoveryResult>;
   readonly observeSessionWriter?: (writer: SessionWriter) => void;
   readonly tuiHost?: TuiHost;
   readonly version: string;

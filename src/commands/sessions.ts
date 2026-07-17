@@ -45,6 +45,7 @@ import { assertCanonicalSessionId, SessionPathError } from "../sessions/session-
 import { SessionLockError } from "../sessions/session-lock.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { executeAgent } from "./agent.js";
+import { countPendingContainerLifecycles } from "../execution/docker/container-reconciliation-runtime.js";
 
 const MAX_SHOW_ITEMS = 200;
 const MAX_SHOW_TEXT_BYTES = 128 * 1024;
@@ -681,8 +682,31 @@ export async function executeSessionsResume(
   try {
     writer = await V2SessionWriter.openExisting(runtime.cwd, options.sessionId);
     runtime.observeSessionWriter?.(writer);
-    const session = reconstructMultiRunSession(writer.events);
-    const lastRun = session.lastRun;
+    let session = reconstructMultiRunSession(writer.events);
+    let lastRun = session.lastRun;
+    const pendingContainers = countPendingContainerLifecycles(lastRun.events);
+    if (pendingContainers > 0) {
+      if (runtime.reconcileDockerContainers === undefined || writer.appendRunEvent === undefined) {
+        return usageError(
+          io,
+          "Docker container cleanup is unknown and this runtime cannot reconcile it",
+        );
+      }
+      const reconciled = await runtime.reconcileDockerContainers({
+        appender: {
+          append: (runId, type, data) => writer!.appendRunEvent!(runId, type, data).then(() => undefined),
+        },
+        events: lastRun.events,
+      });
+      if (reconciled.blocked.length > 0) {
+        return usageError(
+          io,
+          `Docker container cleanup remains unknown: ${reconciled.blocked[0]}`,
+        );
+      }
+      session = reconstructMultiRunSession(writer.events);
+      lastRun = session.lastRun;
+    }
     const historicalBackend = lastBackend(lastRun);
     if (historicalBackend?.data.resume_capability === undefined) {
       return usageError(

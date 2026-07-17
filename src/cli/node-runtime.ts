@@ -36,6 +36,7 @@ import { NodeDockerCliAdapter } from "../execution/docker/docker-cli-adapter.js"
 import { NodeWorkspaceSnapshotSource } from "../execution/snapshot/node-workspace-snapshot-adapters.js";
 import { runDockerSandboxDoctor } from "../execution/docker/docker-doctor.js";
 import { NodeEvalRuntime } from "../evals/eval-runtime.js";
+import { reconcilePersistedContainers } from "../execution/docker/container-reconciliation-runtime.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -237,6 +238,12 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     randomUUID,
     refreshLocalModelCatalog: (request) =>
       new NodeOllamaLocalCatalogPort().refresh(request),
+    reconcileDockerContainers: ({ appender, events }) =>
+      reconcilePersistedContainers(
+        events,
+        new NodeDockerCliAdapter(options.env),
+        appender,
+      ),
     runExecutable,
     runDockerSandboxDoctor: (config) =>
       runDockerSandboxDoctor(config, new NodeDockerCliAdapter(options.env)),
