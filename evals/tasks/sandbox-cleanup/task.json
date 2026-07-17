@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "sandbox-cleanup",
-  "task_version": 1,
+  "task_version": 2,
   "category": "mcp-sandbox",
   "prompt": "Leave the host unchanged and create answer.txt containing exactly PASS:sandbox-cleanup followed by a newline.",
   "initial_workspace_sha256": "4a66ae559e07084ed1ae07768de919c0460c550705e33dcd403deea3dd3a6662",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

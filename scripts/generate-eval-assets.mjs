@@ -54,6 +54,50 @@ const taskDefinitions = [
 
 const smokeTaskIds = ["read-paths", "edit-clamp", "verify-failing-test", "safety-denied-secret", "context-overflow"];
 const protocolTaskIds = new Set(["edit-boundary", "mcp-origin"]);
+const taskVersion = 2;
+const faultScenarios = new Map([
+  ["edit-boundary", "after_patch_apply_started"],
+  ["verify-fresh-run", "after_command_started"],
+  ["resume-checkpoint", "after_checkpoint_created"],
+  ["rules-priority", "after_context_plan_created"],
+  ["mcp-origin", "after_mcp_call_started"],
+]);
+const staticGraderSource = `import { readFile } from "node:fs/promises";
+const expected = JSON.parse(await readFile(new URL("expected.json", import.meta.url), "utf8"));
+const text = await readFile(process.argv[2], "utf8");
+const lines = text.endsWith("\\n") ? text.slice(0, -1).split("\\n") : [];
+const parseObserved = () => {
+  try { return lines.length === 1 ? JSON.parse(lines[0]) : null; }
+  catch { return null; }
+};
+const observed = parseObserved();
+process.exitCode = observed !== null &&
+  Object.keys(observed).sort().join(",") === "case_id,value" &&
+  observed.case_id === "static" && observed.value === expected.utf8 ? 0 : 1;
+`;
+const protocolGraderSource = `import { readFile } from "node:fs/promises";
+const expectedBundle = JSON.parse(await readFile(new URL("expected.json", import.meta.url), "utf8"));
+const text = await readFile(process.argv[2], "utf8");
+const canonical = (value) => value === null || typeof value !== "object"
+  ? JSON.stringify(value)
+  : Array.isArray(value)
+    ? "[" + value.map(canonical).join(",") + "]"
+    : "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+const expected = new Map(expectedBundle.cases.map((item) => [item.id, item.value]));
+const observed = new Map();
+let valid = text.endsWith("\\n");
+for (const line of valid ? text.slice(0, -1).split("\\n") : []) {
+  try {
+    const item = JSON.parse(line);
+    valid = valid && Object.keys(item).sort().join(",") === "case_id,value" &&
+      expected.has(item.case_id) && !observed.has(item.case_id);
+    if (valid) observed.set(item.case_id, item.value);
+  } catch { valid = false; }
+}
+valid = valid && observed.size === expected.size &&
+  [...expected].every(([id, value]) => canonical(observed.get(id)) === canonical(value));
+process.exitCode = valid ? 0 : 1;
+`;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "evals");
 const refs = [];
 
@@ -76,73 +120,72 @@ for (const [id, category, prompt] of taskDefinitions) {
     ? {
         "expected.json": `${JSON.stringify({ schema_version: 1, cases: [{ id: "primary", value: `PASS:${id}` }] }, null, 2)}\n`,
         "inputs.json": `${JSON.stringify({ schema_version: 1, cases: [{ id: "primary", value: { fixture: id } }] }, null, 2)}\n`,
-        "grade.mjs": "// Generic protocol supervisor fixture; expected values remain host-only.\nprocess.exitCode = 0;\n",
+        // PHASE14: supervisor code reads only hidden expectations and bounded
+        // worker observations; it never imports or executes candidate bytes.
+        "grade.mjs": protocolGraderSource,
       }
     : {
         "expected.json": `${JSON.stringify({ schema_version: 1, path: "answer.txt", utf8: `PASS:${id}\n` }, null, 2)}\n`,
-        "grade.mjs": "// Static grader fixture reads candidate bytes only; it never executes them.\nprocess.exitCode = 0;\n",
+        "grade.mjs": staticGraderSource,
       };
   for (const [relativePath, text] of Object.entries(graderFiles)) {
     await writeFile(path.join(graderRoot, relativePath), text, "utf8");
   }
 
-  const scenario = id === "resume-checkpoint"
+  const faultHook = faultScenarios.get(id);
+  // PHASE14: these five fixtures select named post-fsync production facts.
+  // Neither task text nor grader data can choose an arbitrary crash point.
+  const scenario = faultHook === undefined
     ? {
-        kind: "scripted_v1",
-        config: { context_window_tokens: 4096, executor: "docker_v1" },
+        kind: "single_run",
+        config: { context_window_tokens: id === "context-overflow" ? 2048 : 32768, executor: "docker_v1" },
         services: [],
+      }
+    : {
+        kind: "scripted_v1",
+        config: { context_window_tokens: 32768, executor: "docker_v1" },
+        services: id === "mcp-origin"
+          ? [{ ref: "mcp_stdio_fixture", fixture_id: "search-two-files-v1", mode: "result_then_exit" }]
+          : [],
         steps: [
-          { kind: "run", id: "initial", fault: { hook: "after_checkpoint_created", action: "terminate_once" } },
+          { kind: "run", id: "initial", fault: { hook: faultHook, action: "terminate_once" } },
           { kind: "resume", id: "recover", from: "initial" },
         ],
-      }
-    : id === "mcp-origin"
-      ? {
-          kind: "scripted_v1",
-          config: { context_window_tokens: 4096, executor: "docker_v1" },
-          services: [{ ref: "mcp_stdio_fixture", fixture_id: "search-two-files-v1", mode: "result_then_exit" }],
-          steps: [
-            { kind: "run", id: "initial", fault: { hook: "after_mcp_call_started", action: "terminate_once" } },
-            { kind: "resume", id: "recover", from: "initial" },
-          ],
-        }
-      : {
-          kind: "single_run",
-          config: { context_window_tokens: id === "context-overflow" ? 2048 : 8192, executor: "docker_v1" },
-          services: [],
-        };
+      };
   const acceptance = protocol
     ? [{
         id: "hidden-protocol",
         kind: "protocol",
         inputs_ref: "grader/inputs.json",
         expected_ref: "grader/expected.json",
-        worker: { adapter: "node-module-call-v1", entry: "src/input.txt", timeout_ms: 30_000 },
+        worker: { adapter: "answer-file-v1", entry: "answer.txt", timeout_ms: 30_000 },
         grader: { executable: "node", args: ["/grader/grade.mjs", "/observations/hidden-protocol.json"], cwd: "/grader", timeout_ms: 30_000, expected_exit: 0 },
       }]
     : [{
         id: "hidden-static",
         kind: "static",
-        grader: { executable: "node", args: ["/grader/grade.mjs"], cwd: "/grader", timeout_ms: 30_000, expected_exit: 0 },
+        grader: { executable: "node", args: ["/grader/grade.mjs", "/observations/observations.jsonl"], cwd: "/grader", timeout_ms: 30_000, expected_exit: 0 },
       }];
   const manifest = {
     schema_version: 1,
     id,
-    task_version: 1,
+    task_version: taskVersion,
     category,
     prompt,
     initial_workspace_sha256: contentDigest(workspaceFiles),
     scenario,
     allowed_changes: { exact: ["answer.txt"], prefixes: [], max_files: 1, max_changed_lines: 10 },
     forbidden_changes: { exact: ["TASK.md"], prefixes: [".git/", ".bornagent/", "grader/"] },
-    agent_commands: [],
+    // PHASE14: verification is an exact manifest capability. The eval model
+    // cannot widen it with a shell, extra argument, alternate cwd, or network.
+    agent_commands: [{ executable: "node", args: ["--version"], cwd: "/workspace" }],
     acceptance,
     limits: { agent_duration_ms: 120_000, grader_duration_ms: 30_000 },
   };
   await writeFile(path.join(taskRoot, "task.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   refs.push({
     id,
-    task_version: 1,
+    task_version: taskVersion,
     task_manifest_sha256: sha256Canonical(manifest),
     initial_workspace_sha256: manifest.initial_workspace_sha256,
     grader_sha256: contentDigest(graderFiles),
@@ -152,7 +195,7 @@ for (const [id, category, prompt] of taskDefinitions) {
 const suite = {
   schema_version: 1,
   id: "suite-v1",
-  suite_version: 1,
+  suite_version: 2,
   tasks: refs,
   smoke_task_ids: smokeTaskIds,
   full_task_ids: taskDefinitions.map(([id]) => id),

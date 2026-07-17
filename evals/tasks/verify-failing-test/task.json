@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "verify-failing-test",
-  "task_version": 1,
+  "task_version": 2,
   "category": "verify-recover",
   "prompt": "Verify the intended result and create answer.txt containing exactly PASS:verify-failing-test followed by a newline.",
   "initial_workspace_sha256": "2638bf84680c26bc8fa71dd3251d118e722f95fd0acc5771e240f184e74b8261",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

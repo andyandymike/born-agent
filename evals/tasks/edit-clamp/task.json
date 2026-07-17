@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "edit-clamp",
-  "task_version": 1,
+  "task_version": 2,
   "category": "focused-code-edit",
   "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-clamp followed by a newline.",
   "initial_workspace_sha256": "5a968433d4d9efe1b248bd776e6ceb7f01a0c1b3eb86dea3eeb9ee425b73697c",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

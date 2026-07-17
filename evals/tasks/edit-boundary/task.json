@@ -1,17 +1,32 @@
 {
   "schema_version": 1,
   "id": "edit-boundary",
-  "task_version": 1,
+  "task_version": 2,
   "category": "focused-code-edit",
   "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-boundary followed by a newline.",
   "initial_workspace_sha256": "9a1355d9954e3d47fa517c255baf8f43bcad891f7f504bb827ca33bea71892ee",
   "scenario": {
-    "kind": "single_run",
+    "kind": "scripted_v1",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
-    "services": []
+    "services": [],
+    "steps": [
+      {
+        "kind": "run",
+        "id": "initial",
+        "fault": {
+          "hook": "after_patch_apply_started",
+          "action": "terminate_once"
+        }
+      },
+      {
+        "kind": "resume",
+        "id": "recover",
+        "from": "initial"
+      }
+    ]
   },
   "allowed_changes": {
     "exact": [
@@ -31,7 +46,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-protocol",
@@ -39,8 +62,8 @@
       "inputs_ref": "grader/inputs.json",
       "expected_ref": "grader/expected.json",
       "worker": {
-        "adapter": "node-module-call-v1",
-        "entry": "src/input.txt",
+        "adapter": "answer-file-v1",
+        "entry": "answer.txt",
         "timeout_ms": 30000
       },
       "grader": {

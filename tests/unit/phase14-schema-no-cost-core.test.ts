@@ -51,7 +51,7 @@ function taskManifest(): Record<string, unknown> {
         kind: "protocol",
         inputs_ref: "grader/inputs.json",
         expected_ref: "grader/expected.json",
-        worker: { adapter: "node-module-call-v1", entry: "src/clamp.ts", timeout_ms: 30_000 },
+        worker: { adapter: "answer-file-v1", entry: "answer.txt", timeout_ms: 30_000 },
         grader: {
           executable: "node",
           args: ["/grader/grade.mjs", "/observations/hidden-behavior.json"],

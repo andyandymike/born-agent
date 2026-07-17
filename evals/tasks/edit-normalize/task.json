@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "edit-normalize",
-  "task_version": 1,
+  "task_version": 2,
   "category": "focused-code-edit",
   "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-normalize followed by a newline.",
   "initial_workspace_sha256": "a58a5e49f865c3047b2e83365d03cbe033994a991e277ebf1fe85ec2ea58b3af",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

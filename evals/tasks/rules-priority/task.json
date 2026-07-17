@@ -1,17 +1,32 @@
 {
   "schema_version": 1,
   "id": "rules-priority",
-  "task_version": 1,
+  "task_version": 2,
   "category": "resume-context",
   "prompt": "Apply repository rule priority and create answer.txt containing exactly PASS:rules-priority followed by a newline.",
   "initial_workspace_sha256": "dfaa10cb8c78b99fb61593c63d38abe8061b5be529563e41eb565effd4be8e4d",
   "scenario": {
-    "kind": "single_run",
+    "kind": "scripted_v1",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
-    "services": []
+    "services": [],
+    "steps": [
+      {
+        "kind": "run",
+        "id": "initial",
+        "fault": {
+          "hook": "after_context_plan_created",
+          "action": "terminate_once"
+        }
+      },
+      {
+        "kind": "resume",
+        "id": "recover",
+        "from": "initial"
+      }
+    ]
   },
   "allowed_changes": {
     "exact": [
@@ -31,7 +46,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +62,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

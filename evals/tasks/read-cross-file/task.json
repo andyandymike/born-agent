@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "read-cross-file",
-  "task_version": 1,
+  "task_version": 2,
   "category": "read-search-reasoning",
   "prompt": "Cross-check the two public facts and create answer.txt containing exactly PASS:read-cross-file followed by a newline.",
   "initial_workspace_sha256": "7c7a01644d5db63cbf722bd54202032d14a48a0462ac3aada87e4bfa72b1608a",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

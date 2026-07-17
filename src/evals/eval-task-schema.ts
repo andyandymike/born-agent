@@ -48,8 +48,8 @@ const protocolAcceptanceSchema = z
     expected_ref: z.string().min(1).max(1_024),
     worker: z
       .object({
-        adapter: z.literal("node-module-call-v1"),
-        entry: z.string().min(1).max(1_024),
+        adapter: z.literal("answer-file-v1"),
+        entry: z.literal("answer.txt"),
         timeout_ms: z.number().int().positive().max(600_000),
       })
       .strict(),

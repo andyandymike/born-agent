@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "search-symbol",
-  "task_version": 1,
+  "task_version": 2,
   "category": "read-search-reasoning",
   "prompt": "Locate the requested symbol and create answer.txt containing exactly PASS:search-symbol followed by a newline.",
   "initial_workspace_sha256": "bdb185106cee0bc80018544298dd2bacb692b2f82baaf7ca49f66f19156d1437",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

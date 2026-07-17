@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "edit-null-guard",
-  "task_version": 1,
+  "task_version": 2,
   "category": "focused-code-edit",
   "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-null-guard followed by a newline.",
   "initial_workspace_sha256": "2eeed4778174976c2ac9539cbdad2cc373e11fbd0fadce2c15b4814acdbcb28d",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

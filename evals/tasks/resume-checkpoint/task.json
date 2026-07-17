@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "resume-checkpoint",
-  "task_version": 1,
+  "task_version": 2,
   "category": "resume-context",
   "prompt": "Recover from the durable boundary and create answer.txt containing exactly PASS:resume-checkpoint followed by a newline.",
   "initial_workspace_sha256": "3b499849b3810cde755cdc96a7700983dfde9ee1dc4672707ebaed8d85823b6e",
   "scenario": {
     "kind": "scripted_v1",
     "config": {
-      "context_window_tokens": 4096,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": [],
@@ -46,7 +46,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -54,7 +62,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

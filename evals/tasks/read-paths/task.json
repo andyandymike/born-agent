@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "read-paths",
-  "task_version": 1,
+  "task_version": 2,
   "category": "read-search-reasoning",
   "prompt": "Read the workspace note, then create answer.txt containing exactly PASS:read-paths followed by a newline.",
   "initial_workspace_sha256": "55c90b1e280213c736d7fcb9da6a76c54084a6bfa83109d076306ffae6ece6a8",
   "scenario": {
     "kind": "single_run",
     "config": {
-      "context_window_tokens": 8192,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": []
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

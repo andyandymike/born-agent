@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "context-overflow",
-  "task_version": 1,
+  "task_version": 2,
   "category": "resume-context",
   "prompt": "Keep protected context and create answer.txt containing exactly PASS:context-overflow followed by a newline.",
   "initial_workspace_sha256": "8025b4976322685cb67c26812e0506379d3181f999ac0054faa7bba496e794ee",
@@ -31,7 +31,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-static",
@@ -39,7 +47,8 @@
       "grader": {
         "executable": "node",
         "args": [
-          "/grader/grade.mjs"
+          "/grader/grade.mjs",
+          "/observations/observations.jsonl"
         ],
         "cwd": "/grader",
         "timeout_ms": 30000,

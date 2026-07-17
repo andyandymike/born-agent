@@ -11,6 +11,12 @@ Ollama endpoint. Full-suite execution and remote providers are hard-disabled;
 loading and planning the full task set does not authorize attempts or network
 requests.
 
+Targeted/smoke CLI runs use the already-present digest-pinned image configured
+by `BORN_DOCKER_IMAGE` for the hidden worker/supervisor grader. The grader
+preflight performs local inspection only; a missing image fails closed and is
+never pulled automatically. Tests may inject the host-only static grader, but
+production CLI wiring cannot select that shortcut.
+
 Regenerate these mechanical fixtures with:
 
 ```powershell

@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "id": "mcp-origin",
-  "task_version": 1,
+  "task_version": 2,
   "category": "mcp-sandbox",
   "prompt": "Preserve MCP origin and create answer.txt containing exactly PASS:mcp-origin followed by a newline.",
   "initial_workspace_sha256": "2defb84c5e0db644eb31436c028e5cb70d6f1a27457d1b0af6c6f890443dc19a",
   "scenario": {
     "kind": "scripted_v1",
     "config": {
-      "context_window_tokens": 4096,
+      "context_window_tokens": 32768,
       "executor": "docker_v1"
     },
     "services": [
@@ -52,7 +52,15 @@
       "grader/"
     ]
   },
-  "agent_commands": [],
+  "agent_commands": [
+    {
+      "executable": "node",
+      "args": [
+        "--version"
+      ],
+      "cwd": "/workspace"
+    }
+  ],
   "acceptance": [
     {
       "id": "hidden-protocol",
@@ -60,8 +68,8 @@
       "inputs_ref": "grader/inputs.json",
       "expected_ref": "grader/expected.json",
       "worker": {
-        "adapter": "node-module-call-v1",
-        "entry": "src/input.txt",
+        "adapter": "answer-file-v1",
+        "entry": "answer.txt",
         "timeout_ms": 30000
       },
       "grader": {
