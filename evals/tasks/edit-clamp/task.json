@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "edit-clamp",
+  "task_version": 1,
+  "category": "focused-code-edit",
+  "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-clamp followed by a newline.",
+  "initial_workspace_sha256": "5a968433d4d9efe1b248bd776e6ceb7f01a0c1b3eb86dea3eeb9ee425b73697c",
+  "scenario": {
+    "kind": "single_run",
+    "config": {
+      "context_window_tokens": 8192,
+      "executor": "docker_v1"
+    },
+    "services": []
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-static",
+      "kind": "static",
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

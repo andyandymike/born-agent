@@ -1,0 +1,2 @@
+fixture=edit-clamp
+category=focused-code-edit

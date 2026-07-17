@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import packageJson from "../package.json" with { type: "json" };
 
@@ -48,6 +50,7 @@ try {
       },
       cwd: process.cwd(),
       env: process.env,
+      evalAssetsRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "evals"),
       execPath: process.execPath,
       killProcess: (processIdentity, signal) => {
         process.kill(processIdentity, signal);

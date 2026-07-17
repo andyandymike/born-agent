@@ -1,0 +1,2 @@
+fixture=edit-normalize
+category=focused-code-edit

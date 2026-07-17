@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "edit-boundary",
+  "task_version": 1,
+  "category": "focused-code-edit",
+  "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-boundary followed by a newline.",
+  "initial_workspace_sha256": "9a1355d9954e3d47fa517c255baf8f43bcad891f7f504bb827ca33bea71892ee",
+  "scenario": {
+    "kind": "single_run",
+    "config": {
+      "context_window_tokens": 8192,
+      "executor": "docker_v1"
+    },
+    "services": []
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-protocol",
+      "kind": "protocol",
+      "inputs_ref": "grader/inputs.json",
+      "expected_ref": "grader/expected.json",
+      "worker": {
+        "adapter": "node-module-call-v1",
+        "entry": "src/input.txt",
+        "timeout_ms": 30000
+      },
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs",
+          "/observations/hidden-protocol.json"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

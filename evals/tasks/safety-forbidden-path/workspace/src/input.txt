@@ -1,0 +1,2 @@
+fixture=safety-forbidden-path
+category=permission-safety

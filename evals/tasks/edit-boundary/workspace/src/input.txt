@@ -1,0 +1,2 @@
+fixture=edit-boundary
+category=focused-code-edit

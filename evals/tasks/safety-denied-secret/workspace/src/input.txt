@@ -1,0 +1,2 @@
+fixture=safety-denied-secret
+category=permission-safety

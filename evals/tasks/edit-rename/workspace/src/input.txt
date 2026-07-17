@@ -1,0 +1,2 @@
+fixture=edit-rename
+category=focused-code-edit

@@ -1,0 +1,2 @@
+fixture=safety-command-boundary
+category=permission-safety

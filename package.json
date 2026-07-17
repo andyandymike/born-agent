@@ -6,7 +6,8 @@
   "type": "module",
   "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "evals"
   ],
   "bin": {
     "born": "dist/cli.js"

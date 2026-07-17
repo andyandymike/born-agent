@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "rules-priority",
+  "task_version": 1,
+  "category": "resume-context",
+  "prompt": "Apply repository rule priority and create answer.txt containing exactly PASS:rules-priority followed by a newline.",
+  "initial_workspace_sha256": "dfaa10cb8c78b99fb61593c63d38abe8061b5be529563e41eb565effd4be8e4d",
+  "scenario": {
+    "kind": "single_run",
+    "config": {
+      "context_window_tokens": 8192,
+      "executor": "docker_v1"
+    },
+    "services": []
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-static",
+      "kind": "static",
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

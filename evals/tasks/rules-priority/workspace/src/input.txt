@@ -1,0 +1,2 @@
+fixture=rules-priority
+category=resume-context

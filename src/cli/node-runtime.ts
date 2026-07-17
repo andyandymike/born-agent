@@ -35,11 +35,13 @@ import { DockerExecutor } from "../execution/docker/docker-executor.js";
 import { NodeDockerCliAdapter } from "../execution/docker/docker-cli-adapter.js";
 import { NodeWorkspaceSnapshotSource } from "../execution/snapshot/node-workspace-snapshot-adapters.js";
 import { runDockerSandboxDoctor } from "../execution/docker/docker-doctor.js";
+import { NodeEvalRuntime } from "../evals/eval-runtime.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly evalAssetsRoot?: string;
   readonly execPath: string;
   readonly killProcess: (
     processIdentity: number,
@@ -55,7 +57,6 @@ export interface NodeRuntimeOptions {
 export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   // PHASE2: 这里把可测试的接口接到真实 Node 能力：UUID、时钟、文件、timer、SDK。
   // 单元测试会替换这些依赖，因此无需真的访问网络、磁盘或等待超时。
-  const backendFactory = createProductionBackendFactory(options.env);
   const timers = {
     clearTimeout: (handle: unknown) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -209,12 +210,23 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       });
     },
     createSessionWriter: V2SessionWriter.create,
-    createModelBackend: (request) => backendFactory.create(request),
+    // PHASE14: construct credential-aware provider machinery only for ordinary model commands; `born eval` owns a separate no-credential runtime.
+    createModelBackend: (request) => createProductionBackendFactory(options.env).create(request),
     cwd: options.cwd,
     // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。
     createToolRegistry: createReadonlyToolRegistry,
     env: options.env,
     execPath: options.execPath,
+    evalRuntime: new NodeEvalRuntime({
+      workspace: options.cwd,
+      ...(options.evalAssetsRoot === undefined ? {} : { assetsRoot: options.evalAssetsRoot }),
+      timestamp: () => new Date().toISOString(),
+      randomUUID,
+      onCancel: options.onCancel,
+      version: options.version,
+      nodeVersion: options.nodeVersion,
+      platform: options.platform,
+    }),
     isReadableDirectory,
     nodeVersion: options.nodeVersion,
     // PHASE4: duration budgets use a monotonic clock so wall-clock adjustments cannot

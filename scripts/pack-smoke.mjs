@@ -122,7 +122,36 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: local tarball installed and born --help ran\n");
+  const evalList = spawnSync(process.execPath, [binaryPath, "eval", "list", "--json"], {
+    cwd: installRoot,
+    encoding: "utf8",
+    shell: false,
+  });
+  let evalDocument;
+  try {
+    evalDocument = JSON.parse(evalList.stdout);
+  } catch {
+    evalDocument = null;
+  }
+  if (
+    evalList.status !== 0 ||
+    !Array.isArray(evalDocument?.tasks) ||
+    evalDocument.tasks.length !== 20 ||
+    evalDocument.fullSuiteExecution !== "not_run_by_policy"
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} eval list --json failed`,
+        evalList.error?.message,
+        evalList.stdout,
+        evalList.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  process.stdout.write("pack smoke passed: local tarball ran born --help and validated 20 bundled eval tasks\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

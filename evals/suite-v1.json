@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "id": "suite-v1",
+  "suite_version": 1,
+  "tasks": [
+    {
+      "id": "read-paths",
+      "task_version": 1,
+      "task_manifest_sha256": "7947f726cf7d081b135b839b5e7dfde009a20e3df8a7929620b94a6fb24685a0",
+      "initial_workspace_sha256": "55c90b1e280213c736d7fcb9da6a76c54084a6bfa83109d076306ffae6ece6a8",
+      "grader_sha256": "16ade74626a3ae930b5214d6e7330164040321733faa7e6ea4adeafe52860bf4"
+    },
+    {
+      "id": "read-cross-file",
+      "task_version": 1,
+      "task_manifest_sha256": "c990f9b3ecbbef3c3f8cfab98936f0dccd99b9ffdb22e334f50dbc9b6686b2ef",
+      "initial_workspace_sha256": "7c7a01644d5db63cbf722bd54202032d14a48a0462ac3aada87e4bfa72b1608a",
+      "grader_sha256": "6973d75056302f222e5ed30da071d5e86454d5154628464f59daa39dfeabb514"
+    },
+    {
+      "id": "search-symbol",
+      "task_version": 1,
+      "task_manifest_sha256": "b00f1b14b19deb2aa0559455827a2d6bf71701025808bf5dae3c2f6569f177da",
+      "initial_workspace_sha256": "bdb185106cee0bc80018544298dd2bacb692b2f82baaf7ca49f66f19156d1437",
+      "grader_sha256": "6fd963fecfe047005cf87de1230c938c1ebdb81baa378e8ebae1a229c5232105"
+    },
+    {
+      "id": "edit-clamp",
+      "task_version": 1,
+      "task_manifest_sha256": "a442f3be2e9eaafe768cd855c129f0ccf998dd851a1427bb3fa1ddc3f8398148",
+      "initial_workspace_sha256": "5a968433d4d9efe1b248bd776e6ceb7f01a0c1b3eb86dea3eeb9ee425b73697c",
+      "grader_sha256": "93965a26f725a1fcd214839cb0e22ef04f06fade433359529049aca6bf0abf84"
+    },
+    {
+      "id": "edit-normalize",
+      "task_version": 1,
+      "task_manifest_sha256": "8cd8ebadb27ed58a29b5a19d8e518769b3e6e0aa7d00ec76185dd36147a0a366",
+      "initial_workspace_sha256": "a58a5e49f865c3047b2e83365d03cbe033994a991e277ebf1fe85ec2ea58b3af",
+      "grader_sha256": "1d4c8e369a6b33df382888841f32ed910b578bf06ea0eee58f8c8053df303fb5"
+    },
+    {
+      "id": "edit-rename",
+      "task_version": 1,
+      "task_manifest_sha256": "dd0bb62c7d00a320a6313eb38735e17fa801b42e7225daef202f69d545cc922e",
+      "initial_workspace_sha256": "ca83be56e8d644ba0251f4f6625ea55578203b6a9a08ad8224079529ffebca18",
+      "grader_sha256": "2663e49815901ed9fba73b1d696fdc952959835f1369416ab420c866c7d76cee"
+    },
+    {
+      "id": "edit-null-guard",
+      "task_version": 1,
+      "task_manifest_sha256": "a221249de5fb0503b5e657098b5d18a1ae0225e7d3d9a9762136317837253fd4",
+      "initial_workspace_sha256": "2eeed4778174976c2ac9539cbdad2cc373e11fbd0fadce2c15b4814acdbcb28d",
+      "grader_sha256": "351d0342770ee06e2fe330f8a686d5d031cac63509477d3614ddd05dd638d6fb"
+    },
+    {
+      "id": "edit-boundary",
+      "task_version": 1,
+      "task_manifest_sha256": "1351f9098256d40ea06b093da9c438195cdca6d4966f7eb017967aa65c54d073",
+      "initial_workspace_sha256": "9a1355d9954e3d47fa517c255baf8f43bcad891f7f504bb827ca33bea71892ee",
+      "grader_sha256": "2bff2dca84622d176a9860f35e1eb6ea9072b1c215c8f5c73e4bbb8df288b40d"
+    },
+    {
+      "id": "verify-failing-test",
+      "task_version": 1,
+      "task_manifest_sha256": "873befaaf8c2c98af67b56a6ef62a33c114128d2b82f00ccfc24f3fab72c7d5a",
+      "initial_workspace_sha256": "2638bf84680c26bc8fa71dd3251d118e722f95fd0acc5771e240f184e74b8261",
+      "grader_sha256": "82815a9711f3b8a699263109a79cf7051788d09bb37d7755ed820acc58ffc5ec"
+    },
+    {
+      "id": "verify-repair-loop",
+      "task_version": 1,
+      "task_manifest_sha256": "431d57b050d44320f813136201b574cd85d8f78dff44f331d4d338fd11ad60b7",
+      "initial_workspace_sha256": "7f8996eba86f93d798d141a7728c9bfb89cf97337c0255685f6d3a361df5442c",
+      "grader_sha256": "f79923c972951c3b61d12079150e09ab85ba91fea556ada624388a0c11b4b827"
+    },
+    {
+      "id": "verify-dirty-baseline",
+      "task_version": 1,
+      "task_manifest_sha256": "e34fb213c9bcc09063378cec5d28dcd8a32fd795ba7c30abdadbe17d5e34452d",
+      "initial_workspace_sha256": "b03eeea7f52aa85d2c812dae7095023e1f5115cadadadae83c6151b4ce5e7741",
+      "grader_sha256": "c4345e3b283648c53ceae18c6ba5f46e0b8aecbd07989173b39d48b7baedc886"
+    },
+    {
+      "id": "verify-fresh-run",
+      "task_version": 1,
+      "task_manifest_sha256": "af04235ac86ec0b6b577ab93bc0f7c225dc3da921d3af500a574b295071a6fc9",
+      "initial_workspace_sha256": "6c9e9b4229a6bbfde9a93d89715724cd069d6fb5f7aab4e62cc59a257c5a6fcd",
+      "grader_sha256": "b00659f133c1b372768e586efd908f174e2a760773344fe1af0fdcb3946f565c"
+    },
+    {
+      "id": "safety-denied-secret",
+      "task_version": 1,
+      "task_manifest_sha256": "ba1abe43e8c2a2fe41180549b7c833c9e3c7421b35006ab2b387dc79507b1461",
+      "initial_workspace_sha256": "9fe5b90a510efe1b0f11457a9e847a87fe8e531856e4f7e2b72c0b0c1165ac2e",
+      "grader_sha256": "d347278474cf2679dcdd7b318f4d49ef583c61a63177b170454654035c75d345"
+    },
+    {
+      "id": "safety-forbidden-path",
+      "task_version": 1,
+      "task_manifest_sha256": "1528610262592b0b8d75e4ec49412bd2935f2bc493f1366d2c90aa680c1ea040",
+      "initial_workspace_sha256": "62404357b67056405ab040e7ceb1ef21c249f8aaecf1ead08af63e8ee6a81669",
+      "grader_sha256": "3edaa05ae3af28302e1443ff838f2b2ab64376aeb5f8f8227f2b7e4bc3f2b49a"
+    },
+    {
+      "id": "safety-command-boundary",
+      "task_version": 1,
+      "task_manifest_sha256": "e04e30b6a619f9483a99ae8c451cf4c1f055f4f2e9ab57bee3c4f96b07088f26",
+      "initial_workspace_sha256": "fbf03f5c6a3f522bf4f4e40b13171e59bb81f82c33e261d99276ec1b18599c18",
+      "grader_sha256": "e8c2090e6c7c5abe522fd45633667c89beca107fcbc7e3c9f7c7b7287115292c"
+    },
+    {
+      "id": "resume-checkpoint",
+      "task_version": 1,
+      "task_manifest_sha256": "89952d8e582897ceb2fded8a503629b7343154194bc97e15504a46ac4531528b",
+      "initial_workspace_sha256": "3b499849b3810cde755cdc96a7700983dfde9ee1dc4672707ebaed8d85823b6e",
+      "grader_sha256": "c96b0636214b9a495351f7c61f379a7e14fab7fe614322c906dc291851c8bb19"
+    },
+    {
+      "id": "context-overflow",
+      "task_version": 1,
+      "task_manifest_sha256": "6ebed0f8853ab8fd316dee9c3ae3f68e1185bf81e1e0c334a22b0749fff12d8e",
+      "initial_workspace_sha256": "8025b4976322685cb67c26812e0506379d3181f999ac0054faa7bba496e794ee",
+      "grader_sha256": "13010d75bddf0cefc7c72583a0cded251f48ba8f4e03ff29c4066d420e54c26b"
+    },
+    {
+      "id": "rules-priority",
+      "task_version": 1,
+      "task_manifest_sha256": "bba7b13862c0154c154bcdf57829d00e700d5f073e4cd9784ce4294532499c52",
+      "initial_workspace_sha256": "dfaa10cb8c78b99fb61593c63d38abe8061b5be529563e41eb565effd4be8e4d",
+      "grader_sha256": "f1c123e744be850bf9fbf38ca1a5abe11502a7bd1ffc7a5636af843b619d0810"
+    },
+    {
+      "id": "mcp-origin",
+      "task_version": 1,
+      "task_manifest_sha256": "a44120799c4540ce18aeceac9f1be525e5a2ee7de7a1be773056f002b2c6e07f",
+      "initial_workspace_sha256": "2defb84c5e0db644eb31436c028e5cb70d6f1a27457d1b0af6c6f890443dc19a",
+      "grader_sha256": "cd1d30f28027347dbccf756470214d07443712ae85d695812ff66a153c134928"
+    },
+    {
+      "id": "sandbox-cleanup",
+      "task_version": 1,
+      "task_manifest_sha256": "fa94867c09b042c76120f9324c8d1ee0d6350eaa51a82e82fdbdca68e2cd6d0b",
+      "initial_workspace_sha256": "4a66ae559e07084ed1ae07768de919c0460c550705e33dcd403deea3dd3a6662",
+      "grader_sha256": "e6b3377f7a17514465ed5ba578595d68a754c99fa6583f6352ef67b784c96a60"
+    }
+  ],
+  "smoke_task_ids": [
+    "read-paths",
+    "edit-clamp",
+    "verify-failing-test",
+    "safety-denied-secret",
+    "context-overflow"
+  ],
+  "full_task_ids": [
+    "read-paths",
+    "read-cross-file",
+    "search-symbol",
+    "edit-clamp",
+    "edit-normalize",
+    "edit-rename",
+    "edit-null-guard",
+    "edit-boundary",
+    "verify-failing-test",
+    "verify-repair-loop",
+    "verify-dirty-baseline",
+    "verify-fresh-run",
+    "safety-denied-secret",
+    "safety-forbidden-path",
+    "safety-command-boundary",
+    "resume-checkpoint",
+    "context-overflow",
+    "rules-priority",
+    "mcp-origin",
+    "sandbox-cleanup"
+  ],
+  "repetition_policy": {
+    "smoke_default": 1,
+    "full_default": 1,
+    "maximum": 10
+  },
+  "attempt_inclusion_rule": "valid_started_v1",
+  "metric_definition_version": 1,
+  "price_currency": "USD"
+}

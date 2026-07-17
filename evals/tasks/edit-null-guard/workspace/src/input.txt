@@ -1,0 +1,2 @@
+fixture=edit-null-guard
+category=focused-code-edit

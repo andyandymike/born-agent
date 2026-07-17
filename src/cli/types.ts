@@ -16,6 +16,7 @@ import type {
 } from "../providers/pi/ollama-local-catalog-port.js";
 import type { ResolvedDockerSandboxConfig } from "../agent/agent-types.js";
 import type { DockerSandboxDoctorReport } from "../execution/docker/docker-doctor.js";
+import type { EvalCliRuntime } from "../evals/eval-cli.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -46,6 +47,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     config: ResolvedDockerSandboxConfig,
   ) => Promise<DockerSandboxDoctorReport>;
   readonly execPath: string;
+  readonly evalRuntime?: EvalCliRuntime;
   readonly observeSessionWriter?: (writer: SessionWriter) => void;
   readonly tuiHost?: TuiHost;
   readonly version: string;

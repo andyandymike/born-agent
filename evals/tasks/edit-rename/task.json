@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "edit-rename",
+  "task_version": 1,
+  "category": "focused-code-edit",
+  "prompt": "Make the focused change by creating answer.txt containing exactly PASS:edit-rename followed by a newline.",
+  "initial_workspace_sha256": "ca83be56e8d644ba0251f4f6625ea55578203b6a9a08ad8224079529ffebca18",
+  "scenario": {
+    "kind": "single_run",
+    "config": {
+      "context_window_tokens": 8192,
+      "executor": "docker_v1"
+    },
+    "services": []
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-static",
+      "kind": "static",
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

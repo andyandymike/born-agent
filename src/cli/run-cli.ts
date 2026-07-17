@@ -13,6 +13,7 @@ import type { CliIO, CliRuntime } from "./types.js";
 import { executeTui } from "../tui/run-tui.js";
 import { executeMcpInspect, executeMcpList } from "../commands/mcp.js";
 import { executeSandboxDoctor } from "../commands/sandbox-doctor.js";
+import { executeEvalCompare, executeEvalList, executeEvalRun, executeEvalShow } from "../evals/eval-cli.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -482,6 +483,53 @@ export async function runCli(
         );
       },
     );
+
+  const evalCommand = program
+    .command("eval")
+    .description("Run zero-cost local reliability evaluations.");
+
+  evalCommand
+    .command("list")
+    .description("Validate and list the checked-in eval suite without calling a model.")
+    .option("--json", "write canonical JSON", false)
+    .action(async (options: { json: boolean }) => {
+      commandExitCode = await executeEvalList(runtime.evalRuntime, io, options.json);
+    });
+
+  evalCommand
+    .command("run")
+    .description("Run smoke/targeted evals with fake/mock or literal-loopback Ollama only.")
+    .requiredOption("--suite <smoke|full>", "fixed suite selection")
+    .requiredOption("--provider <id>", "fake, mock, or ollama")
+    .requiredOption("--model <id>", "fixed local/test model identity")
+    .option("--repetitions <count>", "attempt repetitions (1..10)")
+    .option("--task <id>", "run one checked-in task as a partial suite")
+    .option("--ollama-endpoint <url>", "literal-loopback Ollama endpoint")
+    .option("--ollama-model-digest <sha256>", "optional exact installed-model digest assertion")
+    .option("--json", "write canonical JSON", false)
+    .action(async (options: { suite: string; provider: string; model: string; repetitions?: string; task?: string; ollamaEndpoint?: string; ollamaModelDigest?: string; json: boolean }) => {
+      commandExitCode = await executeEvalRun(runtime.evalRuntime, io, options);
+    });
+
+  evalCommand
+    .command("show")
+    .description("Show a saved eval summary or one attempt without model/tool execution.")
+    .argument("<run-id>", "eval run ID")
+    .option("--attempt <task:rN>", "show one attempt")
+    .option("--json", "write canonical JSON", false)
+    .action(async (runId: string, options: { attempt?: string; json: boolean }) => {
+      commandExitCode = await executeEvalShow(runtime.evalRuntime, io, { runId, ...options });
+    });
+
+  evalCommand
+    .command("compare")
+    .description("Compare two compatible saved eval runs descriptively.")
+    .argument("<baseline-id>", "baseline eval run ID")
+    .argument("<candidate-id>", "candidate eval run ID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (baselineId: string, candidateId: string, options: { json: boolean }) => {
+      commandExitCode = await executeEvalCompare(runtime.evalRuntime, io, { baselineId, candidateId, json: options.json });
+    });
 
   program
     .command("doctor")

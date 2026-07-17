@@ -1,0 +1,2 @@
+fixture=resume-checkpoint
+category=resume-context

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "verify-repair-loop",
+  "task_version": 1,
+  "category": "verify-recover",
+  "prompt": "Repair and re-check, then create answer.txt containing exactly PASS:verify-repair-loop followed by a newline.",
+  "initial_workspace_sha256": "7f8996eba86f93d798d141a7728c9bfb89cf97337c0255685f6d3a361df5442c",
+  "scenario": {
+    "kind": "single_run",
+    "config": {
+      "context_window_tokens": 8192,
+      "executor": "docker_v1"
+    },
+    "services": []
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-static",
+      "kind": "static",
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

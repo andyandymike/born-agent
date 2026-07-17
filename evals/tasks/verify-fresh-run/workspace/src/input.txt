@@ -1,0 +1,2 @@
+fixture=verify-fresh-run
+category=verify-recover

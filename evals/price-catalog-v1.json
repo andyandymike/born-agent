@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "catalog_version": 1,
+  "reviewed_date": "2026-07-17",
+  "entries": [
+    {
+      "provider": "synthetic-fixture",
+      "model": "contract-v1",
+      "effectiveDate": "2026-07-17",
+      "currency": "USD",
+      "inputPerMillion": 1,
+      "outputPerMillion": 2,
+      "cacheReadPerMillion": 0.25,
+      "cacheWritePerMillion": 0.5,
+      "sourceUrl": "https://invalid.example/offline-price-fixture"
+    }
+  ]
+}

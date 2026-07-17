@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "id": "mcp-origin",
+  "task_version": 1,
+  "category": "mcp-sandbox",
+  "prompt": "Preserve MCP origin and create answer.txt containing exactly PASS:mcp-origin followed by a newline.",
+  "initial_workspace_sha256": "2defb84c5e0db644eb31436c028e5cb70d6f1a27457d1b0af6c6f890443dc19a",
+  "scenario": {
+    "kind": "scripted_v1",
+    "config": {
+      "context_window_tokens": 4096,
+      "executor": "docker_v1"
+    },
+    "services": [
+      {
+        "ref": "mcp_stdio_fixture",
+        "fixture_id": "search-two-files-v1",
+        "mode": "result_then_exit"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "run",
+        "id": "initial",
+        "fault": {
+          "hook": "after_mcp_call_started",
+          "action": "terminate_once"
+        }
+      },
+      {
+        "kind": "resume",
+        "id": "recover",
+        "from": "initial"
+      }
+    ]
+  },
+  "allowed_changes": {
+    "exact": [
+      "answer.txt"
+    ],
+    "prefixes": [],
+    "max_files": 1,
+    "max_changed_lines": 10
+  },
+  "forbidden_changes": {
+    "exact": [
+      "TASK.md"
+    ],
+    "prefixes": [
+      ".git/",
+      ".bornagent/",
+      "grader/"
+    ]
+  },
+  "agent_commands": [],
+  "acceptance": [
+    {
+      "id": "hidden-protocol",
+      "kind": "protocol",
+      "inputs_ref": "grader/inputs.json",
+      "expected_ref": "grader/expected.json",
+      "worker": {
+        "adapter": "node-module-call-v1",
+        "entry": "src/input.txt",
+        "timeout_ms": 30000
+      },
+      "grader": {
+        "executable": "node",
+        "args": [
+          "/grader/grade.mjs",
+          "/observations/hidden-protocol.json"
+        ],
+        "cwd": "/grader",
+        "timeout_ms": 30000,
+        "expected_exit": 0
+      }
+    }
+  ],
+  "limits": {
+    "agent_duration_ms": 120000,
+    "grader_duration_ms": 30000
+  }
+}

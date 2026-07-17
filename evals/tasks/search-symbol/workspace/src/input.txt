@@ -1,0 +1,2 @@
+fixture=search-symbol
+category=read-search-reasoning
