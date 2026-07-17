@@ -27,6 +27,7 @@ import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js"
 import { redactSensitiveText } from "../security/redact.js";
 import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
 import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog-port.js";
+import type { TuiHost } from "../tui/tui-host.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -40,6 +41,7 @@ export interface NodeRuntimeOptions {
   readonly nodeVersion: string;
   readonly onCancel: (listener: () => void) => () => void;
   readonly platform: NodeJS.Platform;
+  readonly tuiHost?: TuiHost;
   readonly version: string;
 }
 
@@ -145,6 +147,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     runExecutable,
     setTimer: (listener, delayMs) => setTimeout(listener, delayMs),
     timestamp: () => new Date().toISOString(),
+    ...(options.tuiHost === undefined ? {} : { tuiHost: options.tuiHost }),
     version: options.version,
   };
 }

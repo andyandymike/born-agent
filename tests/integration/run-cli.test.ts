@@ -61,6 +61,36 @@ describe("runCli", () => {
     expect(memory.readStderr()).toContain("context compaction threshold");
   });
 
+  it("rejects non-TTY TUI bootstrap before creating a session", async () => {
+    const memory = createMemoryIO();
+    const createSessionWriter = vi.fn(createRuntime().createSessionWriter);
+    const exitCode = await runCli(
+      ["tui", "inspect"],
+      memory.io,
+      createRuntime({ createSessionWriter }),
+    );
+
+    expect(exitCode).toBe(2);
+    expect(createSessionWriter).not.toHaveBeenCalled();
+    expect(memory.readStderr()).toContain("requires interactive stdin/stdout");
+  });
+
+  it("rejects a TUI task combined with --resume", async () => {
+    const memory = createMemoryIO();
+    const exitCode = await runCli(
+      [
+        "tui",
+        "inspect",
+        "--resume",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      memory.io,
+      createRuntime(),
+    );
+    expect(exitCode).toBe(2);
+    expect(memory.readStderr()).toContain("mutually exclusive");
+  });
+
   it("returns success when every doctor check passes", async () => {
     const memory = createMemoryIO();
     const exitCode = await runCli(["doctor"], memory.io, createRuntime());

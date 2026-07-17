@@ -6,6 +6,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { createNodeRuntime } from "./cli/node-runtime.js";
 import { runCli } from "./cli/run-cli.js";
 import { redactSensitiveText } from "./security/redact.js";
+import { createPiTuiRenderer } from "./tui/pi-tui-renderer.js";
 
 function oneLineError(error: unknown, secret: string | undefined): string {
   let message = error instanceof Error ? error.message : String(error);
@@ -57,6 +58,11 @@ try {
         return () => process.off("SIGINT", listener);
       },
       platform: process.platform,
+      tuiHost: {
+        createRenderer: createPiTuiRenderer,
+        stdinIsTTY: process.stdin.isTTY === true,
+        stdoutIsTTY: process.stdout.isTTY === true,
+      },
       version: packageJson.version,
     }),
   );

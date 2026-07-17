@@ -629,6 +629,7 @@ export async function executeSessionsResume(
   let writer: V2SessionWriter | undefined;
   try {
     writer = await V2SessionWriter.openExisting(runtime.cwd, options.sessionId);
+    runtime.observeSessionWriter?.(writer);
     const session = reconstructMultiRunSession(writer.events);
     const lastRun = session.lastRun;
     const historicalBackend = lastBackend(lastRun);

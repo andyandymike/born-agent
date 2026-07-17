@@ -29,6 +29,9 @@ export interface SessionWriter {
   ): Promise<unknown>;
   close(): Promise<void>;
   readDecodedEvents?(): readonly DecodedStoredEvent[];
+  subscribeDurableEvents?(
+    listener: (event: DecodedStoredEvent) => void,
+  ): () => void;
   write(event: RunEvent): Promise<void>;
 }
 

@@ -6,6 +6,8 @@ import type { ToolRegistryLike } from "../tools/tool-types.js";
 import type { ChatProvider } from "../chat/types.js";
 import type { ModelEvidence } from "../completion/completion-types.js";
 import type { CheckpointStore } from "../checkpoints/checkpoint-store.js";
+import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import type { TuiHost } from "../tui/tui-host.js";
 import type {
   OllamaLocalCatalogRefreshRequest,
   OllamaLocalModelDiscovery,
@@ -33,5 +35,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     request: OllamaLocalCatalogRefreshRequest,
   ): Promise<readonly OllamaLocalModelDiscovery[]>;
   readonly execPath: string;
+  readonly observeSessionWriter?: (writer: SessionWriter) => void;
+  readonly tuiHost?: TuiHost;
   readonly version: string;
 }

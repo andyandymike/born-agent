@@ -170,6 +170,7 @@ export async function executeAgent(
     writer =
       resumedExecution?.writer ??
       (await runtime.createSessionWriter(runtime.cwd, sessionId));
+    runtime.observeSessionWriter?.(writer);
   } catch {
     renderer.renderStorageError();
     return 1;

@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.7",
+    "@earendil-works/pi-tui": "0.80.7",
     "commander": "15.0.0",
     "zod": "4.4.3"
   },

@@ -64,6 +64,9 @@ export class V2SessionWriter implements SessionWriter {
   private closed = false;
   private readonly createEventId: () => string;
   private decoded: readonly DecodedStoredEvent[];
+  private readonly durableEventListeners = new Set<
+    (event: DecodedStoredEvent) => void
+  >();
   private readonly nextRunSequence = new Map<string, number>();
   private readonly rawValues: unknown[];
   private readonly timestamp: () => string;
@@ -130,6 +133,14 @@ export class V2SessionWriter implements SessionWriter {
 
   readDecodedEvents(): readonly DecodedStoredEvent[] {
     return this.events;
+  }
+
+  subscribeDurableEvents(
+    listener: (event: DecodedStoredEvent) => void,
+  ): () => void {
+    if (this.closed) throw new Error("session writer is closed");
+    this.durableEventListeners.add(listener);
+    return () => this.durableEventListeners.delete(listener);
   }
 
   async write(event: RunEvent): Promise<void> {
@@ -216,6 +227,7 @@ export class V2SessionWriter implements SessionWriter {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.durableEventListeners.clear();
     await this.store.close();
   }
 
@@ -276,6 +288,15 @@ export class V2SessionWriter implements SessionWriter {
     // that exists only in a process buffer.
     this.rawValues.push(envelope);
     this.decoded = decoded;
+    // PHASE11: observers run only after append+sync and in-memory commit. Their
+    // failure cannot retroactively turn a durable fact into a storage failure.
+    for (const listener of this.durableEventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // PersistedEventSource converts listener faults into its fatal channel.
+      }
+    }
     return event;
   }
 
