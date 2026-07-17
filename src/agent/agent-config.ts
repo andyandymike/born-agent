@@ -148,6 +148,17 @@ export function resolveAgentConfig(
   if (reportFormat !== "text" && reportFormat !== "json") {
     return { error: "report format must be one of: text, json", ok: false };
   }
+  const mcpServerIds = [...(options.mcpServerIds ?? [])];
+  if (
+    mcpServerIds.length > 4 ||
+    new Set(mcpServerIds).size !== mcpServerIds.length ||
+    mcpServerIds.some((serverId) => !/^[a-z][a-z0-9_-]{0,31}$/u.test(serverId))
+  ) {
+    return {
+      error: "MCP server ids must be unique valid ids and at most four may be enabled",
+      ok: false,
+    };
+  }
 
   const provider = resolveProvider(options.provider, env.BORN_PROVIDER);
   if (!provider.ok) {
@@ -275,6 +286,9 @@ export function resolveAgentConfig(
       maxSteps: maxSteps.value,
       maxTokens: maxTokens.value,
       maxToolOutputBytes: maxToolOutputBytes.value,
+      ...(mcpServerIds.length === 0
+        ? {}
+        : { mcpServerIds: Object.freeze(mcpServerIds) }),
       model: model.value,
       ...(ollamaBaseURL === undefined
         ? {}

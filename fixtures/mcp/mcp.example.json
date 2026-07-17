@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "servers": {
+    "fixture": {
+      "transport": "stdio",
+      "executable": "node",
+      "args": ["fixtures/mcp/server.mjs"],
+      "cwd": ".",
+      "integrity_files": [
+        "fixtures/mcp/server.mjs",
+        "package.json",
+        "pnpm-lock.yaml"
+      ],
+      "env": [],
+      "startup_timeout_ms": 10000,
+      "call_timeout_ms": 60000
+    }
+  }
+}

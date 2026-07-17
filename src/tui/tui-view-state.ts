@@ -45,7 +45,11 @@ export type ApprovalExpiryReason =
   | "workspace_or_action_changed";
 
 export interface ApprovalView {
-  readonly actionKind: "apply_patch" | "run_command";
+  readonly actionKind:
+    | "apply_patch"
+    | "mcp.server.start"
+    | "mcp.tool.call"
+    | "run_command";
   readonly actionSha256: string;
   readonly callId: string;
   readonly decision: "approved" | "cancelled" | "denied" | null;
@@ -182,7 +186,7 @@ export type TranscriptViewItem =
   | VerificationTranscriptViewItem;
 
 export interface ApprovalTranscriptViewItem {
-  readonly actionKind: "apply_patch" | "run_command";
+  readonly actionKind: ApprovalView["actionKind"];
   readonly id: string;
   readonly kind: "approval";
   readonly requestId: string;

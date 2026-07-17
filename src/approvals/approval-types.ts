@@ -28,7 +28,18 @@ export interface CommandApprovalPreview {
   readonly riskWarning: string;
 }
 
-export type ApprovalPreview = CommandApprovalPreview | PatchApprovalPreview;
+export interface McpApprovalPreview {
+  readonly actionKind: "mcp.server.start" | "mcp.tool.call";
+  readonly actionSha256: string;
+  readonly reviewLines: readonly string[];
+  readonly riskWarning: string;
+  readonly title: string;
+}
+
+export type ApprovalPreview =
+  | CommandApprovalPreview
+  | McpApprovalPreview
+  | PatchApprovalPreview;
 
 export interface ApprovalPrompt {
   request(

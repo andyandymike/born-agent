@@ -94,6 +94,21 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "context.plan.created",
   "model.request.encoded",
   "model.usage",
+  "mcp.approval.decided",
+  "mcp.approval.requested",
+  "mcp.catalog.changed",
+  "mcp.catalog.discovered",
+  "mcp.permission.evaluated",
+  "mcp.server.start.effect_unknown",
+  "mcp.server.start.failed",
+  "mcp.server.start.requested",
+  "mcp.server.started",
+  "mcp.server.stderr",
+  "mcp.server.stopped",
+  "mcp.server.stopping",
+  "mcp.tool.call.completed",
+  "mcp.tool.call.effect_unknown",
+  "mcp.tool.call.started",
   "patch.apply.completed",
   "patch.apply.started",
   "patch.plan.created",
@@ -467,6 +482,73 @@ function reduceKnownEvent(
         approval.runId !== event.runId
       ) {
         return failClosed(state, event, "approval decision identity is stale");
+      }
+      return replaceItems(
+        {
+          ...state,
+          approval: {
+            ...approval,
+            decision: event.data.decision,
+            expiresState: { reason: "decided", status: "expired" },
+          },
+        },
+        (item) =>
+          item.kind === "approval" && item.requestId === approval.requestId
+            ? { ...item, status: event.data.decision }
+            : item,
+      );
+    }
+    case "mcp.approval.requested": {
+      if (state.run?.id !== event.runId || state.run.status !== "running") {
+        return failClosed(state, event, "MCP approval request is outside the active run");
+      }
+      const previous = expireApproval(state.approval, "new_request");
+      const preview = sanitize(event.data.preview);
+      let next: TuiViewState = {
+        ...state,
+        approval: {
+          actionKind: event.data.action_kind,
+          actionSha256: event.data.action_sha256,
+          callId: `mcp:${event.data.server_id}`,
+          decision: null,
+          expiresState: { status: "active" },
+          preview,
+          previewSha256: sha256(preview),
+          previewTruncated: event.data.truncated,
+          requestId: event.data.approval_request_id,
+          runId: event.runId,
+          sessionId: event.sessionId,
+        },
+      };
+      if (previous !== null) {
+        next = replaceItems(next, (item) =>
+          item.kind === "approval" &&
+          item.requestId === previous.requestId &&
+          item.status === "requested"
+            ? { ...item, status: "expired" }
+            : item,
+        );
+      }
+      return appendItem(next, {
+        actionKind: event.data.action_kind,
+        id: event.eventId,
+        kind: "approval",
+        requestId: event.data.approval_request_id,
+        runId: event.runId,
+        status: "requested",
+      });
+    }
+    case "mcp.approval.decided": {
+      const approval = state.approval;
+      if (
+        approval === null ||
+        approval.expiresState.status !== "active" ||
+        approval.requestId !== event.data.approval_request_id ||
+        approval.actionSha256 !== event.data.action_sha256 ||
+        approval.actionKind !== event.data.action_kind ||
+        approval.runId !== event.runId
+      ) {
+        return failClosed(state, event, "MCP approval decision identity is stale");
       }
       return replaceItems(
         {
@@ -886,6 +968,49 @@ function reduceKnownEvent(
         label: `patch effect reconciled as ${sanitize(event.data.observed)}`,
         runId: null,
       });
+    case "mcp.catalog.changed":
+    case "mcp.server.start.effect_unknown":
+    case "mcp.tool.call.effect_unknown":
+      return appendItem(
+        {
+          ...state,
+          approval: expireApproval(state.approval, "workspace_or_action_changed"),
+          session: {
+            ...state.session,
+            actionBlocked: true,
+            resumeBlocked: true,
+          },
+        },
+        {
+          id: event.eventId,
+          kind: "session",
+          label: `MCP action blocked (${sanitize(event.type)})`,
+          runId: event.runId,
+        },
+      );
+    case "mcp.catalog.discovered":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP:${sanitize(event.data.server_id)} discovered ${event.data.tools.length} tool(s)`,
+        runId: event.runId,
+      });
+    case "mcp.server.started":
+    case "mcp.server.stopped":
+    case "mcp.server.start.failed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP:${sanitize(event.data.server_id)} ${sanitize(event.type)}`,
+        runId: event.runId,
+      });
+    case "mcp.permission.evaluated":
+    case "mcp.server.start.requested":
+    case "mcp.server.stderr":
+    case "mcp.server.stopping":
+    case "mcp.tool.call.completed":
+    case "mcp.tool.call.started":
+      return state;
     default:
       return assertNever(event);
   }

@@ -6,7 +6,7 @@ import { RipgrepRunner } from "./ripgrep-runner.js";
 import { createSearchTool } from "./search-tool.js";
 import { SensitivePathPolicy } from "./sensitive-path-policy.js";
 import { ToolRegistry } from "./tool-registry.js";
-import type { ToolDefinition } from "./tool-types.js";
+import type { ToolDefinition, ToolRegistration } from "./tool-types.js";
 import { WorkspacePathPolicy } from "./workspace-path-policy.js";
 
 export async function createReadonlyToolDefinitions(
@@ -38,7 +38,13 @@ export async function createReadonlyToolRegistry(
   workspace: string,
   secrets: readonly (string | undefined)[] = [],
   artifacts?: ArtifactSessionRuntimeLike,
+  additionalTools: readonly ToolRegistration<unknown>[] = [],
 ): Promise<ToolRegistry> {
   const definitions = await createReadonlyToolDefinitions(workspace, artifacts);
-  return new ToolRegistry(definitions, secrets, undefined, artifacts);
+  return new ToolRegistry(
+    [...definitions, ...additionalTools],
+    secrets,
+    undefined,
+    artifacts,
+  );
 }

@@ -28,7 +28,10 @@ export interface ModelToolDefinition {
   readonly description: string;
   readonly name: string;
   readonly parameters: Readonly<Record<string, unknown>>;
-  readonly strict: true;
+  // PHASE12: MCP schemas may be valid locally without satisfying every
+  // provider's strict-generation subset. This flag is a generation hint only;
+  // ToolRegistry still performs local validation before every execution.
+  readonly strict: boolean;
 }
 
 export type ModelTurnInput =

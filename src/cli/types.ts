@@ -8,6 +8,8 @@ import type { ModelEvidence } from "../completion/completion-types.js";
 import type { CheckpointStore } from "../checkpoints/checkpoint-store.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import type { TuiHost } from "../tui/tui-host.js";
+import type { McpClientManager } from "../mcp/mcp-client-manager.js";
+import type { McpEventAppender } from "../mcp/mcp-approval-gate.js";
 import type {
   OllamaLocalCatalogRefreshRequest,
   OllamaLocalModelDiscovery,
@@ -28,6 +30,10 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     options: AgentToolRegistryOptions,
   ): Promise<ToolRegistryLike>;
   createApprovalPrompt(io: CliIO): ApprovalPrompt;
+  readonly createMcpClientManager?: (options: {
+    readonly events: McpEventAppender;
+    readonly prompt: ApprovalPrompt;
+  }) => McpClientManager;
   readonly createCheckpointStore?: (
     workspace: string,
   ) => Promise<CheckpointStore>;

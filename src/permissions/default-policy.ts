@@ -2,6 +2,7 @@ import path from "node:path";
 
 import type {
   CommandActionIdentity,
+  NormalizedAction,
   PermissionPolicy,
   PolicyDecision,
 } from "./permission-types.js";
@@ -136,7 +137,14 @@ const COREPACK_MUTATION_SUBCOMMANDS = new Set([
 export const defaultPermissionPolicy: PermissionPolicy = Object.freeze({
   id: DEFAULT_PERMISSION_POLICY_ID,
   version: DEFAULT_PERMISSION_POLICY_VERSION,
-  evaluate(action: CommandActionIdentity): PolicyDecision {
+  evaluate(action: NormalizedAction): PolicyDecision {
+    if (action.actionKind !== "command") {
+      return {
+        effect: "deny",
+        reasonCode: "mcp_not_enabled_by_default_policy",
+        ruleId: "default.deny.mcp.v1",
+      };
+    }
     return (
       evaluateHardDeny(action) ??
       evaluateExplicitAllow(action) ??

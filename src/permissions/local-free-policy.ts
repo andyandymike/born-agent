@@ -1,6 +1,7 @@
 import { evaluateHardDeny } from "./default-policy.js";
 import type {
   CommandActionIdentity,
+  NormalizedAction,
   PermissionContext,
   PermissionPolicy,
   PolicyDecision,
@@ -18,6 +19,9 @@ export const PHASE7_FIXTURE_CWDS = Object.freeze([
 
 export const LOCAL_FREE_PERMISSION_RULE_IDS = Object.freeze({
   askReviewedFixture: "local-free.ask.reviewed-phase6-fixture.v1",
+  askReviewedMcpCall: "local-free.ask.reviewed-offline-mcp-call.v1",
+  askReviewedMcpStart: "local-free.ask.reviewed-offline-mcp-start.v1",
+  denyUnreviewedMcp: "local-free.deny.unreviewed-mcp.v1",
   denyUnreviewedAction: "local-free.deny.unreviewed-action.v1",
   denyUnsupportedShape: "local-free.deny.unsupported-command-shape.v1",
 } as const);
@@ -26,9 +30,39 @@ export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
   id: LOCAL_FREE_PERMISSION_POLICY_ID,
   version: LOCAL_FREE_PERMISSION_POLICY_VERSION,
   evaluate(
-    action: CommandActionIdentity,
+    action: NormalizedAction,
     context: PermissionContext,
   ): PolicyDecision {
+    if (action.actionKind === "mcp.server.start") {
+      if (!contains(context.reviewedOfflineMcpActionSha256, action.actionSha256)) {
+        return {
+          effect: "deny",
+          reasonCode: "mcp_start_not_in_reviewed_offline_set",
+          ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.denyUnreviewedMcp,
+        };
+      }
+      return {
+        effect: "ask",
+        reasonCode: "reviewed_offline_mcp_start_requires_user_approval",
+        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpStart,
+      };
+    }
+    if (action.actionKind === "mcp.tool.call") {
+      if (!contains(context.reviewedOfflineMcpServerIds, action.serverId)) {
+        return {
+          effect: "deny",
+          reasonCode: "mcp_server_not_reviewed_offline",
+          ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.denyUnreviewedMcp,
+        };
+      }
+      // PHASE12: catalog discovery and server annotations do not grant call
+      // authority. Every exact, locally validated argument digest remains ask.
+      return {
+        effect: "ask",
+        reasonCode: "reviewed_offline_mcp_call_requires_user_approval",
+        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpCall,
+      };
+    }
     const hardDeny = evaluateHardDeny(action);
     if (hardDeny !== null) {
       return hardDeny;
@@ -147,6 +181,16 @@ function containsReviewedDigest(
     return reviewed.includes(actionSha256);
   }
   return (reviewed as ReadonlySet<Sha256Hex>).has(actionSha256);
+}
+
+function contains<T>(
+  values: ReadonlySet<T> | readonly T[] | undefined,
+  value: T,
+): boolean {
+  if (values === undefined) return false;
+  return Array.isArray(values)
+    ? values.includes(value)
+    : (values as ReadonlySet<T>).has(value);
 }
 
 function arraysEqual(

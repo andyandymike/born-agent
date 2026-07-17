@@ -27,7 +27,7 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
       if (preview.previewTruncated) {
         this.options.output.write("  [diff preview truncated]\n");
       }
-    } else {
+    } else if (preview.actionKind === "run_command") {
       // PHASE6: argv 逐项显示，避免 shell-like display 把授权内容变成另一条命令。
       this.options.output.write("Allow command?\n");
       this.options.output.write(`  cwd: ${preview.cwd}\n`);
@@ -41,6 +41,13 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
       this.options.output.write(`  purpose: ${preview.purpose}\n`);
       this.options.output.write(`  action: ${preview.actionSha256.slice(0, 12)}\n`);
       this.options.output.write(`  WARNING: ${preview.riskWarning}\n`);
+    } else {
+      this.options.output.write(`${preview.title}\n`);
+      preview.reviewLines.forEach((line) => {
+        this.options.output.write(`  ${line}\n`);
+      });
+      this.options.output.write(`  action: ${preview.actionSha256.slice(0, 12)}\n`);
+      this.options.output.write(`  WARNING: ${preview.riskWarning}\n`);
     }
 
     if (!this.options.interactive) {
@@ -51,7 +58,9 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
     this.options.output.write(
       preview.actionKind === "apply_patch"
         ? "Apply patch? [y/N] "
-        : "Allow command? [y/N] ",
+        : preview.actionKind === "run_command"
+          ? "Allow command? [y/N] "
+          : "Approve MCP action? [y/N] ",
     );
     const answer = await this.options.readLine(signal);
     if (signal.aborted) return "cancelled";

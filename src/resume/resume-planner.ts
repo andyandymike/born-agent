@@ -164,6 +164,20 @@ export class ResumePlanner {
         `${command.executionId}:${command.stage}`,
       );
     }
+    for (const server of input.ledger.unknownMcpServers ?? []) {
+      addBlock(
+        blocks,
+        "pending_mcp_effect_unknown",
+        `${server.serverId}:${server.stage}`,
+      );
+    }
+    for (const call of input.ledger.unknownMcpCalls ?? []) {
+      addBlock(
+        blocks,
+        "pending_mcp_effect_unknown",
+        `${call.serverId}:${call.callId}:${call.stage}`,
+      );
+    }
     if (input.ledger.pendingToolCalls.length > 1) {
       addBlock(
         blocks,

@@ -15,7 +15,10 @@ import {
   reconcilePendingPatchFromReader,
   type PatchReconciliation,
 } from "../resume/patch-reconciler.js";
-import { reconstructPendingEffectLedger } from "../resume/pending-effect-ledger.js";
+import {
+  mergeMcpPendingEffects,
+  reconstructPendingEffectLedger,
+} from "../resume/pending-effect-ledger.js";
 import { ResumePlanner } from "../resume/resume-planner.js";
 import type { BlockedResumePlan } from "../resume/resume-types.js";
 import { WorkspacePatchObservationReader } from "../resume/workspace-patch-observation-reader.js";
@@ -424,6 +427,21 @@ const NON_LEGACY_RUN_EVENTS = new Set([
   "context.estimate.created",
   "context.plan.created",
   "model.request.encoded",
+  "mcp.approval.decided",
+  "mcp.approval.requested",
+  "mcp.catalog.changed",
+  "mcp.catalog.discovered",
+  "mcp.permission.evaluated",
+  "mcp.server.start.effect_unknown",
+  "mcp.server.start.failed",
+  "mcp.server.start.requested",
+  "mcp.server.started",
+  "mcp.server.stderr",
+  "mcp.server.stopped",
+  "mcp.server.stopping",
+  "mcp.tool.call.completed",
+  "mcp.tool.call.effect_unknown",
+  "mcp.tool.call.started",
   "repository.rules.changed",
   "repository.rules.loaded",
   "resume.pending_call.adopted",
@@ -501,6 +519,7 @@ function historicalAgentOptions(
     maxSteps: String(started.max_steps),
     maxTokens: String(started.max_tokens),
     maxToolOutputBytes: String(started.max_tool_output_bytes),
+    mcpServerIds: started.mcp_servers ?? [],
     model: started.model,
     provider: started.provider,
     reportFormat: started.report_format,
@@ -567,6 +586,9 @@ function blockedResumeMessage(plan: BlockedResumePlan): string {
   const reason = plan.reasons[0];
   if (reason === "pending_command_effect_unknown") {
     return "command effect is unknown and will not be rerun";
+  }
+  if (reason === "pending_mcp_effect_unknown") {
+    return "MCP process or tool-call effect is unknown and will not be reused or rerun";
   }
   if (reason === "degraded_resume_requires_confirmation") {
     return "canonical resume requires --allow-degraded-resume; no model was called";
@@ -660,8 +682,9 @@ export async function executeSessionsResume(
       return usageError(io, "chat sessions are not resumable by the Phase 9 agent CLI");
     }
 
-    const ledger = reconstructPendingEffectLedger(
-      legacyDomainEvents(session, lastRun),
+    const ledger = mergeMcpPendingEffects(
+      reconstructPendingEffectLedger(legacyDomainEvents(session, lastRun)),
+      lastRun.events,
     );
     const allocatedRunId = allocateRunId(session, runtime);
     if (allocatedRunId === undefined) {

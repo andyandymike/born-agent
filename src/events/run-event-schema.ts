@@ -16,6 +16,7 @@ const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const callIdSchema = z.string().min(1).max(200);
 const stableIdentifierSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/u);
 const providerIdSchema = stableIdentifierSchema;
+const mcpServerIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u);
 const incompleteReasonSchema = z.enum([
   "verification_missing",
   "verification_failed",
@@ -131,6 +132,11 @@ const agentRunStartedDataSchema = z
     max_command_output_bytes: positiveInteger.optional(),
     max_steps: positiveInteger,
     max_tokens: positiveInteger,
+    mcp_servers: z
+      .array(mcpServerIdSchema)
+      .max(4)
+      .refine((values) => new Set(values).size === values.length, "MCP server ids must be unique")
+      .optional(),
     max_tool_output_bytes: positiveInteger,
     request_timeout_ms: positiveInteger,
     report_format: z.enum(["text", "json"]).optional(),

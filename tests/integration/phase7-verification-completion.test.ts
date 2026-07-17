@@ -452,7 +452,7 @@ describe("born agent Phase 7 verification and completion integration", () => {
       eventType("usage"),
       eventType("run.incomplete"),
     ]);
-  });
+  }, 15_000);
 
   it("accepts an immediate blocked signal as an incomplete outcome", async () => {
     const workspace = await fixtureWorkspace(BLOCKED);

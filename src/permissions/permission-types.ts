@@ -63,7 +63,7 @@ export interface CommandActionIdentity extends NormalizedCommandAction {
   readonly executionInputsSha256: Sha256Hex;
 }
 
-export type NormalizedAction = CommandActionIdentity;
+export type NormalizedAction = CommandActionIdentity | McpPermissionActionIdentity;
 
 export interface PermissionContext {
   /**
@@ -73,6 +73,14 @@ export interface PermissionContext {
   readonly reviewedLocalActionSha256?:
     | ReadonlySet<Sha256Hex>
     | readonly Sha256Hex[];
+  /** Exact reviewed offline MCP start digests. User approval cannot add one. */
+  readonly reviewedOfflineMcpActionSha256?:
+    | ReadonlySet<Sha256Hex>
+    | readonly Sha256Hex[];
+  /** Server ids whose exact start action passed the offline review gate. */
+  readonly reviewedOfflineMcpServerIds?:
+    | ReadonlySet<string>
+    | readonly string[];
 }
 
 interface PermissionDecisionBase {
@@ -118,7 +126,7 @@ export interface PermissionPolicy {
   readonly id: string;
   readonly version: string;
   evaluate(
-    action: CommandActionIdentity,
+    action: NormalizedAction,
     context: PermissionContext,
   ): PolicyDecision;
 }
@@ -129,3 +137,4 @@ export interface PermissionEngineLike {
     context?: PermissionContext,
   ): PermissionDecision;
 }
+import type { McpPermissionActionIdentity } from "../mcp/mcp-action-identity.js";

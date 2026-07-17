@@ -30,9 +30,10 @@ import type { ModelEvidence } from "../completion/completion-types.js";
 import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { createRunCommandTool } from "./run-command-tool.js";
-import type { ToolDefinition } from "./tool-types.js";
+import type { RegisteredTool, ToolDefinition, ToolRegistration } from "./tool-types.js";
 
 export interface AgentToolRegistryOptions {
+  readonly additionalTools?: readonly RegisteredTool[];
   readonly artifactRuntime?: ArtifactSessionRuntimeLike;
   readonly approvalMode: EditApprovalMode;
   readonly approvalPrompt: ApprovalPrompt;
@@ -99,7 +100,7 @@ export async function createAgentToolRegistry(
           sessionId: options.sessionId,
           workspace: options.workspace,
         });
-  const definitions: ToolDefinition<unknown>[] = [
+  const definitions: ToolRegistration<unknown>[] = [
     ...(await createReadonlyToolDefinitions(options.workspace)),
     ...(options.artifactRuntime === undefined
       ? []
@@ -145,12 +146,15 @@ export async function createAgentToolRegistry(
             state: () => completion.state(),
           }) as ToolDefinition<unknown>,
         ]),
+    ...(options.additionalTools ?? []),
   ];
 
   // PHASE5: agent 显式装配唯一 mutation tool；chat 的独立 readonly factory 无法意外继承它。
   // deterministic fake 能证明批准协议和磁盘事实，但不能被重新标记成 live provider 证据。
   const mutations = definitions.filter(
-    (definition) => definition.capability === "mutation",
+    (definition) =>
+      definition.capability === "mutation" &&
+      !("origin" in definition && definition.origin.kind === "mcp"),
   );
   const expectedMutations =
     completion === undefined

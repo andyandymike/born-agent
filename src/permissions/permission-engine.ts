@@ -1,8 +1,10 @@
 import {
   createCommandActionIdentity,
 } from "./action-digest.js";
+import { verifyMcpPermissionActionIdentity } from "../mcp/mcp-action-identity.js";
 import type {
   CommandActionIdentity,
+  NormalizedAction,
   PermissionContext,
   PermissionDecision,
   PermissionEngineLike,
@@ -27,30 +29,41 @@ export class PermissionEngine implements PermissionEngineLike {
   }
 
   evaluate(
-    action: CommandActionIdentity,
+    action: NormalizedAction,
     context: PermissionContext = {},
   ): PermissionDecision {
-    let verified: CommandActionIdentity;
-    try {
-      verified = createCommandActionIdentity(action);
-    } catch {
-      return this.#deny(
-        PERMISSION_ENGINE_RULE_IDS.denyInvalidAction,
-        "invalid_action_identity",
-      );
-    }
-
-    if (verified.executionInputsSha256 !== action.executionInputsSha256) {
-      return this.#deny(
-        PERMISSION_ENGINE_RULE_IDS.denyExecutionInputsDigestMismatch,
-        "execution_inputs_digest_mismatch",
-      );
-    }
-    if (verified.actionSha256 !== action.actionSha256) {
-      return this.#deny(
-        PERMISSION_ENGINE_RULE_IDS.denyActionDigestMismatch,
-        "action_digest_mismatch",
-      );
+    let verified: NormalizedAction;
+    if (action.actionKind === "command") {
+      let command: CommandActionIdentity;
+      try {
+        command = createCommandActionIdentity(action);
+      } catch {
+        return this.#deny(
+          PERMISSION_ENGINE_RULE_IDS.denyInvalidAction,
+          "invalid_action_identity",
+        );
+      }
+      if (command.executionInputsSha256 !== action.executionInputsSha256) {
+        return this.#deny(
+          PERMISSION_ENGINE_RULE_IDS.denyExecutionInputsDigestMismatch,
+          "execution_inputs_digest_mismatch",
+        );
+      }
+      if (command.actionSha256 !== action.actionSha256) {
+        return this.#deny(
+          PERMISSION_ENGINE_RULE_IDS.denyActionDigestMismatch,
+          "action_digest_mismatch",
+        );
+      }
+      verified = command;
+    } else {
+      if (!verifyMcpPermissionActionIdentity(action)) {
+        return this.#deny(
+          PERMISSION_ENGINE_RULE_IDS.denyActionDigestMismatch,
+          "action_digest_mismatch",
+        );
+      }
+      verified = action;
     }
 
     // PHASE6: This policy decision is an application-level consent boundary, not

@@ -16,6 +16,7 @@ export type PendingToolKind =
   | "apply_patch"
   | "run_command"
   | "finish_task"
+  | "mcp"
   | "unknown";
 
 export interface ApprovalExpiry {
@@ -65,7 +66,7 @@ export interface UnknownCommandEffect {
 export interface RecoveredInnerEffect {
   readonly callId: string;
   readonly effectId: string;
-  readonly kind: "patch" | "command";
+  readonly kind: "patch" | "command" | "mcp";
   readonly observation: RecoveredToolObservation;
   readonly sourceRunId: string;
   readonly step: number;
@@ -98,6 +99,25 @@ export interface PendingEffectLedger {
   readonly pendingToolCalls: readonly PendingToolCall[];
   readonly recoveredInnerEffects: readonly RecoveredInnerEffect[];
   readonly unknownCommands: readonly UnknownCommandEffect[];
+  readonly unknownMcpCalls?: readonly UnknownMcpCallEffect[];
+  readonly unknownMcpServers?: readonly UnknownMcpServerEffect[];
+}
+
+export interface UnknownMcpCallEffect {
+  readonly actionSha256: string;
+  readonly callId: string;
+  readonly serverId: string;
+  readonly sourceRunId: string;
+  readonly stage: "effect_unknown" | "started";
+  readonly step: number;
+}
+
+export interface UnknownMcpServerEffect {
+  readonly actionSha256: string;
+  readonly processIdentitySha256: string | null;
+  readonly serverId: string;
+  readonly sourceRunId: string;
+  readonly stage: "effect_unknown" | "requested" | "started";
 }
 
 export interface VerifiedCheckpointProjection {
@@ -138,6 +158,7 @@ export type ResumeBlockReason =
   | "multiple_pending_calls"
   | "pending_call_requires_exact_checkpoint"
   | "pending_command_effect_unknown"
+  | "pending_mcp_effect_unknown"
   | "pending_patch_ambiguous"
   | "run_id_collision"
   | "workspace_root_mismatch";

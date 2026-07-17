@@ -28,6 +28,8 @@ import { redactSensitiveText } from "../security/redact.js";
 import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
 import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog-port.js";
 import type { TuiHost } from "../tui/tui-host.js";
+import { McpClientManager } from "../mcp/mcp-client-manager.js";
+import { McpServerLauncher } from "../mcp/mcp-server-launcher.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -49,6 +51,31 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   // PHASE2: 这里把可测试的接口接到真实 Node 能力：UUID、时钟、文件、timer、SDK。
   // 单元测试会替换这些依赖，因此无需真的访问网络、磁盘或等待超时。
   const backendFactory = createProductionBackendFactory(options.env);
+  const timers = {
+    clearTimeout: (handle: unknown) =>
+      clearTimeout(handle as ReturnType<typeof setTimeout>),
+    setTimeout: (listener: () => void, delayMs: number) =>
+      setTimeout(listener, delayMs),
+  };
+  const isProcessAlive = (processIdentity: number): boolean => {
+    try {
+      options.killProcess(processIdentity, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const createCleanup = () =>
+    new NodeProcessTreeCleanup({
+      isProcessAlive,
+      killProcess: options.killProcess,
+      platform: options.platform,
+      ...(options.platform === "win32"
+        ? { taskkill: createTaskkillArgvRunner(spawn) }
+        : {}),
+      timers,
+    });
+  const permissionEngine = new PermissionEngine(localFreeOnlyPermissionPolicy);
   return {
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
@@ -61,12 +88,34 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         ...options.approvalInput,
         output: io.stderr,
       }),
+    createMcpClientManager: ({ events, prompt }) => {
+      const launcher = new McpServerLauncher({
+        cleanup: createCleanup(),
+        environment: options.env,
+        events,
+        now: () => performance.now(),
+        permissionEngine,
+        platform: options.platform,
+        prompt,
+        randomUUID,
+        workspace: options.cwd,
+      });
+      return new McpClientManager({
+        events,
+        launcher,
+        permissionEngine,
+        prompt,
+        randomUUID,
+        secrets: [options.env.OPENAI_API_KEY, options.env.ANTHROPIC_API_KEY],
+      });
+    },
     createAgentToolRegistry: async (registryOptions) => {
       if (registryOptions.taskProfile === "read-only") {
         return createReadonlyToolRegistry(
           registryOptions.workspace,
           registryOptions.secrets ?? [],
           registryOptions.artifactRuntime,
+          registryOptions.additionalTools ?? [],
         );
       }
       const executableRegistry = createDefaultExecutableRegistry({
@@ -80,29 +129,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         registry: executableRegistry,
         workspace: registryOptions.workspace,
       });
-      const timers = {
-        clearTimeout: (handle: unknown) =>
-          clearTimeout(handle as ReturnType<typeof setTimeout>),
-        setTimeout: (listener: () => void, delayMs: number) =>
-          setTimeout(listener, delayMs),
-      };
-      const isProcessAlive = (processIdentity: number): boolean => {
-        try {
-          options.killProcess(processIdentity, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      const cleanup = new NodeProcessTreeCleanup({
-        isProcessAlive,
-        killProcess: options.killProcess,
-        platform: options.platform,
-        ...(options.platform === "win32"
-          ? { taskkill: createTaskkillArgvRunner(spawn) }
-          : {}),
-        timers,
-      });
+      const cleanup = createCleanup();
       const executor = new LocalExecutor({
         clock: { now: () => performance.now() },
         platform: options.platform,
@@ -112,9 +139,6 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         spawn: createNodeSpawnAdapter(spawn),
         timers,
       });
-      const permissionEngine = new PermissionEngine(
-        localFreeOnlyPermissionPolicy,
-      );
       return createAgentToolRegistry({
         ...registryOptions,
         executionPreparer,

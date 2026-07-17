@@ -45,6 +45,7 @@ function agentOptions(
     maxSteps: options.maxSteps,
     maxTokens: options.maxTokens,
     maxToolOutputBytes: options.maxToolOutputBytes,
+    mcpServerIds: options.mcpServerIds,
     model: options.model,
     provider: options.provider,
     reportFormat: options.reportFormat,

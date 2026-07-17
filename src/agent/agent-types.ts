@@ -14,6 +14,7 @@ export interface AgentCommandOptions {
   readonly maxSteps: string | undefined;
   readonly maxTokens: string | undefined;
   readonly maxToolOutputBytes: string | undefined;
+  readonly mcpServerIds?: readonly string[] | undefined;
   readonly model: string | undefined;
   readonly provider: string | undefined;
   readonly reportFormat: string | undefined;
@@ -53,6 +54,7 @@ export interface ResolvedAgentConfig extends AgentLoopConfig {
   readonly editApproval: EditApprovalMode;
   readonly model: string;
   readonly maxCommandOutputBytes: number;
+  readonly mcpServerIds?: readonly string[];
   readonly ollamaBaseURL?: string;
   readonly provider: ChatProvider;
   readonly reportFormat: ReportFormat;

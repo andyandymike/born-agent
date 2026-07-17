@@ -11,6 +11,11 @@ import {
 } from "../commands/sessions.js";
 import type { CliIO, CliRuntime } from "./types.js";
 import { executeTui } from "../tui/run-tui.js";
+import { executeMcpInspect, executeMcpList } from "../commands/mcp.js";
+
+function collectOption(value: string, previous: readonly string[]): string[] {
+  return [...previous, value];
+}
 
 export async function runCli(
   argv: readonly string[],
@@ -37,6 +42,7 @@ export async function runCli(
     .argument("<task>", "repository task to answer; do not paste API keys")
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
     .option("--max-steps <steps>", "maximum model responses")
     // PHASE4: max-duration 覆盖整次 run，request-timeout 只覆盖一轮 provider response。
     .option("--max-duration-ms <milliseconds>", "whole-run wall clock budget")
@@ -119,6 +125,7 @@ export async function runCli(
           maxSteps?: string;
           maxTokens?: string;
           maxToolOutputBytes?: string;
+          mcp: string[];
           model?: string;
           provider?: string;
           reportFormat?: string;
@@ -143,6 +150,7 @@ export async function runCli(
             maxSteps: options.maxSteps,
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
+            mcpServerIds: options.mcp,
             model: options.model,
             provider: options.provider,
             reportFormat: options.reportFormat,
@@ -210,6 +218,7 @@ export async function runCli(
     )
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
     .option("--max-steps <steps>", "maximum model responses")
     .option("--max-duration-ms <milliseconds>", "whole-run wall clock budget")
     .option("--request-timeout-ms <milliseconds>", "timeout for each provider request")
@@ -245,6 +254,7 @@ export async function runCli(
           maxSteps?: string;
           maxTokens?: string;
           maxToolOutputBytes?: string;
+          mcp: string[];
           model?: string;
           provider?: string;
           reportFormat?: string;
@@ -270,6 +280,7 @@ export async function runCli(
             maxSteps: options.maxSteps,
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
+            mcpServerIds: options.mcp,
             model: options.model,
             provider: options.provider,
             reportFormat: options.reportFormat,
@@ -354,6 +365,25 @@ export async function runCli(
         );
       },
     );
+
+  const mcp = program
+    .command("mcp")
+    .description("Validate, inspect, and explicitly run local stdio MCP servers.");
+
+  mcp
+    .command("list")
+    .description("List and validate local MCP config without spawning a process.")
+    .action(async () => {
+      commandExitCode = await executeMcpList(runtime, io);
+    });
+
+  mcp
+    .command("inspect")
+    .description("Start one approved offline MCP server and inspect its catalog.")
+    .argument("<server-id>", "configured MCP server id")
+    .action(async (serverId: string) => {
+      commandExitCode = await executeMcpInspect(serverId, runtime, io);
+    });
 
   sessions
     .command("resume")

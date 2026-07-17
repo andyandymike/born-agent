@@ -1,4 +1,6 @@
 import type { RunEvent } from "../events/run-event.js";
+import type { DecodedRunEvent } from "../events/event-decoder-registry.js";
+import { recoverDurableMappedMcpResult } from "../mcp/mcp-result-mapper.js";
 import type {
   ApprovalExpiry,
   PendingEffectLedger,
@@ -8,6 +10,8 @@ import type {
   RecoveredInnerEffect,
   RecoveredToolObservation,
   UnknownCommandEffect,
+  UnknownMcpCallEffect,
+  UnknownMcpServerEffect,
 } from "./resume-types.js";
 
 const MAX_COMMAND_TOOL_OUTPUT_BYTES = 1_114_112;
@@ -50,6 +54,7 @@ interface CommandAccumulator {
 }
 
 function pendingToolKind(toolName: string): PendingToolKind {
+  if (toolName.startsWith("mcp__")) return "mcp";
   if (toolName === "apply_patch") return "apply_patch";
   if (toolName === "run_command") return "run_command";
   if (toolName === "finish_task") return "finish_task";
@@ -431,6 +436,133 @@ export function reconstructPendingEffectLedger(
     pendingToolCalls: freezeArray([...pendingCalls.values()]),
     recoveredInnerEffects: freezeArray(recoveredInnerEffects),
     unknownCommands: freezeArray(unknownCommands),
+    unknownMcpCalls: Object.freeze([]),
+    unknownMcpServers: Object.freeze([]),
   };
   return Object.freeze(ledger);
+}
+
+export function mergeMcpPendingEffects(
+  ledger: PendingEffectLedger,
+  events: readonly DecodedRunEvent[],
+): PendingEffectLedger {
+  const servers = new Map<string, UnknownMcpServerEffect>();
+  const calls = new Map<string, UnknownMcpCallEffect>();
+  const completedOuterCalls = new Set(
+    events
+      .filter((event) => event.type === "tool.call.completed")
+      .map((event) => `${event.runId}\0${event.data.call_id}`),
+  );
+  const recovered = [...ledger.recoveredInnerEffects];
+  for (const event of events) {
+    switch (event.type) {
+      case "mcp.server.start.requested":
+        servers.set(`${event.runId}\0${event.data.server_id}`, {
+          actionSha256: event.data.action_sha256,
+          processIdentitySha256: null,
+          serverId: event.data.server_id,
+          sourceRunId: event.runId,
+          stage: "requested",
+        });
+        break;
+      case "mcp.server.start.failed":
+        servers.delete(`${event.runId}\0${event.data.server_id}`);
+        break;
+      case "mcp.server.start.effect_unknown": {
+        const key = `${event.runId}\0${event.data.server_id}`;
+        const previous = servers.get(key);
+        servers.set(key, {
+          actionSha256: event.data.action_sha256,
+          processIdentitySha256: previous?.processIdentitySha256 ?? null,
+          serverId: event.data.server_id,
+          sourceRunId: event.runId,
+          stage: "effect_unknown",
+        });
+        break;
+      }
+      case "mcp.server.started":
+        servers.set(`${event.runId}\0${event.data.server_id}`, {
+          actionSha256: event.data.action_sha256,
+          processIdentitySha256: event.data.process_identity_sha256,
+          serverId: event.data.server_id,
+          sourceRunId: event.runId,
+          stage: "started",
+        });
+        break;
+      case "mcp.server.stopped":
+        servers.delete(`${event.runId}\0${event.data.server_id}`);
+        break;
+      case "mcp.tool.call.started":
+        calls.set(`${event.runId}\0${event.data.call_id}`, {
+          actionSha256: event.data.action_sha256,
+          callId: event.data.call_id,
+          serverId: event.data.server_id,
+          sourceRunId: event.runId,
+          stage: "started",
+          step: event.data.step,
+        });
+        break;
+      case "mcp.tool.call.effect_unknown":
+        calls.set(`${event.runId}\0${event.data.call_id}`, {
+          actionSha256: event.data.action_sha256,
+          callId: event.data.call_id,
+          serverId: event.data.server_id,
+          sourceRunId: event.runId,
+          stage: "effect_unknown",
+          step: event.data.step,
+        });
+        break;
+      case "mcp.tool.call.completed": {
+        const key = `${event.runId}\0${event.data.call_id}`;
+        calls.delete(key);
+        if (!completedOuterCalls.has(key)) {
+          if (event.data.artifact_ref !== undefined) {
+            throw new Error("MCP result artifact requires store verification before recovery");
+          }
+          const mapped = recoverDurableMappedMcpResult({
+            bytes: event.data.bytes,
+            mapperVersion: event.data.mapper_version,
+            observation: event.data.observation,
+            observationSha256: event.data.observation_sha256,
+            status: event.data.status,
+            truncated: event.data.truncated,
+          });
+          recovered.push({
+            callId: event.data.call_id,
+            effectId: event.data.action_sha256,
+            kind: "mcp",
+            observation:
+              mapped.status === "success"
+                ? {
+                    output: mapped.observation,
+                    status: "success",
+                    truncated: mapped.truncated,
+                  }
+                : {
+                    errorCategory: "tool",
+                    errorCode: "mcp_tool_error",
+                    output: mapped.observation,
+                    retryable: false,
+                    status: "error",
+                    truncated: mapped.truncated,
+                  },
+            sourceRunId: event.runId,
+            step: event.data.step,
+          });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  // PHASE12: old MCP clients, stdio streams, catalogs, and approvals never
+  // survive resume. Requested/started tails block until exact process/effect
+  // reconciliation; only verified durable mapped bytes can recover an outer result.
+  return Object.freeze({
+    ...ledger,
+    recoveredInnerEffects: freezeArray(recovered),
+    unknownMcpCalls: freezeArray([...calls.values()]),
+    unknownMcpServers: freezeArray([...servers.values()]),
+  });
 }

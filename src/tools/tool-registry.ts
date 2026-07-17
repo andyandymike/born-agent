@@ -1,13 +1,13 @@
-import { z } from "zod";
-
 import type { ModelToolDefinition } from "../model/model-backend.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { serializeToolError, toolError } from "./tool-errors.js";
+import { ZodToolValidator } from "./validators/zod-tool-validator.js";
 import {
   FatalToolExecutionError,
   MAX_TOOL_ARGUMENT_BYTES,
   MAX_TOOL_OUTPUT_BYTES,
-  type ToolDefinition,
+  type RegisteredTool,
+  type ToolRegistration,
   type CompletionRuntimeLike,
   type ToolExecution,
   type ToolInvocation,
@@ -16,11 +16,18 @@ import {
 
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/u;
 
-function strictJsonSchema<TInput>(
-  definition: ToolDefinition<TInput>,
-): Readonly<Record<string, unknown>> {
-  // PHASE3: 从 Zod 生成 provider schema，避免“模型参数定义”和“本地校验定义”各写一份后漂移。
-  const schema = z.toJSONSchema(definition.inputSchema, { target: "draft-7" });
+function isRegisteredTool(
+  definition: ToolRegistration<unknown>,
+): definition is RegisteredTool<unknown> {
+  return "validator" in definition;
+}
+
+function register(
+  definition: ToolRegistration<unknown>,
+): RegisteredTool<unknown> {
+  if (isRegisteredTool(definition)) return definition;
+  const validator = new ZodToolValidator(definition.inputSchema);
+  const schema = validator.modelSchema;
   if (
     schema.type !== "object" ||
     schema.additionalProperties !== false ||
@@ -28,27 +35,42 @@ function strictJsonSchema<TInput>(
   ) {
     throw new Error(`tool ${definition.name} does not have a strict object schema`);
   }
-  const properties = schema.properties ?? {};
-  if (Object.keys(properties).some((key) => !schema.required?.includes(key))) {
+  const properties =
+    typeof schema.properties === "object" && schema.properties !== null
+      ? (schema.properties as Readonly<Record<string, unknown>>)
+      : {};
+  const required = schema.required as readonly unknown[];
+  if (Object.keys(properties).some((key) => !required.includes(key))) {
     throw new Error(`tool ${definition.name} has optional JSON schema properties`);
   }
-  return schema;
+  return Object.freeze({
+    capability: definition.capability,
+    description: definition.description,
+    execute: definition.execute.bind(definition),
+    ...(definition.maxOutputBytes === undefined
+      ? {}
+      : { maxOutputBytes: definition.maxOutputBytes }),
+    name: definition.name,
+    origin: Object.freeze({ kind: "builtin" as const }),
+    validator,
+  });
 }
 
 export class ToolRegistry implements ToolRegistryLike {
   readonly artifactOutput?: NonNullable<ToolRegistryLike["artifactOutput"]>;
   readonly modelDefinitions: readonly ModelToolDefinition[];
-  private readonly definitions = new Map<string, ToolDefinition<unknown>>();
+  private readonly definitions = new Map<string, RegisteredTool<unknown>>();
 
   constructor(
-    definitions: readonly ToolDefinition<unknown>[],
+    definitions: readonly ToolRegistration<unknown>[],
     private readonly secrets: readonly (string | undefined)[] = [],
     readonly completion?: CompletionRuntimeLike,
     artifactOutput?: NonNullable<ToolRegistryLike["artifactOutput"]>,
   ) {
     if (artifactOutput !== undefined) this.artifactOutput = artifactOutput;
     // PHASE3: 注册阶段 fail fast：工具名必须稳定合法且不能重复。
-    for (const definition of definitions) {
+    for (const source of definitions) {
+      const definition = register(source);
       if (!TOOL_NAME.test(definition.name)) {
         throw new Error(`invalid tool name: ${definition.name}`);
       }
@@ -71,8 +93,8 @@ export class ToolRegistry implements ToolRegistryLike {
       .map((definition) => ({
         description: definition.description,
         name: definition.name,
-        parameters: strictJsonSchema(definition),
-        strict: true as const,
+        parameters: definition.validator.modelSchema,
+        strict: definition.validator.strictForModel,
       }));
   }
 
@@ -114,27 +136,16 @@ export class ToolRegistry implements ToolRegistryLike {
       );
     }
 
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(invocation.argumentsJson) as unknown;
-    } catch {
-      return serializeToolError(
-        toolError(
-          "invalid_arguments",
-          "invalid_arguments_json",
-          "tool arguments must be valid JSON",
-        ),
-        this.secrets,
-      );
-    }
-
-    const parsed = definition.inputSchema.safeParse(parsedJson);
+    const parsed = definition.validator.parseJson(invocation.argumentsJson);
     if (!parsed.success) {
+      const invalidJson = parsed.issues.some((issue) => issue.keyword === "parse");
       return serializeToolError(
         toolError(
           "invalid_arguments",
-          "arguments_schema_mismatch",
-          "tool arguments do not match the required schema",
+          invalidJson ? "invalid_arguments_json" : "arguments_schema_mismatch",
+          invalidJson
+            ? "tool arguments must be valid JSON"
+            : "tool arguments do not match the required schema",
         ),
         this.secrets,
       );
@@ -142,7 +153,8 @@ export class ToolRegistry implements ToolRegistryLike {
 
     let result;
     try {
-      // PHASE3: executor 只能看到 Zod 验证后的 input，并共享整个 run 的 AbortSignal。
+      // PHASE12: builtin Zod and discovered MCP JSON Schema validators share
+      // this one execution funnel; provider-side strictness is never authority.
       result = await definition.execute(parsed.data, {
         callId: invocation.callId,
         signal,
@@ -163,6 +175,33 @@ export class ToolRegistry implements ToolRegistryLike {
       };
     }
     if (!result.ok) {
+      if (result.preSerializedOutput !== undefined) {
+        const output = redactSensitiveText(result.preSerializedOutput, this.secrets);
+        const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
+        if (
+          output !== result.preSerializedOutput ||
+          Buffer.byteLength(output, "utf8") > outputLimit
+        ) {
+          return serializeToolError(
+            toolError(
+              "system",
+              "tool_output_contract_failed",
+              "tool output failed its exact observation contract",
+            ),
+            this.secrets,
+          );
+        }
+        return this.materializeExecution(invocation, outputLimit, {
+          ...(result.control === undefined ? {} : { control: result.control }),
+          error: {
+            ...result.error,
+            message: redactSensitiveText(result.error.message, this.secrets),
+          },
+          ok: false,
+          output,
+          truncated: result.truncated ?? false,
+        });
+      }
       if (result.value === undefined) {
         return serializeToolError(result.error, this.secrets);
       }
@@ -198,9 +237,22 @@ export class ToolRegistry implements ToolRegistryLike {
 
     const output = redactSensitiveText(
       // PHASE3: 所有成功结果都由 Registry 统一变成紧凑 JSON，工具本身不手写最终字符串。
-      JSON.stringify({ ...result.value, ok: true }),
+      result.preSerializedOutput ?? JSON.stringify({ ...result.value, ok: true }),
       this.secrets,
     );
+    if (
+      result.preSerializedOutput !== undefined &&
+      output !== result.preSerializedOutput
+    ) {
+      return serializeToolError(
+        toolError(
+          "system",
+          "tool_output_contract_failed",
+          "tool output failed its exact observation contract",
+        ),
+        this.secrets,
+      );
+    }
     const outputLimit = definition.maxOutputBytes ?? MAX_TOOL_OUTPUT_BYTES;
     if (Buffer.byteLength(output, "utf8") > outputLimit) {
       if (!this.canMaterialize(invocation)) {

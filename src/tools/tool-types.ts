@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import type { ArtifactOutputMaterializationPort } from "../artifacts/artifact-session-runtime.js";
 import type { ModelToolDefinition } from "../model/model-backend.js";
+import type { RuntimeToolValidator } from "./validators/runtime-tool-validator.js";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
@@ -60,6 +61,8 @@ export type ToolRawResult =
   | {
       readonly ok: true;
       readonly control?: CompletionControlSignal;
+      /** Already-sanitized exact observation for protocol adapters such as MCP. */
+      readonly preSerializedOutput?: string;
       readonly truncated: boolean;
       readonly value: Readonly<Record<string, unknown>>;
     }
@@ -67,6 +70,7 @@ export type ToolRawResult =
       readonly error: ToolError;
       readonly control?: CompletionControlSignal;
       readonly ok: false;
+      readonly preSerializedOutput?: string;
       // PHASE6: execution failures can still carry bounded stdout/stderr evidence;
       // the Registry remains the single serializer/redactor for that observation.
       readonly truncated?: boolean;
@@ -110,6 +114,29 @@ export interface ToolDefinition<TInput> {
   execute(input: TInput, context: ToolContext): Promise<ToolRawResult>;
 }
 
+export type ToolOrigin =
+  | { readonly kind: "builtin" }
+  | {
+      readonly catalogSha256: string;
+      readonly kind: "mcp";
+      readonly rawName: string;
+      readonly serverId: string;
+    };
+
+export interface RegisteredTool<TInput = unknown> {
+  readonly capability: "mutation" | "read";
+  readonly description: string;
+  readonly maxOutputBytes?: number;
+  readonly name: string;
+  readonly origin: ToolOrigin;
+  readonly validator: RuntimeToolValidator<TInput>;
+  execute(input: TInput, context: ToolContext): Promise<ToolRawResult>;
+}
+
+export type ToolRegistration<TInput = unknown> =
+  | RegisteredTool<TInput>
+  | ToolDefinition<TInput>;
+
 export interface ToolInvocation {
   readonly argumentsJson: string;
   readonly callId: string;
@@ -124,6 +151,7 @@ export class FatalToolExecutionError extends Error {
   constructor(
     readonly kind:
       | "ambiguous_command_state"
+      | "ambiguous_mcp_state"
       | "ambiguous_patch_state"
       | "storage"
       | "user_cancelled",

@@ -128,6 +128,7 @@ export function agentPolicySha256(config: ResolvedAgentConfig): string {
       id: LOCAL_FREE_PERMISSION_POLICY_ID,
       version: LOCAL_FREE_PERMISSION_POLICY_VERSION,
     },
+    mcp_servers: config.mcpServerIds ?? [],
     task_profile: config.taskProfile,
     version: 1,
   });

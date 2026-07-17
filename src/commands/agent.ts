@@ -30,7 +30,13 @@ import type {
 } from "../model/model-backend.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
-import { FatalToolExecutionError } from "../tools/tool-types.js";
+import {
+  FatalToolExecutionError,
+  type RegisteredTool,
+} from "../tools/tool-types.js";
+import { McpConfigLoader } from "../mcp/mcp-config-loader.js";
+import { McpCoreError } from "../mcp/mcp-errors.js";
+import type { McpClientManager } from "../mcp/mcp-client-manager.js";
 import { ArtifactSessionRuntime } from "../artifacts/artifact-session-runtime.js";
 import {
   AgentContextRuntime,
@@ -191,6 +197,7 @@ export async function executeAgent(
   // PHASE4: CLI 的 SIGINT 只转成用户 signal；AgentLoop 再负责映射 run.cancelled/130。
   const stopListening = runtime.onCancel(() => userController.abort());
   let exitCode: AgentExitCode;
+  let mcpManager: McpClientManager | undefined;
 
   try {
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
@@ -206,6 +213,9 @@ export async function executeAgent(
         max_command_output_bytes: config.maxCommandOutputBytes,
         max_steps: config.maxSteps,
         max_tokens: config.maxTokens,
+        ...((config.mcpServerIds ?? []).length === 0
+          ? {}
+          : { mcp_servers: [...(config.mcpServerIds ?? [])] }),
         max_tool_output_bytes: config.maxToolOutputBytes,
         model: config.model,
         provider: config.provider,
@@ -462,7 +472,62 @@ export async function executeAgent(
             : AGENT_SYSTEM_INSTRUCTIONS,
       }),
     });
+    let additionalTools: readonly RegisteredTool[] = [];
+    const mcpServerIds = config.mcpServerIds ?? [];
+    if (mcpServerIds.length > 0) {
+      if (
+        runtime.createMcpClientManager === undefined ||
+        writer.appendRunEvent === undefined
+      ) {
+        throw new McpCoreError(
+          "mcp_config_invalid",
+          "this runtime does not support durable MCP sessions",
+        );
+      }
+      const loadedMcp = await new McpConfigLoader({ workspace: runtime.cwd }).load();
+      if (loadedMcp.status === "missing") {
+        throw new McpCoreError("mcp_config_missing", "local MCP config is missing");
+      }
+      const selected = mcpServerIds.map((serverId) => {
+        const server = loadedMcp.servers[serverId];
+        if (server === undefined) {
+          throw new McpCoreError("mcp_config_invalid", `unknown MCP server id: ${serverId}`);
+        }
+        return server;
+      });
+      const prompt = runtime.createApprovalPrompt(io);
+      mcpManager = runtime.createMcpClientManager({
+        events: {
+          append: async (type, data) => {
+            try {
+              await writer.appendRunEvent!(runId, type, data);
+            } catch (error) {
+              throw new EventPersistenceError(error);
+            }
+          },
+        },
+        prompt,
+      });
+      additionalTools = await mcpManager.startSelected({
+        configs: selected,
+        reservedModelNames:
+          config.taskProfile === "read-only"
+            ? ["list_files", "read_artifact", "read_file", "search"]
+            : [
+                "apply_patch",
+                "finish_task",
+                "list_files",
+                "read_artifact",
+                "read_file",
+                "run_command",
+                "search",
+              ],
+        signal: userController.signal,
+        workspaceRealPath: loadedMcp.workspaceRealPath,
+      });
+    }
     const tools = await runtime.createAgentToolRegistry({
+      ...(additionalTools.length === 0 ? {} : { additionalTools }),
       approvalMode: config.editApproval,
       approvalPrompt: runtime.createApprovalPrompt(io),
       ...(artifactRuntime === undefined ? {} : { artifactRuntime }),
@@ -581,6 +646,7 @@ export async function executeAgent(
     } else if (error instanceof FatalToolExecutionError) {
       const commandStateUnknown =
         error.kind === "ambiguous_command_state";
+      const mcpStateUnknown = error.kind === "ambiguous_mcp_state";
       try {
         const snapshot = budget.snapshot();
         await publisher.publish({
@@ -588,11 +654,15 @@ export async function executeAgent(
             category: "internal",
             code: commandStateUnknown
               ? "ambiguous_command_state"
-              : "ambiguous_patch_state",
+              : mcpStateUnknown
+                ? "ambiguous_mcp_state"
+                : "ambiguous_patch_state",
             duration_ms: snapshot.elapsedMs,
             message: commandStateUnknown
               ? "command effect or process cleanup is ambiguous; inspect the workspace and running processes before continuing"
-              : "workspace state is ambiguous; inspect the diff before continuing",
+              : mcpStateUnknown
+                ? "MCP call effect is ambiguous; inspect external effects before resuming"
+                : "workspace state is ambiguous; inspect the diff before continuing",
             output_chars: publisher.outputLength,
             retryable: false,
             steps: snapshot.steps,
@@ -607,8 +677,36 @@ export async function executeAgent(
           renderer.renderDiagnostic(
             commandStateUnknown
               ? "command effect or process cleanup is ambiguous"
-              : "workspace state is ambiguous",
+              : mcpStateUnknown
+                ? "MCP call effect is ambiguous"
+                : "workspace state is ambiguous",
           );
+        }
+      }
+      exitCode = 1;
+    } else if (error instanceof McpCoreError) {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            category:
+              error.code === "mcp_approval_denied" ||
+              error.code === "mcp_permission_denied"
+                ? "permission"
+                : "protocol",
+            code: error.code,
+            duration_ms: snapshot.elapsedMs,
+            message: error.message.slice(0, 500),
+            output_chars: publisher.outputLength,
+            retryable: false,
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.failed",
+        });
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
         }
       }
       exitCode = 1;
@@ -661,6 +759,14 @@ export async function executeAgent(
     }
   } finally {
     stopListening();
+    if (mcpManager !== undefined) {
+      try {
+        await mcpManager.stopAll();
+      } catch {
+        renderer.renderDiagnostic("MCP process cleanup could not be verified");
+        exitCode = 1;
+      }
+    }
   }
 
   try {
