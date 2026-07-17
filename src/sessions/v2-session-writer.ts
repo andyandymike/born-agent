@@ -27,7 +27,8 @@ import {
 } from "./durable-session-store.js";
 import type { StoredLineDecoder } from "./tail-recovery.js";
 
-interface V2SessionWriterOptions {
+export interface V2SessionWriterOptions {
+  readonly afterDurableEvent?: (event: DecodedStoredEvent) => void;
   readonly createEventId?: () => string;
   readonly timestamp?: () => string;
 }
@@ -63,6 +64,9 @@ export class V2SessionWriter implements SessionWriter {
   readonly workspace: string;
   private closed = false;
   private readonly createEventId: () => string;
+  private readonly afterDurableEvent:
+    | ((event: DecodedStoredEvent) => void)
+    | undefined;
   private decoded: readonly DecodedStoredEvent[];
   private readonly durableEventListeners = new Set<
     (event: DecodedStoredEvent) => void
@@ -83,6 +87,7 @@ export class V2SessionWriter implements SessionWriter {
     this.rawValues = decoder.values;
     this.decoded = decodeStoredEvents(this.rawValues);
     assertPhase9RunEventSemantics(this.decoded);
+    this.afterDurableEvent = options.afterDurableEvent;
     this.createEventId = options.createEventId ?? randomUUID;
     this.timestamp = options.timestamp ?? (() => new Date().toISOString());
     for (const event of this.decoded) {
@@ -297,6 +302,11 @@ export class V2SessionWriter implements SessionWriter {
         // PersistedEventSource converts listener faults into its fatal channel.
       }
     }
+    // PHASE14: the eval-only crash harness may terminate only here, after the
+    // JSONL append has been synced and committed to the decoded ledger. Normal
+    // CLI writers never configure this hook, so prompts/config cannot expose a
+    // process-termination control or manufacture a pre-durable side effect.
+    this.afterDurableEvent?.(event);
     return event;
   }
 

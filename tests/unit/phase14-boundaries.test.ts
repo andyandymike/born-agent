@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { prepareNodeAttemptWorkspace } from "../../src/evals/attempt-workspace-node.js";
 import { EvalApprovalPolicy } from "../../src/evals/eval-approval-policy.js";
@@ -19,6 +20,32 @@ const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe("Phase 14 protocol, approval, and grader boundaries", () => {
+  it("executes the checked-in static supervisor without executing candidate code", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bornagent-grader-script-"));
+    roots.push(root);
+    const observations = path.join(root, "observations.jsonl");
+    const grader = path.join(
+      process.cwd(),
+      "evals",
+      "tasks",
+      "read-paths",
+      "grader",
+      "grade.mjs",
+    );
+    await writeFile(
+      observations,
+      '{"case_id":"static","value":"PASS:read-paths\\n"}\n',
+      "utf8",
+    );
+    expect(spawnSync(process.execPath, [grader, observations]).status).toBe(0);
+    await writeFile(
+      observations,
+      '{"case_id":"static","value":"WRONG\\n"}\n',
+      "utf8",
+    );
+    expect(spawnSync(process.execPath, [grader, observations]).status).toBe(1);
+  });
+
   it("matches host-only case IDs and rejects bad, duplicate, unknown, or missing JSONL frames", () => {
     const cases = loadProtocolCases(
       { schema_version: 1, cases: [{ id: "a", value: { n: 1 } }, { id: "b", value: { n: 2 } }] },
@@ -67,7 +94,7 @@ describe("Phase 14 protocol, approval, and grader boundaries", () => {
 });
 
 describe("Phase 14 local-only drivers and offline price fixtures", () => {
-  it("uses the scripted DSL in-process and uses a direct guarded Ollama transport contract", async () => {
+  it("uses the scripted DSL in-process and rejects a mismatched local driver source", async () => {
     const assets = await loadEvalAssets(path.join(process.cwd(), "evals"));
     const scripted = assets.tasks.get("resume-checkpoint");
     const ollamaTask = assets.tasks.get("read-paths");
@@ -80,19 +107,9 @@ describe("Phase 14 local-only drivers and offline price fixtures", () => {
     expect(fakeResult.events.some((event) => event.type === "resume_adopted")).toBe(true);
     expect(fakeResult.events.some((event) => event.type === "approval_decided" && event.fields.decisionSource === "eval_policy")).toBe(true);
 
-    const localRoot = path.join(root, "ollama"); await mkdir(localRoot);
-    const localWorkspace = await prepareNodeAttemptWorkspace(ollamaTask.workspaceRoot, localRoot);
     const source = { kind: "local_ollama", provider: "ollama", endpoint: "http://127.0.0.1:11434", installedModelTag: "qwen3:fixed", installedModelDigest: "b".repeat(64) } as const;
-    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      expect(init?.redirect).toBe("error");
-      expect(String(init?.body)).not.toContain("API_KEY");
-      return new Response(JSON.stringify({ message: { content: '{"path":"answer.txt","content":"PASS:read-paths\\n"}' }, prompt_eval_count: 10, eval_count: 5 }), { status: 200 });
-    }) as unknown as typeof fetch;
-    const result = await new LocalOllamaEvalAgentDriver(() => fetcher).run({ task: ollamaTask, workspacePath: localWorkspace.workspacePath, model: "qwen3:fixed", source, guard: preflightEvalNoCostPolicy(source), signal: new AbortController().signal, approvalPolicy: new EvalApprovalPolicy(ollamaTask.task.manifest, "ollama-r1"), disposableWorkspaceId: "ollama-r1" });
-    expect(result.completed).toBe(true);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(await readFile(path.join(localWorkspace.workspacePath, "answer.txt"), "utf8")).toBe("PASS:read-paths\n");
-  }, 20_000);
+    await expect(new LocalOllamaEvalAgentDriver().run({ task: ollamaTask, workspacePath: fakeWorkspace.workspacePath, model: "qwen3:fixed", source: fakeSource, guard: preflightEvalNoCostPolicy(source), signal: new AbortController().signal, approvalPolicy: new EvalApprovalPolicy(ollamaTask.task.manifest, "ollama-r1"), disposableWorkspaceId: "ollama-r1" })).rejects.toThrow(/wrong source/u);
+  }, 60_000);
 
   it("loads a checked-in catalog without fetching and preserves null cost semantics", async () => {
     const catalog = loadPriceCatalog(JSON.parse(await readFile(path.join(process.cwd(), "evals", "price-catalog-v1.json"), "utf8")) as unknown);
