@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { runDoctor } from "../../src/doctor/run-doctor.js";
@@ -77,61 +81,128 @@ describe("runDoctor", () => {
     });
     const report = await runDoctor(runtime);
     expect(findCheck(report, "Workspace")).toMatchObject({ ok: false });
-    expect(commands).toEqual(["git", "rg"]);
-    expect(report.checks).toHaveLength(7);
+    expect(commands).toEqual(["git", "rg", "ollama"]);
+    expect(report.checks).toHaveLength(9);
   });
 
-  it("reports credential state without exposing the API key", async () => {
+  it("does not read a remote credential when local-free denies the request", async () => {
     const secret = "sk-doctor-secret";
-    const configured = await runDoctor(
-      createRuntime({ env: { OPENAI_API_KEY: secret } }),
+    let credentialReads = 0;
+    const environment = new Proxy(
+      { BORN_PROVIDER: "openai", OPENAI_API_KEY: secret },
+      {
+        get(target, property, receiver) {
+          if (property === "OPENAI_API_KEY") credentialReads += 1;
+          return Reflect.get(target, property, receiver) as string | undefined;
+        },
+      },
     );
-    const missing = await runDoctor(createRuntime({ env: {} }));
-    expect(findCheck(configured, "OpenAI credential")).toEqual({
-      detail: "configured",
-      name: "OpenAI credential",
-      ok: true,
-    });
-    expect(JSON.stringify(configured)).not.toContain(secret);
-    expect(findCheck(missing, "OpenAI credential")).toMatchObject({
-      detail: "not configured",
+    const report = await runDoctor(createRuntime({ env: environment }));
+
+    expect(findCheck(report, "Provider")).toMatchObject({
+      detail: expect.stringContaining("disabled_by_policy"),
       ok: false,
     });
-  });
-
-  it("checks only the selected Anthropic credential", async () => {
-    const secret = "anthropic-doctor-sentinel";
-    const report = await runDoctor(
-      createRuntime({
-        env: { ANTHROPIC_API_KEY: secret, BORN_PROVIDER: "anthropic" },
-      }),
-    );
-    expect(findCheck(report, "Anthropic credential")).toMatchObject({
-      detail: "configured",
+    expect(findCheck(report, "Credential access")).toEqual({
+      detail: "not_read (request disabled_by_policy)",
+      name: "Credential access",
       ok: true,
     });
+    expect(credentialReads).toBe(0);
     expect(JSON.stringify(report)).not.toContain(secret);
-    expect(
-      report.checks.some((check) => check.name === "Ollama service"),
-    ).toBe(false);
   });
 
-  it("shows the resolved model and rejects a blank override", async () => {
+  it("checks only the provider credential allowed by an explicit remote profile", async () => {
+    const secret = "anthropic-doctor-sentinel";
+    const directory = await mkdtemp(join(tmpdir(), "bornagent-doctor-policy-"));
+    const policyConfig = join(directory, "policy.json");
+    try {
+      await writeFile(
+        policyConfig,
+        JSON.stringify({
+          schema_version: 1,
+          profiles: [
+            {
+              schema_version: 1,
+              id: "remote-anthropic-contract",
+              mode: "remote_explicit",
+              model_access: {
+                kind: "remote_explicit",
+                providers: [
+                  {
+                    provider: "anthropic",
+                    models: ["claude-contract-v1"],
+                    base_urls: ["https://api.anthropic.com"],
+                  },
+                ],
+                credential_access: "selected_provider_only",
+                limits: {
+                  max_provider_requests_per_run: 1,
+                  max_output_tokens_per_request: 128,
+                  max_reported_total_tokens_per_run: 1_000,
+                },
+              },
+              eval_access: {
+                allowed_suites: ["targeted"],
+                max_attempts_per_run: 1,
+              },
+              docker_acquisition: { kind: "deny" },
+            },
+          ],
+        }),
+        "utf8",
+      );
+      const report = await runDoctor(
+        createRuntime({
+          cwd: process.cwd(),
+          env: { ANTHROPIC_API_KEY: secret },
+        }),
+        {
+          model: "claude-contract-v1",
+          policyConfig,
+          policyProfile: "remote-anthropic-contract",
+          provider: "anthropic",
+        },
+      );
+      expect(findCheck(report, "Anthropic credential")).toMatchObject({
+        detail: "configured",
+        ok: true,
+      });
+      expect(JSON.stringify(report)).not.toContain(secret);
+      expect(
+        report.checks.some((check) => check.name === "Ollama service"),
+      ).toBe(false);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("shows the exact profile model and rejects a blank override", async () => {
     const selected = await runDoctor(
       createRuntime({
-        env: { BORN_MODEL: "custom-model", OPENAI_API_KEY: "test-key" },
+        env: {
+          BORN_MODEL: "qwen3:1.7b",
+          BORN_PROVIDER: "ollama",
+        },
       }),
     );
     const blank = await runDoctor(
       createRuntime({
-        env: { BORN_MODEL: "   ", OPENAI_API_KEY: "test-key" },
+        env: {
+          BORN_MODEL: "   ",
+          BORN_PROVIDER: "ollama",
+        },
       }),
     );
     expect(findCheck(selected, "Model")).toMatchObject({
-      detail: "custom-model",
+      detail: "qwen3:1.7b",
       ok: true,
     });
-    expect(findCheck(blank, "Model")).toMatchObject({ ok: false });
+    expect(findCheck(blank, "Provider")).toMatchObject({
+      detail: expect.stringContaining("policy_model_denied"),
+      ok: false,
+    });
+    expect(findCheck(blank, "Credential access").detail).toContain("not_read");
   });
 
   it("checks the Ollama service and selected local model", async () => {
@@ -153,7 +224,7 @@ describe("runDoctor", () => {
     );
 
     expect(findCheck(report, "Provider")).toEqual({
-      detail: "ollama",
+      detail: "ollama (enabled_by_policy)",
       name: "Provider",
       ok: true,
     });
@@ -167,11 +238,11 @@ describe("runDoctor", () => {
     ).toBe(false);
   });
 
-  it("reports how to pull a missing Ollama model", async () => {
+  it("reports a missing profile model without automatically pulling it", async () => {
     const fallback = createRuntime().runExecutable;
     const report = await runDoctor(
       createRuntime({
-        env: { BORN_MODEL: "qwen3:8b", BORN_PROVIDER: "ollama" },
+        env: { BORN_PROVIDER: "ollama" },
         runExecutable: async (command, args, timeout) =>
           command === "ollama"
             ? {
@@ -179,15 +250,16 @@ describe("runDoctor", () => {
                 exitCode: 0,
                 stderr: "",
                 stdout:
-                  "NAME        ID      SIZE\nqwen3:1.7b  abc123  1.4 GB\n",
+                  "NAME      ID      SIZE\nqwen3:8b  abc123  4.9 GB\n",
               }
             : fallback(command, args, timeout),
       }),
     );
 
     expect(findCheck(report, "Model")).toMatchObject({
-      detail: expect.stringContaining("ollama pull qwen3:8b"),
+      detail: expect.stringContaining("ollama pull qwen3:1.7b"),
       ok: false,
     });
+    expect(findCheck(report, "Model").detail).toContain("Automatic model pull is disabled");
   });
 });

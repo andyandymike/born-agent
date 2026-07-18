@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "local-free-v1",
+  "mode": "local_free",
+  "model_access": {
+    "kind": "local_free",
+    "allowed_sources": ["in_process_test", "local_ollama"],
+    "allowed_providers": ["fake", "mock", "ollama"],
+    "ollama": {
+      "endpoint": "http://127.0.0.1:11434",
+      "default_model": "qwen3:1.7b",
+      "require_installed_digest": true
+    },
+    "credential_access": "deny"
+  },
+  "eval_access": {
+    "allowed_suites": ["targeted", "smoke"],
+    "max_attempts_per_run": 50
+  },
+  "docker_acquisition": {
+    "kind": "local_locked",
+    "allowed_artifact_ids": ["bornagent-sandbox-node-v1"],
+    "pull": "allow_public_digest_pinned",
+    "build": "allow_trusted_local_context"
+  }
+}

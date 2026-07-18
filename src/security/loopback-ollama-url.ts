@@ -10,7 +10,7 @@ export function resolveLoopbackOllamaURL(
   const selected = value.trim().replace(/\/+$/u, "");
   try {
     const url = new URL(selected);
-    // PHASE4: 当前 local_free_only 策略在 transport 创建前只接受字面量 loopback；
+    // PHASE15: 默认 local-free profile 在 transport 创建前只接受字面量 loopback；
     // “免费”、代理或可解析到本机的远程名称都不是可审计的零费用边界。
     if (
       url.protocol !== "http:" ||

@@ -23,6 +23,9 @@ export interface RunView {
   readonly executionEnvironment?: string;
   readonly id: string;
   readonly model: string;
+  readonly policyMode?: "local_free" | "remote_explicit" | "legacy_unrecorded";
+  readonly policyProfile?: string;
+  readonly policySha256?: string;
   readonly provider: string;
   readonly runExitCode: number | null;
   readonly status: TuiRunStatus;

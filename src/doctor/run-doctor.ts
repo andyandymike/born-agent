@@ -1,7 +1,12 @@
 import { isAbsolute } from "node:path";
 
-import { resolveModel, resolveProvider } from "../chat/config.js";
-import type { ChatProvider } from "../chat/types.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+  type ResolvedProviderPolicyRequest,
+} from "../policy/policy-resolver.js";
 import type {
   DoctorCheck,
   DoctorReport,
@@ -11,6 +16,14 @@ import type {
 
 const MINIMUM_NODE_VERSION = [22, 19, 0] as const;
 const COMMAND_TIMEOUT_MS = 3_000;
+
+export interface DoctorPolicyOptions {
+  readonly model?: string | undefined;
+  readonly ollamaEndpoint?: string | undefined;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
+  readonly provider?: string | undefined;
+}
 
 function nodeCheck(version: string): DoctorCheck {
   const match = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(version);
@@ -136,15 +149,12 @@ function credentialCheck(
   };
 }
 
-function modelCheck(runtime: DoctorRuntime, provider: ChatProvider): DoctorCheck {
-  const result = resolveModel(undefined, runtime.env.BORN_MODEL, provider);
-  return result.ok
-    ? { detail: result.value, name: "Model", ok: true }
-    : { detail: result.error, name: "Model", ok: false };
+function modelCheck(model: string): DoctorCheck {
+  return { detail: model, name: "Model", ok: true };
 }
 
-function providerCheck(provider: ChatProvider): DoctorCheck {
-  return { detail: provider, name: "Provider", ok: true };
+function providerCheck(provider: string): DoctorCheck {
+  return { detail: `${provider} (enabled_by_policy)`, name: "Provider", ok: true };
 }
 
 function ollamaFailureChecks(
@@ -172,8 +182,11 @@ function installedOllamaModels(stdout: string): ReadonlySet<string> {
   return new Set(names);
 }
 
-async function ollamaChecks(runtime: DoctorRuntime): Promise<readonly DoctorCheck[]> {
-  const model = modelCheck(runtime, "ollama");
+async function ollamaChecks(
+  runtime: DoctorRuntime,
+  selectedModel: string,
+): Promise<readonly DoctorCheck[]> {
+  const model = modelCheck(selectedModel);
   const result = await runtime.runExecutable(
     "ollama",
     ["list"],
@@ -200,7 +213,7 @@ async function ollamaChecks(runtime: DoctorRuntime): Promise<readonly DoctorChec
         installed.has(model.detail)
           ? model
           : {
-              detail: `not installed: ${model.detail}. Run: ollama pull ${model.detail}`,
+              detail: `not installed: ${model.detail}. Automatic model pull is disabled; install it manually outside BornAgent with: ollama pull ${model.detail}`,
               name: "Model",
               ok: false,
             },
@@ -218,7 +231,27 @@ async function ollamaChecks(runtime: DoctorRuntime): Promise<readonly DoctorChec
   }
 }
 
-export async function runDoctor(runtime: DoctorRuntime): Promise<DoctorReport> {
+function report(checks: readonly DoctorCheck[]): DoctorReport {
+  const passed = checks.filter((check) => check.ok).length;
+  const failed = checks.length - passed;
+  return { checks, failed, ok: failed === 0, passed };
+}
+
+export async function runDoctor(
+  runtime: DoctorRuntime,
+  options: DoctorPolicyOptions = {},
+): Promise<DoctorReport> {
+  const effectivePolicy = resolveEffectiveRuntimePolicy(
+    await loadRuntimePolicyRegistry({
+      ...(options.policyConfig === undefined
+        ? {}
+        : { configPath: options.policyConfig }),
+      env: runtime.env,
+      platform: runtime.platform,
+      workspace: runtime.cwd,
+    }),
+    options.policyProfile,
+  );
   const [git, ripgrep, workspace] = await Promise.all([
     executableCheck(runtime, "git", "Git"),
     executableCheck(runtime, "rg", "ripgrep"),
@@ -229,27 +262,61 @@ export async function runDoctor(runtime: DoctorRuntime): Promise<DoctorReport> {
     git,
     ripgrep,
     workspace,
+    {
+      detail: `${effectivePolicy.entry.profile.id} / ${effectivePolicy.entry.profile.mode} / ${effectivePolicy.entry.profileSha256}`,
+      name: "Runtime policy",
+      ok: true,
+    },
   ];
-  const provider = resolveProvider(undefined, runtime.env.BORN_PROVIDER);
-  const providerChecks: readonly DoctorCheck[] = provider.ok
-    ? [
-        providerCheck(provider.value),
-        ...(provider.value === "ollama"
-          ? await ollamaChecks(runtime)
-          : [
-              credentialCheck(runtime, provider.value),
-              modelCheck(runtime, provider.value),
-            ]),
-      ]
-    : [{ detail: provider.error, name: "Provider", ok: false }];
-  const checks = [...baseChecks, ...providerChecks];
-  const passed = checks.filter((check) => check.ok).length;
-  const failed = checks.length - passed;
+  let resolved: ResolvedProviderPolicyRequest;
+  try {
+    resolved = resolveProviderPolicyRequest(effectivePolicy, {
+      endpoint:
+        options.ollamaEndpoint ?? runtime.env.BORN_OLLAMA_BASE_URL,
+      model: options.model ?? runtime.env.BORN_MODEL,
+      provider: options.provider ?? runtime.env.BORN_PROVIDER,
+    });
+  } catch (error) {
+    if (!(error instanceof RuntimePolicyError)) throw error;
+    // PHASE15: a diagnostic request denied by policy is still useful output,
+    // but it must not inspect the matching credential merely to explain that
+    // the provider is disabled.
+    return report([
+      ...baseChecks,
+      {
+        detail: `${options.provider ?? runtime.env.BORN_PROVIDER ?? "default"} (disabled_by_policy: ${error.code})`,
+        name: "Provider",
+        ok: false,
+      },
+      {
+        detail: "not_read (request disabled_by_policy)",
+        name: "Credential access",
+        ok: true,
+      },
+    ]);
+  }
 
-  return {
-    checks,
-    failed,
-    ok: failed === 0,
-    passed,
-  };
+  const providerChecks: readonly DoctorCheck[] = [
+    providerCheck(resolved.provider),
+    ...(resolved.provider === "ollama"
+      ? [
+          {
+            detail: "not_required (local_free)",
+            name: "Credential access",
+            ok: true,
+          },
+          ...(await ollamaChecks(runtime, resolved.model)),
+        ]
+      : resolved.provider === "openai" || resolved.provider === "anthropic"
+        ? [credentialCheck(runtime, resolved.provider), modelCheck(resolved.model)]
+        : [
+            {
+              detail: "not_required (in_process_test)",
+              name: "Credential access",
+              ok: true,
+            },
+            modelCheck(resolved.model),
+          ]),
+  ];
+  return report([...baseChecks, ...providerChecks]);
 }

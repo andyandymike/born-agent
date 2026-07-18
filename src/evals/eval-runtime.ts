@@ -20,6 +20,17 @@ import { selectEvalTaskIds } from "./eval-suite-schema.js";
 import { buildEvalRunSummary, parseEvalRunSummary, renderEvalSummary, summaryAsComparable, type EvalRunSummary } from "./eval-summary.js";
 import type { EvalHiddenGrader } from "./static-hidden-grader.js";
 import { DockerHiddenGrader } from "./docker-hidden-grader.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+} from "../policy/policy-resolver.js";
+import { EvalAccessPolicy } from "../policy/eval-access-policy.js";
+import {
+  persistRuntimePolicyEvidence,
+  persistedRuntimePolicyEvidenceSchema,
+} from "../policy/policy-evidence.js";
 
 export interface NodeEvalRuntimeOptions {
   readonly workspace: string;
@@ -34,6 +45,7 @@ export interface NodeEvalRuntimeOptions {
   readonly hiddenGrader?: EvalHiddenGrader;
   readonly graderImage?: string;
   readonly dockerEnvironment?: Readonly<Record<string, string | undefined>>;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
 function parseRepetitions(value: string | undefined, fallback: number): number {
@@ -49,6 +61,12 @@ function safeRunId(timestamp: string, uuid: string): string {
 }
 
 function asErrorResult(error: unknown): EvalCliResult {
+  if (error instanceof RuntimePolicyError) {
+    return Object.freeze({
+      exitCode: error.exitCode === 1 ? 1 : 2,
+      stderr: `${error.code}: ${error.message}\n`,
+    });
+  }
   if (error instanceof EvalCoreError) return Object.freeze({ exitCode: error.exitCode, stderr: `${error.code}: ${error.message}\n` });
   return Object.freeze({ exitCode: 1, stderr: "eval_harness_invariant: internal eval harness error\n" });
 }
@@ -67,7 +85,8 @@ const interruptedRunManifestSchema = z.object({
   suiteKind: z.enum(["smoke", "full", "targeted"]),
   noCostEvidence: evalNoCostEvidenceSchema,
   startedAt: z.string(),
-  fullSuiteExecution: z.literal("not_run_by_policy"),
+  runtimePolicy: persistedRuntimePolicyEvidenceSchema.optional(),
+  fullSuiteExecution: z.enum(["not_run_by_policy", "executed"]),
 }).passthrough();
 
 function renderList(assets: LoadedEvalAssets): string {
@@ -199,16 +218,68 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       if (options.suite !== "smoke" && options.suite !== "full") throw new EvalCoreError("eval_cli_invalid", "suite must be smoke or full", 2);
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(options.provider) || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,511}$/u.test(options.model)) throw new EvalCoreError("eval_cli_invalid", "provider/model identity is malformed", 2);
       if (options.suite === "full" && options.task !== undefined) throw new EvalCoreError("eval_full_suite_forbidden", "--suite full cannot be narrowed with --task", 2);
-      const source =
-        options.suite === "full"
-          ? this.fullPlanningSource(options)
-          : await this.source(options);
-      const guard = preflightEvalNoCostPolicy(source);
       const suiteTaskIds = selectEvalTaskIds(assets.suite, options.suite);
       const selectedTaskIds = options.task === undefined ? suiteTaskIds : [options.task];
       if (selectedTaskIds.some((id) => !assets.tasks.has(id))) throw new EvalCoreError("eval_cli_invalid", "requested eval task is not checked in", 2);
       const suiteKind = options.task === undefined ? options.suite : "targeted";
       const repetitions = parseRepetitions(options.repetitions, options.suite === "smoke" ? assets.suite.suite.repetition_policy.smoke_default : assets.suite.suite.repetition_policy.full_default);
+      const effectivePolicy = resolveEffectiveRuntimePolicy(
+        await loadRuntimePolicyRegistry({
+          ...(options.policyConfig === undefined ? {} : { configPath: options.policyConfig }),
+          env: this.options.environment ?? {},
+          platform: this.options.platform ?? process.platform,
+          workspace: this.options.workspace,
+        }),
+        options.policyProfile,
+      );
+      // PHASE15: the complete attempt plan is authorized before Ollama catalog,
+      // grader, backend, or Docker setup. Only an explicit local profile may
+      // enter the full runner; the built-in profile stays planning/refusal only.
+      let fullPolicyDenial: RuntimePolicyError | undefined;
+      try {
+        new EvalAccessPolicy(effectivePolicy).assertPlan(
+          suiteKind,
+          selectedTaskIds.length * repetitions,
+        );
+      } catch (error) {
+        if (
+          error instanceof RuntimePolicyError &&
+          error.code === "policy_eval_suite_denied" &&
+          suiteKind === "full"
+        ) {
+          // PHASE15: preserve the Phase 14 planning-only refusal artifact for
+          // old readers, but never construct a runner or start an attempt.
+          fullPolicyDenial = error;
+        } else {
+          throw error;
+        }
+      }
+      const runtimePolicyEvidence = persistRuntimePolicyEvidence(
+        effectivePolicy.evidence,
+      );
+      const fullSuiteExecution =
+        suiteKind === "full" && fullPolicyDenial === undefined
+          ? "executed" as const
+          : "not_run_by_policy" as const;
+      const provider = options.provider.trim().toLowerCase();
+      const providerRequest = resolveProviderPolicyRequest(effectivePolicy, {
+        ...(provider === "ollama"
+          ? { endpoint: options.ollamaEndpoint ?? "http://127.0.0.1:11434" }
+          : {}),
+        model: options.model,
+        provider,
+        source:
+          provider === "fake" || provider === "mock"
+            ? "in_process_test"
+            : provider === "ollama"
+              ? "local_ollama"
+              : "provider_network",
+      });
+      const source =
+        options.suite === "full" && fullPolicyDenial !== undefined
+          ? this.fullPlanningSource(options)
+          : await this.source(options);
+      const guard = preflightEvalNoCostPolicy(source);
       const startedAt = this.#timestamp();
       const evalRunId = safeRunId(startedAt, this.#randomUUID());
       await mkdir(path.join(this.#reports.root, evalRunId), { recursive: true });
@@ -223,12 +294,14 @@ export class NodeEvalRuntime implements EvalCliRuntime {
         suiteKind,
         provider: options.provider,
         model: options.model,
+        providerDecision: providerRequest,
+        runtimePolicy: runtimePolicyEvidence,
         sourceSha256: guard.sourceSha256,
         executionSource: source.kind === "local_ollama"
           ? { kind: source.kind, provider: source.provider, installedModelTag: source.installedModelTag, installedModelDigest: source.installedModelDigest, endpointScope: "literal_loopback", adapter: "ollama-direct-loopback-v1" }
           : { kind: source.kind, provider: source.provider, fixtureVersion: 1, endpointScope: "none", adapter: "in-process-eval-v1" },
         noCostEvidence: guard.evidence,
-        fullSuiteExecution: "not_run_by_policy",
+        fullSuiteExecution,
         startedAt,
         bornAgentVersion: this.options.version ?? "unknown",
         nodeVersion: this.options.nodeVersion ?? process.versions.node,
@@ -252,11 +325,15 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       };
       await this.#reports.writeJson(`${evalRunId}/run-manifest.json`, runManifest);
 
-      if (options.suite === "full") {
+      if (options.suite === "full" && fullPolicyDenial !== undefined) {
         const refusal = refuseFullSuiteExecution(selectedTaskIds, source);
-        const summary = buildEvalRunSummary({ assets, evalRunId, suiteKind: "full", selectedTaskIds, attempts: [], repetitions, provider: options.provider, model: options.model, noCostEvidence: refusal.noCostEvidence, startedAt, completedAt: this.#timestamp(), exitCode: 2, status: "config_error" });
+        const summary = buildEvalRunSummary({ assets, evalRunId, suiteKind: "full", selectedTaskIds, attempts: [], repetitions, provider: options.provider, model: options.model, noCostEvidence: refusal.noCostEvidence, fullSuiteExecution, runtimePolicy: runtimePolicyEvidence, startedAt, completedAt: this.#timestamp(), exitCode: 2, status: "config_error" });
         await this.persistSummary(summary);
-        return Object.freeze({ exitCode: 2, stdout: options.json ? jsonLine(summary) : renderEvalSummary(summary), stderr: "full_suite_forbidden_by_policy: planned 20 tasks; started 0 attempts and sent 0 provider requests\n" });
+        return Object.freeze({
+          exitCode: 2,
+          stdout: options.json ? jsonLine(summary) : renderEvalSummary(summary),
+          stderr: `${fullPolicyDenial?.code ?? "full_suite_forbidden_by_policy"}: planned ${String(selectedTaskIds.length)} tasks; started 0 attempts and sent 0 provider requests\n`,
+        });
       }
 
       const controller = new AbortController();
@@ -273,7 +350,7 @@ export class NodeEvalRuntime implements EvalCliRuntime {
           if (task === undefined) throw new EvalCoreError("eval_harness_invariant", `selected task disappeared: ${taskId}`, 1);
           for (let repetition = 1; repetition <= repetitions; repetition += 1) {
             if (controller.signal.aborted) break;
-            attempts.push(await runner.run({ evalRunId, repetition, task, attemptRoot: path.join(this.#reports.root, evalRunId, "attempts", taskId, `r${String(repetition)}`), source, guard, model: options.model, signal: controller.signal }));
+            attempts.push(await runner.run({ evalRunId, repetition, task, attemptRoot: path.join(this.#reports.root, evalRunId, "attempts", taskId, `r${String(repetition)}`), source, guard, model: options.model, fullSuiteExecution, runtimePolicy: runtimePolicyEvidence, signal: controller.signal }));
           }
           if (controller.signal.aborted) break;
         }
@@ -281,7 +358,7 @@ export class NodeEvalRuntime implements EvalCliRuntime {
       const persistedAttempts = [...await reports.rebuildAttempts(evalRunId)];
       const exitCode: EvalExitCode = controller.signal.aborted ? 130 : persistedAttempts.some((attempt) => attempt.status === "harness_invalid") ? 1 : persistedAttempts.some((attempt) => attempt.outcome?.taskPassed !== true) ? 9 : 0;
       const status = exitCode === 130 ? "cancelled" : exitCode === 1 ? "harness_invalid" : "complete";
-      const summary = buildEvalRunSummary({ assets, evalRunId, suiteKind, selectedTaskIds, attempts: persistedAttempts, repetitions, provider: options.provider, model: options.model, noCostEvidence: guard.evidence, startedAt, completedAt: this.#timestamp(), exitCode, status });
+      const summary = buildEvalRunSummary({ assets, evalRunId, suiteKind, selectedTaskIds, attempts: persistedAttempts, repetitions, provider: options.provider, model: options.model, noCostEvidence: guard.evidence, fullSuiteExecution, runtimePolicy: runtimePolicyEvidence, startedAt, completedAt: this.#timestamp(), exitCode, status });
       await this.persistSummary(summary);
       return Object.freeze({ exitCode, stdout: options.json ? jsonLine(summary) : renderEvalSummary(summary) });
     } catch (error) { return asErrorResult(error); }
@@ -318,6 +395,10 @@ export class NodeEvalRuntime implements EvalCliRuntime {
           provider: manifest.provider,
           model: manifest.model,
           noCostEvidence: manifest.noCostEvidence,
+          fullSuiteExecution: manifest.fullSuiteExecution,
+          ...(manifest.runtimePolicy === undefined
+            ? {}
+            : { runtimePolicy: manifest.runtimePolicy }),
           startedAt: manifest.startedAt,
           completedAt: this.#timestamp(),
           exitCode: 1,

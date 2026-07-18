@@ -6,6 +6,7 @@ import type {
   LifecycleScriptFingerprints,
   PackageManagerIdentity as PermissionPackageManagerIdentity,
 } from "../permissions/permission-types.js";
+import type { DockerExecutionImageIdentity } from "./docker/acquisition/docker-image-identity.js";
 
 export type ExecutionPurpose = CommandPurpose;
 
@@ -59,6 +60,7 @@ export interface ExecutionReview {
 export interface ExecutionEnvironmentEvidence {
   readonly executor: "docker" | "local";
   readonly imageDigest?: string | undefined;
+  readonly imageIdentity?: DockerExecutionImageIdentity | undefined;
   readonly isolation: "docker" | "none";
   readonly network: "host" | "none";
   readonly policyVersion: string;

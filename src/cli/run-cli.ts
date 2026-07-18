@@ -14,6 +14,8 @@ import { executeTui } from "../tui/run-tui.js";
 import { executeMcpInspect, executeMcpList } from "../commands/mcp.js";
 import { executeSandboxDoctor } from "../commands/sandbox-doctor.js";
 import { executeEvalCompare, executeEvalList, executeEvalRun, executeEvalShow } from "../evals/eval-cli.js";
+import { executeDockerPrepare, executeDockerStatus } from "../commands/docker.js";
+import { executePolicyExplain, executePolicyShow, executePolicyValidate } from "../commands/policy.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -37,6 +39,43 @@ export async function runCli(
 
   let commandExitCode = 0;
 
+  const policy = program
+    .command("policy")
+    .description("Inspect and validate the effective versioned runtime policy.");
+
+  policy
+    .command("show")
+    .description("Show one effective profile without constructing a backend.")
+    .option("--profile <id>", "exact profile id; defaults to built-in local-free-v1")
+    .option("--config <absolute-path>", "explicit trusted user policy config")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { config?: string; json: boolean; profile?: string }) => {
+      commandExitCode = await executePolicyShow(options, runtime, io);
+    });
+
+  policy
+    .command("validate")
+    .description("Validate built-in and optional user policy assets without network access.")
+    .option("--config <absolute-path>", "explicit trusted user policy config")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { config?: string; json: boolean }) => {
+      commandExitCode = await executePolicyValidate(options, runtime, io);
+    });
+
+  policy
+    .command("explain")
+    .description("Explain a hypothetical provider/eval decision with zero side effects.")
+    .requiredOption("--profile <id>", "exact selected profile id")
+    .option("--config <absolute-path>", "explicit trusted user policy config")
+    .option("--provider <id>", "exact provider request")
+    .option("--model <id>", "exact model request")
+    .option("--endpoint <url>", "exact endpoint request")
+    .option("--suite <targeted|smoke|full>", "hypothetical eval suite")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { config?: string; endpoint?: string; json: boolean; model?: string; profile: string; provider?: string; suite?: string }) => {
+      commandExitCode = await executePolicyExplain(options, runtime, io);
+    });
+
   program
     .command("agent")
     // PHASE4: agent 是独立命令；chat 继续保留 Phase 3 的最多一次工具往返，避免语义偷换。
@@ -44,6 +83,8 @@ export async function runCli(
     .argument("<task>", "repository task to answer; do not paste API keys")
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
+    .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
     .option("--executor <executor>", "command executor: local or docker")
     .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
@@ -137,6 +178,8 @@ export async function runCli(
           maxToolOutputBytes?: string;
           mcp: string[];
           model?: string;
+          policyConfig?: string;
+          policyProfile?: string;
           provider?: string;
           reportFormat?: string;
           requireVerification?: string;
@@ -168,6 +211,8 @@ export async function runCli(
             maxToolOutputBytes: options.maxToolOutputBytes,
             mcpServerIds: options.mcp,
             model: options.model,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
             provider: options.provider,
             reportFormat: options.reportFormat,
             requireVerification: options.requireVerification,
@@ -192,6 +237,8 @@ export async function runCli(
     .argument("<prompt>", "text prompt to send; do not paste API keys")
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
+    .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--timeout-ms <milliseconds>", "request timeout in milliseconds")
     .option("--no-tools", "disable read-only workspace tools")
     // PHASE3: Commander 对 --no-tools 生成 options.tools=false；默认则为 true。
@@ -205,6 +252,8 @@ export async function runCli(
         prompt: string,
         options: {
           model?: string;
+          policyConfig?: string;
+          policyProfile?: string;
           provider?: string;
           timeoutMs?: string;
           tools: boolean;
@@ -214,6 +263,8 @@ export async function runCli(
         commandExitCode = await executeChat(
           {
             model: options.model,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
             prompt,
             provider: options.provider,
             timeoutMs: options.timeoutMs,
@@ -238,6 +289,8 @@ export async function runCli(
     )
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
+    .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
     .option("--executor <executor>", "command executor: local or docker")
     .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
@@ -284,6 +337,8 @@ export async function runCli(
           maxToolOutputBytes?: string;
           mcp: string[];
           model?: string;
+          policyConfig?: string;
+          policyProfile?: string;
           provider?: string;
           reportFormat?: string;
           requireVerification?: string;
@@ -316,6 +371,8 @@ export async function runCli(
             maxToolOutputBytes: options.maxToolOutputBytes,
             mcpServerIds: options.mcp,
             model: options.model,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
             provider: options.provider,
             reportFormat: options.reportFormat,
             requireVerification: options.requireVerification,
@@ -338,6 +395,8 @@ export async function runCli(
     .command("models")
     .description("List the versioned local model capability catalog.")
     .option("--provider <provider>", "filter by provider")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
     .option("--json", "write the versioned JSON document", false)
     .option(
       "--refresh-local",
@@ -347,12 +406,16 @@ export async function runCli(
     .action(
       async (options: {
         json: boolean;
+        policyConfig?: string;
+        policyProfile?: string;
         provider?: string;
         refreshLocal: boolean;
       }) => {
         commandExitCode = await executeModels(
           {
             json: options.json,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
             provider: options.provider,
             refreshLocal: options.refreshLocal,
           },
@@ -428,6 +491,8 @@ export async function runCli(
     .description("Create a new run from a verified safe resume boundary.")
     .argument("<session-id>", "canonical session UUID")
     .option("--message <text>", "new user turn for a completed session")
+    .option("--policy-profile <id>", "select the session's exact runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
     .option(
       "--allow-degraded-resume",
       "explicitly accept loss of provider-private continuation state",
@@ -436,12 +501,14 @@ export async function runCli(
     .action(
       async (
         sessionId: string,
-        options: { allowDegradedResume: boolean; message?: string },
+        options: { allowDegradedResume: boolean; message?: string; policyConfig?: string; policyProfile?: string },
       ) => {
         commandExitCode = await executeSessionsResume(
           {
             allowDegradedResume: options.allowDegradedResume,
             message: options.message,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
             sessionId,
           },
           runtime,
@@ -449,6 +516,33 @@ export async function runCli(
         );
       },
     );
+
+  const docker = program
+    .command("docker")
+    .description("Inspect or prepare one built-in locked Docker artifact locally.");
+
+  docker
+    .command("status")
+    .description("Inspect policy, package lock, local daemon, and already-present identity only.")
+    .option("--artifact <id>", "exact built-in artifact ID")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
+    .option("--json", "write versioned JSON evidence", false)
+    .action(async (options: { artifact?: string; policyConfig?: string; policyProfile?: string; json: boolean }) => {
+      commandExitCode = await executeDockerStatus(options, runtime, io);
+    });
+
+  docker
+    .command("prepare")
+    .description("Run the locked anonymous base pull or trusted local build path.")
+    .option("--artifact <id>", "exact built-in artifact ID")
+    .option("--source <pull|build>", "explicit locked acquisition source")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
+    .option("--json", "write versioned JSON evidence", false)
+    .action(async (options: { artifact?: string; source?: string; policyConfig?: string; policyProfile?: string; json: boolean }) => {
+      commandExitCode = await executeDockerPrepare(options, runtime, io);
+    });
 
   const sandbox = program
     .command("sandbox")
@@ -502,12 +596,14 @@ export async function runCli(
     .requiredOption("--suite <smoke|full>", "fixed suite selection")
     .requiredOption("--provider <id>", "fake, mock, or ollama")
     .requiredOption("--model <id>", "fixed local/test model identity")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
     .option("--repetitions <count>", "attempt repetitions (1..10)")
     .option("--task <id>", "run one checked-in task as a partial suite")
     .option("--ollama-endpoint <url>", "literal-loopback Ollama endpoint")
     .option("--ollama-model-digest <sha256>", "optional exact installed-model digest assertion")
     .option("--json", "write canonical JSON", false)
-    .action(async (options: { suite: string; provider: string; model: string; repetitions?: string; task?: string; ollamaEndpoint?: string; ollamaModelDigest?: string; json: boolean }) => {
+    .action(async (options: { suite: string; provider: string; model: string; policyConfig?: string; policyProfile?: string; repetitions?: string; task?: string; ollamaEndpoint?: string; ollamaModelDigest?: string; json: boolean }) => {
       commandExitCode = await executeEvalRun(runtime.evalRuntime, io, options);
     });
 
@@ -533,9 +629,20 @@ export async function runCli(
 
   program
     .command("doctor")
-    .description("Check whether the local environment is ready.")
-    .action(async () => {
-      commandExitCode = await executeDoctor(runtime, io);
+    .description("Check local readiness after resolving the effective runtime policy.")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
+    .option("--provider <provider>", "diagnose one exact provider request")
+    .option("--model <model>", "diagnose one exact model request")
+    .option("--ollama-endpoint <url>", "diagnose one exact literal-loopback Ollama endpoint")
+    .action(async (options: {
+      model?: string;
+      ollamaEndpoint?: string;
+      policyConfig?: string;
+      policyProfile?: string;
+      provider?: string;
+    }) => {
+      commandExitCode = await executeDoctor(runtime, io, options);
     });
 
   if (argv.length === 0) {

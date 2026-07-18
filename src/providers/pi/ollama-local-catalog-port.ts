@@ -98,6 +98,9 @@ export class NodeOllamaLocalCatalogPort implements OllamaLocalCatalogPort {
   async refresh(
     request: OllamaLocalCatalogRefreshRequest,
   ): Promise<readonly OllamaLocalModelDiscovery[]> {
+    // PHASE15: Docker artifact acquisition is a separate capability. This port
+    // can only inspect /api/tags; a missing Ollama model never authorizes pull,
+    // tag substitution, or provider fallback.
     const resolved = resolveLoopbackOllamaURL(request.baseURL);
     if (!resolved.ok) {
       throw new OllamaLocalCatalogError(

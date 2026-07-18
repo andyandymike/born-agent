@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { COMPLETION_REASON_CODES } from "../completion/completion-types.js";
+import { persistedDockerExecutionImageIdentitySchema } from "../execution/docker/acquisition/docker-image-identity.js";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const utf8Within = (maximumBytes: number) =>
@@ -58,6 +59,7 @@ const executionEnvironmentReportSchema = z
   .object({
     executor: z.enum(["local", "docker"]),
     image_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+    image_identity: persistedDockerExecutionImageIdentitySchema.optional(),
     isolation: z.enum(["none", "docker"]),
     network: z.enum(["host", "none"]),
     policy_version: utf8Within(128),

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { EvalCoreError } from "./eval-errors.js";
+import { persistedRuntimePolicyEvidenceSchema } from "../policy/policy-evidence.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const nullableUsage = z
@@ -87,9 +88,24 @@ export const evalAttemptReportSchema = z
     installedModelDigest: z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/u).nullable().optional(),
     adapter: z.enum(["in-process-eval-v1", "ollama-direct-loopback-v1"]).optional(),
     noCostEvidence: evalNoCostEvidenceSchema,
+    runtimePolicy: persistedRuntimePolicyEvidenceSchema.optional(),
     fullSuiteExecution: z.enum(["not_run_by_policy", "executed"]),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.fullSuiteExecution === "executed" &&
+      (value.runtimePolicy?.profile_mode !== "local_free" ||
+        value.runtimePolicy.explicit_selection !== true ||
+        value.runtimePolicy.paid_capable ||
+        !value.runtimePolicy.allowed_eval_suites.includes("full"))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "full execution requires an explicit local profile allowing full",
+      });
+    }
+  });
 
 export type EvalAttemptReport = z.infer<typeof evalAttemptReportSchema>;
 
@@ -97,9 +113,6 @@ export function parseEvalAttemptReport(input: unknown): EvalAttemptReport {
   const parsed = evalAttemptReportSchema.safeParse(input);
   if (!parsed.success) {
     throw new EvalCoreError("eval_report_corrupt", "eval attempt report is corrupt", 1, { cause: parsed.error });
-  }
-  if (parsed.data.fullSuiteExecution === "executed") {
-    throw new EvalCoreError("eval_harness_invariant", "Phase 14 report claims forbidden full-suite execution", 1);
   }
   return Object.freeze(parsed.data);
 }

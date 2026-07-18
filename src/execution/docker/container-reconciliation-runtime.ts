@@ -19,6 +19,10 @@ import {
   type ContainerRuntimeObservation,
 } from "./container-reconciler.js";
 import { parseDigestPinnedImageReference } from "./docker-policy.js";
+import {
+  persistDockerExecutionImageIdentity,
+  restoreDockerExecutionImageIdentity,
+} from "./acquisition/docker-image-identity.js";
 
 const MAX_RECOVERED_LOG_BYTES = 1_048_576;
 const RECOVERY_LOG_TIMEOUT_MS = 5_000;
@@ -57,6 +61,13 @@ function identitySha256(identity: ContainerLifecycleIdentity): string {
     execution_id: identity.executionId,
     hostname: identity.hostname,
     image_digest: identity.image.digest,
+    ...(identity.imageIdentity === undefined
+      ? {}
+      : {
+          image_identity: persistDockerExecutionImageIdentity(
+            identity.imageIdentity,
+          ),
+        }),
     name: identity.name,
     nonce: identity.nonce,
     run_id: identity.runId,
@@ -107,13 +118,32 @@ function collectContainerLifecycles(
     switch (event.type) {
       case "sandbox.container.create.requested": {
         const data = phase13SandboxRunEventDataSchemas[event.type].parse(event.data);
-        if (imageReference === undefined) {
-          throw new Error("sandbox lifecycle has no digest-pinned run image");
+        const imageIdentity =
+          data.image_identity === undefined
+            ? undefined
+            : restoreDockerExecutionImageIdentity(data.image_identity);
+        const selectedReference =
+          imageIdentity?.kind === "trusted_local_build"
+            ? imageIdentity.configImageId
+            : imageIdentity?.kind === "registry_digest"
+              ? imageIdentity.reference
+              : imageReference;
+        if (selectedReference === undefined) {
+          throw new Error("sandbox lifecycle has no immutable run image");
         }
+        const image =
+          imageIdentity?.kind === "trusted_local_build"
+            ? Object.freeze({
+                digest: imageIdentity.configImageId,
+                reference: imageIdentity.configImageId,
+                repository: "",
+              })
+            : parseDigestPinnedImageReference(selectedReference);
         const identity: ContainerLifecycleIdentity = Object.freeze({
           executionId: data.execution_id,
           hostname: data.hostname,
-          image: parseDigestPinnedImageReference(imageReference),
+          image,
+          ...(imageIdentity === undefined ? {} : { imageIdentity }),
           name: data.container_name,
           nonce: data.nonce,
           runId: event.runId,
@@ -121,6 +151,7 @@ function collectContainerLifecycles(
         });
         if (
           identity.image.digest !== data.image_digest ||
+          (imageReference !== undefined && imageReference !== selectedReference) ||
           identitySha256(identity) !== data.container_identity_sha256 ||
           groups.has(data.execution_id)
         ) {
@@ -217,6 +248,8 @@ function exactIdentityMatches(
     (durableContainerId === null || inspection.containerId === durableContainerId) &&
     inspection.name === identity.name &&
     inspection.imageReference === identity.image.reference &&
+    (identity.imageIdentity === undefined ||
+      inspection.imageId === identity.imageIdentity.configImageId) &&
     inspection.labels["org.bornagent.run-id"] === identity.runId &&
     inspection.labels["org.bornagent.execution-id"] === identity.executionId &&
     inspection.labels["org.bornagent.nonce"] === identity.nonce &&

@@ -7,7 +7,9 @@
   "license": "MIT",
   "files": [
     "dist",
-    "evals"
+    "evals",
+    "policies",
+    "docker/artifacts"
   ],
   "bin": {
     "born": "dist/cli.js"

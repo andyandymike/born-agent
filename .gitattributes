@@ -7,3 +7,5 @@ evals/**/*.json text eol=lf
 evals/**/*.md text eol=lf
 evals/**/*.mjs text eol=lf
 evals/**/*.txt text eol=lf
+policies/*.json text eol=lf
+docker/artifacts/** text eol=lf

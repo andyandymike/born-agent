@@ -5,12 +5,14 @@ import type {
 } from "./types.js";
 import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 
-export const DEFAULT_PROVIDER: ChatProvider = "openai";
+// PHASE15: CLI orchestration supplies the built-in asset decision explicitly.
+// These local defaults remain only for small config-unit compatibility paths.
+export const DEFAULT_PROVIDER: ChatProvider = "ollama";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra";
 export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
 export const DEFAULT_OLLAMA_MODEL = "qwen3:1.7b";
 export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
-export const DEFAULT_MODEL = DEFAULT_OPENAI_MODEL;
+export const DEFAULT_MODEL = DEFAULT_OLLAMA_MODEL;
 export const DEFAULT_TIMEOUT_MS = 120_000;
 export const MINIMUM_TIMEOUT_MS = 1_000;
 export const MAXIMUM_TIMEOUT_MS = 600_000;

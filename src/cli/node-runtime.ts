@@ -37,6 +37,8 @@ import { NodeWorkspaceSnapshotSource } from "../execution/snapshot/node-workspac
 import { runDockerSandboxDoctor } from "../execution/docker/docker-doctor.js";
 import { NodeEvalRuntime } from "../evals/eval-runtime.js";
 import { reconcilePersistedContainers } from "../execution/docker/container-reconciliation-runtime.js";
+import { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
+import { NodeDockerAcquisitionPort } from "../execution/docker/acquisition/node-docker-acquisition-port.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -95,7 +97,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         ...options.approvalInput,
         output: io.stderr,
       }),
-    createMcpClientManager: ({ events, prompt }) => {
+    createMcpClientManager: ({ events, prompt, secrets = [] }) => {
       const launcher = new McpServerLauncher({
         cleanup: createCleanup(),
         environment: options.env,
@@ -113,7 +115,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         permissionEngine,
         prompt,
         randomUUID,
-        secrets: [options.env.OPENAI_API_KEY, options.env.ANTHROPIC_API_KEY],
+        secrets,
       });
     },
     createAgentToolRegistry: async (registryOptions) => {
@@ -184,6 +186,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                       : { expectedLockfileSha256: sandbox.expectedLockfileSha256 }),
                     image: sandbox.image,
                     imagePath: sandbox.imagePath,
+                    ...(sandbox.imageIdentity?.kind === "trusted_local_build"
+                      ? { localBuildIdentity: sandbox.imageIdentity }
+                      : {}),
                     runtime: sandbox.runtime,
                     runtimeVersion: sandbox.runtimeVersion,
                     supportsCUtf8: sandbox.supportsCUtf8,
@@ -217,6 +222,11 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     // PHASE3: production runtime 在这里装配固定只读 Registry；测试可替换为 FakeToolRegistry。
     createToolRegistry: createReadonlyToolRegistry,
     env: options.env,
+    dockerArtifactAcquirer: new DockerArtifactAcquirer(
+      new NodeDockerAcquisitionPort(options.env),
+      options.env,
+      options.platform,
+    ),
     execPath: options.execPath,
     evalRuntime: new NodeEvalRuntime({
       workspace: options.cwd,
@@ -228,6 +238,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       nodeVersion: options.nodeVersion,
       platform: options.platform,
       dockerEnvironment: options.env,
+      environment: options.env,
       ...(options.env.BORN_DOCKER_IMAGE === undefined
         ? {}
         : { graderImage: options.env.BORN_DOCKER_IMAGE }),

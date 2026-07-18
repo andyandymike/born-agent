@@ -16,6 +16,7 @@ import {
   type RunReport,
   type VerificationReport,
 } from "../reports/run-report-schema.js";
+import { persistDockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
 
 export type ReportFormat = "json" | "text";
 
@@ -62,6 +63,13 @@ function verificationReport(
             ...(verification.executionEnvironment.imageDigest === undefined
               ? {}
               : { image_digest: verification.executionEnvironment.imageDigest }),
+            ...(verification.executionEnvironment.imageIdentity === undefined
+              ? {}
+              : {
+                  image_identity: persistDockerExecutionImageIdentity(
+                    verification.executionEnvironment.imageIdentity,
+                  ),
+                }),
             isolation: verification.executionEnvironment.isolation,
             network: verification.executionEnvironment.network,
             policy_version: verification.executionEnvironment.policyVersion,

@@ -319,6 +319,12 @@ function reduceKnownEvent(
               : "local; isolation=none",
           id: event.runId,
           model: sanitize(event.data.model),
+          policyMode:
+            event.data.runtime_policy?.profile_mode ?? "legacy_unrecorded",
+          policyProfile:
+            event.data.runtime_policy?.profile_id ?? "legacy-unrecorded",
+          policySha256:
+            event.data.runtime_policy?.profile_sha256 ?? "unavailable",
           provider: sanitize(event.data.provider),
           runExitCode: null,
           status: "running",

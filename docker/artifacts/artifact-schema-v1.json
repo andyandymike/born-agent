@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bornagent.local/schemas/docker-artifact-lock-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "platform",
+    "preferred_source",
+    "pull",
+    "build",
+    "runtime_contract"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "const": "bornagent-sandbox-node-v1" },
+    "platform": { "enum": ["linux/amd64", "linux/arm64"] },
+    "preferred_source": { "enum": ["pull", "build"] },
+    "pull": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "registry", "anonymous", "role", "expected_compressed_bytes_max"],
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 73,
+          "maxLength": 500,
+          "pattern": "^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$",
+          "not": { "pattern": "latest" }
+        },
+        "registry": { "const": "docker.io" },
+        "anonymous": { "const": true },
+        "role": { "const": "build_base" },
+        "expected_compressed_bytes_max": { "type": "integer", "minimum": 1048576, "maximum": 536870912 }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dockerfile_relative_path", "dockerfile_sha256", "context_manifest_relative_path", "context_manifest_sha256", "base_images", "network"],
+      "properties": {
+        "dockerfile_relative_path": { "const": "bornagent-sandbox-node-v1/Dockerfile" },
+        "dockerfile_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "context_manifest_relative_path": { "const": "bornagent-sandbox-node-v1/context-manifest.json" },
+        "context_manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_images": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 73,
+            "maxLength": 500,
+            "pattern": "^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$",
+            "not": { "pattern": "latest" }
+          }
+        },
+        "network": { "const": "none" }
+      }
+    },
+    "runtime_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_policy_version", "numeric_user", "required_labels"],
+      "properties": {
+        "image_policy_version": { "const": "phase13-docker-v1" },
+        "numeric_user": { "type": "string", "pattern": "^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$" },
+        "required_labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "org.bornagent.artifact-id",
+            "org.bornagent.exec-wrapper-sha256",
+            "org.bornagent.image-policy-version",
+            "org.bornagent.runtime",
+            "org.bornagent.runtime-version"
+          ],
+          "properties": {
+            "org.bornagent.artifact-id": { "const": "bornagent-sandbox-node-v1" },
+            "org.bornagent.exec-wrapper-sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "org.bornagent.image-policy-version": { "const": "phase13-docker-v1" },
+            "org.bornagent.runtime": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "org.bornagent.runtime-version": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      }
+    }
+  }
+}

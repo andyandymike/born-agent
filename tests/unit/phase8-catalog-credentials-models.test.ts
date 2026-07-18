@@ -82,8 +82,9 @@ describe("born models", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(memory.readStdout()).toContain("OPENAI_API_KEY (missing)");
-    expect(memory.readStdout()).toContain("ANTHROPIC_API_KEY (missing)");
+    expect(memory.readStdout()).toContain("OPENAI_API_KEY (not_read)");
+    expect(memory.readStdout()).toContain("ANTHROPIC_API_KEY (not_read)");
+    expect(memory.readStdout()).toContain("disabled_by_policy");
     expect(memory.readStdout()).toContain("none (local)");
     expect(memory.readStdout()).toContain("contract_verified");
     expect(memory.readStdout()).toContain("not_run_by_policy");
@@ -119,7 +120,8 @@ describe("born models", () => {
     });
     expect(document.models).toEqual([
       expect.objectContaining({
-        credentialStatus: "configured",
+        credentialStatus: "not_read",
+        policyStatus: "disabled_by_policy",
         provider: "openai",
       }),
     ]);

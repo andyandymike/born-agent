@@ -1,5 +1,7 @@
 import type { ProviderId } from "../../model/model-backend.js";
 import { resolveLoopbackOllamaURL } from "../../security/loopback-ollama-url.js";
+import type { EffectiveRuntimePolicy } from "../../policy/policy-resolver.js";
+import { ProviderAccessPolicy } from "../../policy/provider-access-policy.js";
 
 export const REMOTE_PROVIDER_FORBIDDEN_CODE =
   "remote_provider_forbidden_by_cost_policy";
@@ -11,6 +13,7 @@ export type ProviderTransportScope =
 export interface NetworkGuardReport {
   readonly allowedInProcessContractCount: number;
   readonly allowedLoopbackRequestCount: number;
+  readonly allowedRemoteExplicitCount: number;
   readonly billableRequestCount: number;
   readonly blockedRemoteAttemptCount: number;
   readonly guardDecisionCount: number;
@@ -23,11 +26,13 @@ export interface NetworkGuardReport {
 export type ProviderNetworkGuardDecision =
   | "allow_in_process_contract"
   | "allow_loopback_provider"
+  | "allow_remote_explicit"
   | "block_remote_provider";
 
 interface MutableNetworkActivityCounters {
   allowedInProcessContractCount: number;
   allowedLoopbackRequestCount: number;
+  allowedRemoteExplicitCount: number;
   billableRequestCount: number;
   blockedRemoteAttemptCount: number;
   guardDecisionCount: number;
@@ -41,6 +46,7 @@ function emptyCounters(): MutableNetworkActivityCounters {
   return {
     allowedInProcessContractCount: 0,
     allowedLoopbackRequestCount: 0,
+    allowedRemoteExplicitCount: 0,
     billableRequestCount: 0,
     blockedRemoteAttemptCount: 0,
     guardDecisionCount: 0,
@@ -69,6 +75,9 @@ export class NetworkActivityLedger {
         return;
       case "allow_loopback_provider":
         this.#counters.allowedLoopbackRequestCount += 1;
+        return;
+      case "allow_remote_explicit":
+        this.#counters.allowedRemoteExplicitCount += 1;
         return;
       case "block_remote_provider":
         this.#counters.blockedRemoteAttemptCount += 1;
@@ -110,7 +119,7 @@ export class ProviderNetworkPolicyError extends Error {
 
   constructor(provider: ProviderId) {
     super(
-      `${REMOTE_PROVIDER_FORBIDDEN_CODE}: ${provider} cannot open a remote provider connection under local_free_only`,
+      `${REMOTE_PROVIDER_FORBIDDEN_CODE}: ${provider} cannot open a remote provider connection without an explicit matching remote runtime profile`,
     );
     this.name = "ProviderNetworkPolicyError";
   }
@@ -125,7 +134,9 @@ export class ProviderNetworkGuard {
 
   assertAllowed(input: {
     readonly endpoint: string | undefined;
+    readonly model?: string | undefined;
     readonly provider: ProviderId;
+    readonly runtimePolicy?: EffectiveRuntimePolicy | undefined;
     readonly transportScope: ProviderTransportScope;
   }): void {
     if (input.transportScope === "in_process_contract") {
@@ -133,9 +144,23 @@ export class ProviderNetworkGuard {
       return;
     }
 
-    // PHASE8: fail before a request object or socket exists. A provider being
+    if (
+      input.runtimePolicy?.entry.profile.mode === "remote_explicit" &&
+      input.model !== undefined
+    ) {
+      new ProviderAccessPolicy(input.runtimePolicy).assertFrozen({
+        endpoint: input.endpoint,
+        model: input.model,
+        provider: input.provider,
+        source: "provider_network",
+      });
+      this.#activity.recordGuardDecision("allow_remote_explicit");
+      return;
+    }
+
+    // PHASE15: fail before a request object or socket exists. A provider being
     // free, trial-backed, proxied, or metadata-only is not a mechanical proof
-    // of zero cost; only literal-loopback Ollama crosses this boundary.
+    // of zero cost; default policy admits only literal-loopback Ollama.
     if (input.provider !== "ollama" || input.endpoint === undefined) {
       this.#activity.recordGuardDecision("block_remote_provider");
       throw new ProviderNetworkPolicyError(input.provider);

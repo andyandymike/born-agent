@@ -9,6 +9,11 @@ import type {
   ResolvedDockerSandboxConfig,
 } from "./agent-types.js";
 import { parseDigestPinnedImageReference } from "../execution/docker/docker-policy.js";
+import {
+  persistDockerExecutionImageIdentity,
+  persistedDockerExecutionImageIdentitySchema,
+  type DockerArtifactExecutionConfig,
+} from "../execution/docker/acquisition/docker-image-identity.js";
 import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 import {
   DeterministicTokenEstimator,
@@ -101,6 +106,7 @@ function resolveCpuLimit(
 }
 
 export interface DockerSandboxConfigInput {
+  readonly dockerArtifactExecution?: DockerArtifactExecutionConfig | undefined;
   readonly dockerImage?: string | undefined;
   readonly sandboxCpus?: string | undefined;
   readonly sandboxMemoryMiB?: string | undefined;
@@ -112,18 +118,52 @@ export function resolveDockerSandboxConfig(
   options: DockerSandboxConfigInput,
   env: Readonly<Record<string, string | undefined>>,
 ): ConfigResult<ResolvedDockerSandboxConfig> {
-  const image = options.dockerImage ?? env.BORN_DOCKER_IMAGE;
-  const wrapperSha256 = env.BORN_DOCKER_WRAPPER_SHA256;
+  const artifact = options.dockerArtifactExecution;
+  const image =
+    artifact?.imageIdentity.configImageId ??
+    options.dockerImage ??
+    env.BORN_DOCKER_IMAGE;
+  const wrapperSha256 =
+    artifact?.wrapperSha256 ?? env.BORN_DOCKER_WRAPPER_SHA256;
   if (image === undefined) {
-    return { error: "docker executor requires --docker-image or BORN_DOCKER_IMAGE", ok: false };
-  }
-  try {
-    parseDigestPinnedImageReference(image);
-  } catch (error) {
     return {
-      error: error instanceof Error ? error.message : "Docker image reference is invalid",
+      error:
+        "docker executor requires a built-in artifact or --docker-image/BORN_DOCKER_IMAGE",
       ok: false,
     };
+  }
+  if (artifact === undefined) {
+    try {
+      parseDigestPinnedImageReference(image);
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Docker image reference is invalid",
+        ok: false,
+      };
+    }
+  } else {
+    try {
+      persistedDockerExecutionImageIdentitySchema.parse(
+        persistDockerExecutionImageIdentity(artifact.imageIdentity),
+      );
+    } catch {
+      return { error: "trusted Docker artifact identity is invalid", ok: false };
+    }
+    if (
+      artifact.artifactId !== artifact.imageIdentity.artifactId ||
+      artifact.expectedLockfileSha256 !==
+        artifact.imageIdentity.artifactLockSha256 ||
+      (options.dockerImage !== undefined && options.dockerImage !== image) ||
+      (env.BORN_DOCKER_IMAGE !== undefined && env.BORN_DOCKER_IMAGE !== image)
+    ) {
+      return {
+        error: "trusted Docker artifact identity conflicts with run configuration",
+        ok: false,
+      };
+    }
   }
   if (wrapperSha256 === undefined || !/^[a-f0-9]{64}$/u.test(wrapperSha256)) {
     return {
@@ -131,7 +171,8 @@ export function resolveDockerSandboxConfig(
       ok: false,
     };
   }
-  const expectedLockfileSha256 = env.BORN_DOCKER_LOCKFILE_SHA256;
+  const expectedLockfileSha256 =
+    artifact?.expectedLockfileSha256 ?? env.BORN_DOCKER_LOCKFILE_SHA256;
   if (
     expectedLockfileSha256 !== undefined &&
     !/^[a-f0-9]{64}$/u.test(expectedLockfileSha256)
@@ -161,15 +202,23 @@ export function resolveDockerSandboxConfig(
     { label: "sandbox tmp MiB", maximum: 1_024, minimum: 16 },
   );
   if (!tmpMiB.ok) return tmpMiB;
-  const imagePath = env.BORN_DOCKER_IMAGE_PATH ?? "/usr/local/bin:/usr/bin:/bin";
-  const runtime = env.BORN_DOCKER_RUNTIME ?? "node";
-  const runtimeVersion = env.BORN_DOCKER_RUNTIME_VERSION ?? "phase13";
-  const supportsCUtf8 = env.BORN_DOCKER_C_UTF8 !== "0";
+  const imagePath =
+    artifact?.imagePath ??
+    env.BORN_DOCKER_IMAGE_PATH ??
+    "/usr/local/bin:/usr/bin:/bin";
+  const runtime = artifact?.runtime ?? env.BORN_DOCKER_RUNTIME ?? "node";
+  const runtimeVersion =
+    artifact?.runtimeVersion ?? env.BORN_DOCKER_RUNTIME_VERSION ?? "phase13";
+  const supportsCUtf8 =
+    artifact?.supportsCUtf8 ?? env.BORN_DOCKER_C_UTF8 !== "0";
   return {
     ok: true,
     value: Object.freeze({
       ...(expectedLockfileSha256 === undefined ? {} : { expectedLockfileSha256 }),
       image,
+      ...(artifact === undefined
+        ? {}
+        : { imageIdentity: artifact.imageIdentity }),
       imagePath,
       limits: Object.freeze({
         cpus: cpus.value,

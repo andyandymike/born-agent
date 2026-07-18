@@ -29,6 +29,7 @@ describe("ProviderNetworkGuard", () => {
     expect(guard.report()).toEqual({
       allowedInProcessContractCount: 0,
       allowedLoopbackRequestCount: 1,
+      allowedRemoteExplicitCount: 0,
       billableRequestCount: 0,
       blockedRemoteAttemptCount: 0,
       guardDecisionCount: 1,

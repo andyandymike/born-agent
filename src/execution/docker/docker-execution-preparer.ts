@@ -92,6 +92,7 @@ function normalizedDockerAction(
     executionEnvironment: {
       executor: "docker",
       imageDigest: image.image.digest,
+      imageIdentity: image.identity,
       imageReference: image.image.reference,
       network: "none",
       policyVersion: policy.imagePolicyVersion,
@@ -196,6 +197,7 @@ export class DockerExecutionPreparer implements ExecutionPreparerLike {
         environmentEvidence: Object.freeze({
           executor: "docker",
           imageDigest: image.image.digest,
+          imageIdentity: image.identity,
           isolation: "docker",
           network: "none",
           policyVersion: this.#imagePolicy.imagePolicyVersion,

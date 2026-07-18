@@ -88,6 +88,21 @@ try {
   const packedManifest = JSON.parse(
     await readFile(join(packageRoot, "package.json"), "utf8"),
   );
+  const requiredPhase15Assets = [
+    "policies/local-free-v1.json",
+    "policies/policy-schema-v1.json",
+    "docker/artifacts/artifact-schema-v1.json",
+    "docker/artifacts/bornagent-sandbox-node-v1.lock.json",
+    "docker/artifacts/bornagent-sandbox-node-v1/Dockerfile",
+    "docker/artifacts/bornagent-sandbox-node-v1/context-manifest.json",
+    "docker/artifacts/bornagent-sandbox-node-v1/context/born-sandbox-exec",
+  ];
+  for (const relativePath of requiredPhase15Assets) {
+    const bytes = await readFile(join(packageRoot, ...relativePath.split("/")));
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 15 asset is empty: ${relativePath}`);
+    }
+  }
   for (const dependency of Object.keys(packedManifest.dependencies ?? {})) {
     const linkPath = join(installRoot, "node_modules", dependency);
     await mkdir(dirname(linkPath), { recursive: true });
@@ -116,6 +131,52 @@ try {
         result.error?.message,
         result.stdout,
         result.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  // PHASE15: execute from the extracted package so a source-checkout fallback
+  // cannot hide a missing built-in policy or Docker artifact asset.
+  const policyShow = spawnSync(
+    process.execPath,
+    [binaryPath, "policy", "show", "--json"],
+    {
+      cwd: installRoot,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        TEMP: temporaryRoot,
+        TMP: temporaryRoot,
+      },
+      shell: false,
+    },
+  );
+  let policyDocument;
+  try {
+    policyDocument = JSON.parse(policyShow.stdout);
+  } catch {
+    policyDocument = null;
+  }
+  if (
+    policyShow.status !== 0 ||
+    policyDocument?.profile?.id !== "local-free-v1" ||
+    policyDocument?.profile?.mode !== "local_free" ||
+    policyDocument?.profile?.sha256 !==
+      "424958376462d24fbe83e2c267ad50902b83b18f709e62a6a9e395b5ce8e89eb" ||
+    policyDocument?.profile?.source !== "built_in" ||
+    policyDocument?.modelAccess?.defaultProvider !== "ollama" ||
+    policyDocument?.modelAccess?.defaultModel !== "qwen3:1.7b" ||
+    policyDocument?.modelAccess?.credentialAccess !== "deny"
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} policy show --json failed`,
+        policyShow.error?.message,
+        policyShow.stdout,
+        policyShow.stderr,
       ]
         .filter(Boolean)
         .join("\n"),
@@ -151,7 +212,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: local tarball ran born --help and validated 20 bundled eval tasks\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, ran born --help, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

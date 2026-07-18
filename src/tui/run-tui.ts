@@ -49,6 +49,8 @@ function agentOptions(
     maxToolOutputBytes: options.maxToolOutputBytes,
     mcpServerIds: options.mcpServerIds,
     model: options.model,
+    policyConfig: options.policyConfig,
+    policyProfile: options.policyProfile,
     provider: options.provider,
     reportFormat: options.reportFormat,
     requireVerification: options.requireVerification,
@@ -110,6 +112,8 @@ export async function executeTui(
         {
           allowDegradedResume: options.allowDegradedResume,
           message,
+          policyConfig: options.policyConfig,
+          policyProfile: options.policyProfile,
           sessionId,
         },
         tuiRuntime,
@@ -130,7 +134,9 @@ export async function executeTui(
 
   const renderer = host.createRenderer({
     onInput: (data) => controllerRef.current?.handleRawInput(data),
-    secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
+    // PHASE15: rendering/replay is not credential authority. Model command
+    // assembly performs selected-provider redaction after policy resolution.
+    secrets: [],
   });
   const approvalController = new ApprovalController(
     () => {

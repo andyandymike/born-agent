@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import {
+  persistDockerExecutionImageIdentity,
+  restoreDockerExecutionImageIdentity,
+} from "../execution/docker/acquisition/docker-image-identity.js";
+
 import type {
   BinaryFingerprint,
   CommandActionIdentity,
@@ -183,8 +188,24 @@ function normalizeDockerEnvironment(
     throw new TypeError("executionEnvironment.imageDigest must use sha256:<hex>");
   }
   assertNonEmpty(value.imageReference, "executionEnvironment.imageReference");
-  if (!value.imageReference.endsWith(`@${value.imageDigest}`)) {
-    throw new TypeError("executionEnvironment image reference must match its digest");
+  const imageIdentity =
+    value.imageIdentity === undefined
+      ? undefined
+      : restoreDockerExecutionImageIdentity(
+          persistDockerExecutionImageIdentity(value.imageIdentity),
+        );
+  if (
+    imageIdentity === undefined
+      ? !value.imageReference.endsWith(`@${value.imageDigest}`)
+      : imageIdentity.kind === "registry_digest"
+        ? imageIdentity.reference !== value.imageReference ||
+          !value.imageReference.endsWith(`@${value.imageDigest}`)
+        : imageIdentity.configImageId !== value.imageReference ||
+          imageIdentity.configImageId !== value.imageDigest
+  ) {
+    throw new TypeError(
+      "executionEnvironment image reference must match its immutable identity",
+    );
   }
   assertNonEmpty(value.policyVersion, "executionEnvironment.policyVersion");
   assertSha256(value.snapshotSha256, "executionEnvironment.snapshotSha256");
@@ -204,6 +225,7 @@ function normalizeDockerEnvironment(
   return Object.freeze({
     executor: "docker",
     imageDigest: value.imageDigest,
+    ...(imageIdentity === undefined ? {} : { imageIdentity }),
     imageReference: value.imageReference,
     network: "none",
     policyVersion: value.policyVersion,
@@ -345,6 +367,13 @@ function dockerEnvironmentForDigest(
   return {
     executor: value.executor,
     imageDigest: value.imageDigest,
+    ...(value.imageIdentity === undefined
+      ? {}
+      : {
+          imageIdentity: persistDockerExecutionImageIdentity(
+            value.imageIdentity,
+          ) as CanonicalJsonValue,
+        }),
     imageReference: value.imageReference,
     network: value.network,
     policyVersion: value.policyVersion,

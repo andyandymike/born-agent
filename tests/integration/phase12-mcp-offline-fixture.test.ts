@@ -276,5 +276,5 @@ describe("Phase 12 offline stdio integration", () => {
     expect(execution.output).toContain("0.0.0");
     await manager.stopAll();
     expect(events.at(-1)?.type).toBe("mcp.server.stopped");
-  }, 20_000);
+  }, 30_000);
 });

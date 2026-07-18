@@ -34,6 +34,16 @@ import type {
   ToolExecution,
   ToolRegistryLike,
 } from "../tools/tool-types.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+  type EffectiveRuntimePolicy,
+  type ResolvedProviderPolicyRequest,
+} from "../policy/policy-resolver.js";
+import { persistRuntimePolicyEvidence } from "../policy/policy-evidence.js";
+import { credentialSecretsForPolicy } from "../policy/provider-access-policy.js";
 
 type CancellationReason = "cancelled" | "timeout";
 export type StreamingChatExitCode = 0 | 1 | 2 | 4 | 5 | 6 | 130;
@@ -46,6 +56,7 @@ export interface StreamingRunRenderer extends RunEventRenderer {
 export interface StreamingChatRuntime {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly platform: NodeJS.Platform;
   clearTimer(handle: unknown): void;
   createModelBackend(request: BackendCreationRequest): ModelBackend;
   createSessionWriter(
@@ -412,6 +423,7 @@ async function runFixedToolRoundTrip(
   runtime: StreamingChatRuntime,
   startedAt: number,
   cancellationReason: () => CancellationReason | undefined,
+  secrets: readonly (string | undefined)[],
   persistTurnBoundary?: TurnBoundaryRecorder,
 ): Promise<StreamingChatExitCode> {
   // PHASE3 状态机：first turn -> (直接回答 | 一个工具) -> second turn -> terminal。
@@ -480,7 +492,6 @@ async function runFixedToolRoundTrip(
     );
   }
 
-  const secrets = [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY];
   // PHASE3: 必须等第一回合完整结束后才记录并执行 tool call。
   // requested 先持久化，保证 session 中存在模型确实提出过该调用的证据。
   await publisher.publish({
@@ -625,7 +636,46 @@ export async function runStreamingChat(
 ): Promise<StreamingChatExitCode> {
   // PHASE2/3 orchestration root：配置 -> session -> event publisher ->
   // model turn -> 可选一次工具 -> model turn -> 唯一 terminal -> 清理关闭。
-  const configResult = resolveChatConfig(options, runtime.env);
+  let effectivePolicy: EffectiveRuntimePolicy;
+  let policyRequest: ResolvedProviderPolicyRequest;
+  try {
+    const registry = await loadRuntimePolicyRegistry({
+      ...(options.policyConfig === undefined ? {} : { configPath: options.policyConfig }),
+      env: runtime.env,
+      platform: runtime.platform,
+      workspace: runtime.cwd,
+    });
+    effectivePolicy = resolveEffectiveRuntimePolicy(registry, options.policyProfile);
+    const requestedProvider = options.provider ?? runtime.env.BORN_PROVIDER;
+    policyRequest = resolveProviderPolicyRequest(effectivePolicy, {
+      endpoint:
+        requestedProvider?.trim().toLowerCase() === "ollama" || requestedProvider === undefined
+          ? runtime.env.BORN_OLLAMA_BASE_URL
+          : undefined,
+      model: options.model ?? runtime.env.BORN_MODEL,
+      provider: requestedProvider,
+    });
+  } catch (error) {
+    if (error instanceof RuntimePolicyError) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      return error.exitCode;
+    }
+    renderer.renderDiagnostic("runtime policy internal error");
+    return 1;
+  }
+  const configResult = resolveChatConfig(
+    {
+      ...options,
+      model: policyRequest.model,
+      provider: policyRequest.provider,
+    },
+    {
+      ...runtime.env,
+      ...(policyRequest.provider === "ollama"
+        ? { BORN_OLLAMA_BASE_URL: policyRequest.endpoint }
+        : {}),
+    },
+  );
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
     return 2;
@@ -637,11 +687,10 @@ export async function runStreamingChat(
     // are frozen before session creation, so a rejected run leaves no partial log
     // and cannot create a provider request or silently choose a fallback.
     backend = runtime.createModelBackend({
-      ...(config.ollamaBaseURL === undefined
-        ? {}
-        : { endpoint: config.ollamaBaseURL }),
+      ...(policyRequest.endpoint === undefined ? {} : { endpoint: policyRequest.endpoint }),
       model: config.model,
       provider: config.provider,
+      runtimePolicy: effectivePolicy,
       requirement: {
         cancellation: true,
         completeUsageForReportedTokenCeiling: false,
@@ -650,18 +699,26 @@ export async function runStreamingChat(
       },
     });
   } catch (error) {
+    if (error instanceof BackendPreflightError) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      return error.exitCode;
+    }
     if (
-      error instanceof BackendPreflightError ||
-      (error instanceof Error &&
-        "exitCode" in error &&
-        error.exitCode === 2)
+      error instanceof Error &&
+      "exitCode" in error &&
+      (error.exitCode === 2 || error.exitCode === 4)
     ) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      return 2;
+      return error.exitCode;
     }
     renderer.renderDiagnostic("internal protocol error");
     return 1;
   }
+  const secrets = credentialSecretsForPolicy(
+    effectivePolicy,
+    config.provider,
+    runtime.env,
+  );
 
   const sessionId = runtime.randomUUID();
   const runId = runtime.randomUUID();
@@ -708,6 +765,7 @@ export async function runStreamingChat(
         input: { role: "user", text: config.prompt },
         model: config.model,
         provider: config.provider,
+        runtime_policy: persistRuntimePolicyEvidence(effectivePolicy.evidence),
         timeout_ms: config.timeoutMs,
         tools: config.toolsEnabled
           ? ["list_files", "read_file", "search"]
@@ -736,10 +794,7 @@ export async function runStreamingChat(
       type: "backend.selected",
     });
     const tools = config.toolsEnabled
-      ? await runtime.createToolRegistry(runtime.cwd, [
-          runtime.env.OPENAI_API_KEY,
-          runtime.env.ANTHROPIC_API_KEY,
-        ])
+      ? await runtime.createToolRegistry(runtime.cwd, secrets)
       : undefined;
     const turnBoundaryRecorder = createTurnBoundaryRecorder(
       writer,
@@ -755,6 +810,7 @@ export async function runStreamingChat(
       runtime,
       startedAt,
       () => cancellationReason,
+      secrets,
       turnBoundaryRecorder,
     );
   } catch (error) {

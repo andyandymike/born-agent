@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bornagent.local/schemas/runtime-policy-v1.json",
+  "title": "BornAgent runtime policy profile v1",
+  "oneOf": [
+    { "$ref": "#/$defs/localProfile" },
+    { "$ref": "#/$defs/remoteProfile" }
+  ],
+  "$defs": {
+    "dockerAcquisition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "deny" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "allowed_artifact_ids", "pull", "build"],
+          "properties": {
+            "kind": { "const": "local_locked" },
+            "allowed_artifact_ids": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "const": "bornagent-sandbox-node-v1" }
+            },
+            "pull": { "const": "allow_public_digest_pinned" },
+            "build": { "const": "allow_trusted_local_context" }
+          }
+        }
+      ]
+    },
+    "evalAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_suites", "max_attempts_per_run"],
+      "properties": {
+        "allowed_suites": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["targeted", "smoke", "full"] }
+        },
+        "max_attempts_per_run": { "type": "integer", "minimum": 1, "maximum": 50 }
+      }
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "not": {
+        "pattern": "(?:^|[/:._-])[lL][aA][tT][eE][sS][tT](?:$|[/:._-])"
+      }
+    },
+    "openaiProviderRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "models", "base_urls"],
+      "properties": {
+        "provider": { "const": "openai" },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelId" }
+        },
+        "base_urls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "const": "https://api.openai.com/v1" }
+        }
+      }
+    },
+    "anthropicProviderRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "models", "base_urls"],
+      "properties": {
+        "provider": { "const": "anthropic" },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelId" }
+        },
+        "base_urls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "const": "https://api.anthropic.com" }
+        }
+      }
+    },
+    "localProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "mode", "model_access", "eval_access", "docker_acquisition"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "mode": { "const": "local_free" },
+        "model_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "allowed_sources", "allowed_providers", "ollama", "credential_access"],
+          "properties": {
+            "kind": { "const": "local_free" },
+            "allowed_sources": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": { "enum": ["in_process_test", "local_ollama"] }
+            },
+            "allowed_providers": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": { "enum": ["fake", "mock", "ollama"] }
+            },
+            "ollama": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["endpoint", "default_model", "require_installed_digest"],
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "pattern": "^http://(?:127\\.0\\.0\\.1|\\[::1\\]):(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+                },
+                "default_model": { "$ref": "#/$defs/modelId" },
+                "require_installed_digest": { "const": true }
+              }
+            },
+            "credential_access": { "const": "deny" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "allowed_providers": { "type": "array", "contains": { "const": "ollama" } }
+                }
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "allowed_sources": { "type": "array", "contains": { "const": "local_ollama" } }
+                }
+              },
+              "else": {
+                "type": "object",
+                "properties": {
+                  "allowed_sources": { "type": "array", "not": { "contains": { "const": "local_ollama" } } }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "allowed_providers": { "type": "array", "contains": { "enum": ["fake", "mock"] } }
+                }
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "allowed_sources": { "type": "array", "contains": { "const": "in_process_test" } }
+                }
+              },
+              "else": {
+                "type": "object",
+                "properties": {
+                  "allowed_sources": { "type": "array", "not": { "contains": { "const": "in_process_test" } } }
+                }
+              }
+            }
+          ]
+        },
+        "eval_access": { "$ref": "#/$defs/evalAccess" },
+        "docker_acquisition": { "$ref": "#/$defs/dockerAcquisition" }
+      }
+    },
+    "remoteProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "mode", "model_access", "eval_access", "docker_acquisition"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "mode": { "const": "remote_explicit" },
+        "model_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "providers", "credential_access", "limits"],
+          "properties": {
+            "kind": { "const": "remote_explicit" },
+            "providers": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "oneOf": [
+                  { "$ref": "#/$defs/openaiProviderRule" },
+                  { "$ref": "#/$defs/anthropicProviderRule" }
+                ]
+              },
+              "allOf": [
+                {
+                  "type": "array",
+                  "contains": {
+                    "type": "object",
+                    "required": ["provider"],
+                    "properties": { "provider": { "const": "openai" } }
+                  },
+                  "minContains": 0,
+                  "maxContains": 1
+                },
+                {
+                  "type": "array",
+                  "contains": {
+                    "type": "object",
+                    "required": ["provider"],
+                    "properties": { "provider": { "const": "anthropic" } }
+                  },
+                  "minContains": 0,
+                  "maxContains": 1
+                }
+              ]
+            },
+            "credential_access": { "const": "selected_provider_only" },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max_provider_requests_per_run", "max_output_tokens_per_request", "max_reported_total_tokens_per_run"],
+              "properties": {
+                "max_provider_requests_per_run": { "type": "integer", "minimum": 1, "maximum": 100 },
+                "max_output_tokens_per_request": { "type": "integer", "minimum": 1, "maximum": 32768 },
+                "max_reported_total_tokens_per_run": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+              }
+            }
+          }
+        },
+        "eval_access": {
+          "allOf": [
+            { "$ref": "#/$defs/evalAccess" },
+            {
+              "type": "object",
+              "properties": {
+                "allowed_suites": { "type": "array", "not": { "contains": { "const": "full" } } }
+              }
+            }
+          ]
+        },
+        "docker_acquisition": { "$ref": "#/$defs/dockerAcquisition" }
+      }
+    }
+  }
+}

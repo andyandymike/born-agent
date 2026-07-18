@@ -1,5 +1,10 @@
 import type { DockerContainerIdentity } from "./docker-cli-argv.js";
 import type { DigestPinnedImageReference } from "./docker-policy.js";
+import {
+  persistDockerExecutionImageIdentity,
+  restoreDockerExecutionImageIdentity,
+  type DockerExecutionImageIdentity,
+} from "./acquisition/docker-image-identity.js";
 
 const CONTAINER_ID = /^[0-9a-f]{64}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -7,6 +12,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 export interface ContainerLifecycleIdentity extends DockerContainerIdentity {
   readonly image: DigestPinnedImageReference;
+  readonly imageIdentity?: DockerExecutionImageIdentity | undefined;
   readonly snapshotSha256: string;
 }
 
@@ -82,6 +88,23 @@ export class ContainerLifecycleError extends Error {
 }
 
 function assertIdentity(identity: ContainerLifecycleIdentity): void {
+  const executionIdentity =
+    identity.imageIdentity === undefined
+      ? undefined
+      : restoreDockerExecutionImageIdentity(
+          persistDockerExecutionImageIdentity(identity.imageIdentity),
+        );
+  const imageMatches =
+    executionIdentity === undefined
+      ? identity.image.reference ===
+        `${identity.image.repository}@${identity.image.digest}`
+      : executionIdentity.kind === "registry_digest"
+        ? executionIdentity.reference === identity.image.reference &&
+          identity.image.reference ===
+            `${identity.image.repository}@${identity.image.digest}`
+        : executionIdentity.configImageId === identity.image.reference &&
+          executionIdentity.configImageId === identity.image.digest &&
+          identity.image.repository === "";
   if (
     !/^bornagent-[0-9a-f]{24}$/u.test(identity.name) ||
     !/^born-[0-9a-f]{12}$/u.test(identity.hostname) ||
@@ -90,8 +113,7 @@ function assertIdentity(identity: ContainerLifecycleIdentity): void {
     !UUID.test(identity.nonce) ||
     !SHA256.test(identity.snapshotSha256) ||
     !/^sha256:[0-9a-f]{64}$/u.test(identity.image.digest) ||
-    identity.image.reference !==
-      `${identity.image.repository}@${identity.image.digest}`
+    !imageMatches
   ) {
     throw new ContainerLifecycleError(
       "invalid_lifecycle_identity",

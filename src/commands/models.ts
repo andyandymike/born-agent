@@ -20,22 +20,35 @@ import {
   type OllamaLocalModelDiscovery,
 } from "../providers/pi/ollama-local-catalog-port.js";
 import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+  type EffectiveRuntimePolicy,
+} from "../policy/policy-resolver.js";
+import { persistRuntimePolicyEvidence } from "../policy/policy-evidence.js";
 
 export interface ModelsCommandOptions {
   readonly json: boolean;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
   readonly provider: string | undefined;
   readonly refreshLocal: boolean;
 }
 
 export interface ModelsRuntime {
+  readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly platform: NodeJS.Platform;
   refreshLocalModelCatalog(
     request: OllamaLocalCatalogRefreshRequest,
   ): Promise<readonly OllamaLocalModelDiscovery[]>;
 }
 
 interface ListedModel extends ModelCatalogEntry {
-  readonly credentialStatus: CredentialResolution["status"];
+  readonly credentialStatus: CredentialResolution["status"] | "not_read";
+  readonly policyStatus: "enabled" | "disabled_by_policy";
 }
 
 function displayCredential(model: ListedModel): string {
@@ -51,6 +64,7 @@ function renderTable(models: readonly ListedModel[]): string {
     "TOOLS",
     "STREAM",
     "USAGE",
+    "POLICY",
     "CREDENTIAL",
     "EVIDENCE",
   ] as const;
@@ -60,6 +74,7 @@ function renderTable(models: readonly ListedModel[]): string {
     model.capabilities.tools === "none" ? "no" : "yes",
     model.capabilities.streaming ? "yes" : "no",
     model.capabilities.usage,
+    model.policyStatus,
     displayCredential(model),
     model.evidenceStatus,
   ]);
@@ -93,7 +108,7 @@ export async function executeModels(
   options: ModelsCommandOptions,
   runtime: ModelsRuntime,
   io: CliIO,
-): Promise<0 | 2 | 3> {
+): Promise<0 | 1 | 2 | 3> {
   const selectedProvider = options.provider?.trim().toLowerCase();
   if (
     selectedProvider !== undefined &&
@@ -111,6 +126,28 @@ export async function executeModels(
     return 2;
   }
 
+  let effectivePolicy: EffectiveRuntimePolicy;
+  try {
+    effectivePolicy = resolveEffectiveRuntimePolicy(
+      await loadRuntimePolicyRegistry({
+        ...(options.policyConfig === undefined
+          ? {}
+          : { configPath: options.policyConfig }),
+        env: runtime.env,
+        platform: runtime.platform,
+        workspace: runtime.cwd,
+      }),
+      options.policyProfile,
+    );
+  } catch (error) {
+    if (error instanceof RuntimePolicyError) {
+      io.stderr.write(`${error.code}: ${error.message}\n`);
+      return error.exitCode === 1 ? 1 : 2;
+    }
+    io.stderr.write("runtime policy internal error\n");
+    return 1;
+  }
+
   let localDiscovery: readonly OllamaLocalModelDiscovery[] = [];
   if (options.refreshLocal) {
     const baseURL = resolveLoopbackOllamaURL(
@@ -120,6 +157,19 @@ export async function executeModels(
     if (!baseURL.ok) {
       io.stderr.write(`usage/config error: ${baseURL.error}\n`);
       return 2;
+    }
+    try {
+      resolveProviderPolicyRequest(effectivePolicy, {
+        endpoint: baseURL.value,
+        model: "qwen3:1.7b",
+        provider: "ollama",
+      });
+    } catch (error) {
+      if (error instanceof RuntimePolicyError) {
+        io.stderr.write(`${error.code}: ${error.message}\n`);
+        return 2;
+      }
+      return 1;
     }
     try {
       localDiscovery = await runtime.refreshLocalModelCatalog({
@@ -136,12 +186,35 @@ export async function executeModels(
     }
   }
 
-  const credentialResolver = new CredentialResolver(runtime.env);
   const entries = createPhase8ModelCatalog().list(selectedProvider);
-  const listed: ListedModel[] = entries.map((entry) => ({
-    ...entry,
-    credentialStatus: credentialResolver.resolve(entry.provider).status,
-  }));
+  const listed: ListedModel[] = entries.map((entry) => {
+    let enabled = true;
+    try {
+      resolveProviderPolicyRequest(effectivePolicy, {
+        model: entry.modelId,
+        provider: entry.provider,
+      });
+    } catch (error) {
+      if (!(error instanceof RuntimePolicyError)) throw error;
+      enabled = false;
+    }
+    // PHASE15: catalog inspection is not provider selection. A remote key is
+    // read only when the caller selected both a remote profile and one exact
+    // provider filter; disabled rows always report not_read.
+    const credentialStatus =
+      entry.credentialVariable === null
+        ? "not_required"
+        : enabled &&
+            effectivePolicy.entry.profile.mode === "remote_explicit" &&
+            selectedProvider === entry.provider
+          ? new CredentialResolver(runtime.env).resolve(entry.provider).status
+          : "not_read";
+    return {
+      ...entry,
+      credentialStatus,
+      policyStatus: enabled ? "enabled" : "disabled_by_policy",
+    };
+  });
 
   if (options.json) {
     // PHASE8: the model list is a versioned local manifest. It reports
@@ -164,6 +237,7 @@ export async function executeModels(
             refreshRequested: options.refreshLocal,
           },
           models: listed,
+          runtimePolicy: persistRuntimePolicyEvidence(effectivePolicy.evidence),
           schemaVersion: MODEL_CATALOG_SCHEMA_VERSION,
         },
         null,

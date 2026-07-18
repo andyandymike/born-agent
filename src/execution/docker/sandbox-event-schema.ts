@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { persistedDockerExecutionImageIdentitySchema } from "./acquisition/docker-image-identity.js";
+
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const imageDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
@@ -46,6 +48,7 @@ export const phase13SandboxRunEventDataSchemas = {
       container_name: z.string().regex(/^bornagent-[a-f0-9]{24}$/u),
       hostname: z.string().regex(/^born-[a-f0-9]{12}$/u),
       image_digest: imageDigest,
+      image_identity: persistedDockerExecutionImageIdentitySchema.optional(),
       nonce: uuid,
       snapshot_sha256: sha256,
     })
@@ -113,6 +116,7 @@ export const phase13SandboxRunEventDataSchemas = {
       ...common,
       file_count: z.number().int().nonnegative(),
       image_digest: imageDigest,
+      image_identity: persistedDockerExecutionImageIdentitySchema.optional(),
       limits: z
         .object({
           cpus: z.number().min(0.25).max(8),

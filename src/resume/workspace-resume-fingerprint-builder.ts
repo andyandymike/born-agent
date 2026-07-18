@@ -10,6 +10,7 @@ import {
   READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
 } from "../agent/system-instructions.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
+import { persistDockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
 import { finishTaskInputSchema } from "../completion/finish-task-tool.js";
 import type { ModelBackend } from "../model/model-backend.js";
 import {
@@ -132,6 +133,13 @@ export function agentPolicySha256(config: ResolvedAgentConfig): string {
             expected_lockfile_sha256:
               config.dockerSandbox.expectedLockfileSha256 ?? null,
             image: config.dockerSandbox.image,
+            ...(config.dockerSandbox.imageIdentity === undefined
+              ? {}
+              : {
+                  image_identity: persistDockerExecutionImageIdentity(
+                    config.dockerSandbox.imageIdentity,
+                  ),
+                }),
             image_path: config.dockerSandbox.imagePath,
             limits: config.dockerSandbox.limits,
             runtime: config.dockerSandbox.runtime,

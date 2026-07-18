@@ -424,7 +424,14 @@ export function evalAgentCommandOptions(input: {
     maxToolOutputBytes: "262144",
     ...(hasMcp ? { mcpServerIds: Object.freeze(["evalfixture"]) } : {}),
     model: input.model,
+    // PHASE15: the Phase 8/14 agent/report facade still needs a concrete
+    // ProviderId. Keep `ollama` for legacy readers while providerSource is the
+    // policy authority that distinguishes an in-process fake from loopback.
     provider: "ollama",
+    providerSource:
+      input.source.kind === "local_ollama"
+        ? "local_ollama"
+        : "in_process_test",
     reportFormat: "json",
     requestTimeoutMs: "30000",
     requireVerification: "auto",

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { persistedCompletionEvidenceSchema } from "../completion/completion-evidence-schema.js";
+import { persistedDockerExecutionImageIdentitySchema } from "../execution/docker/acquisition/docker-image-identity.js";
+import { persistedRuntimePolicyEvidenceSchema } from "../policy/policy-evidence.js";
 
 // PHASE2: RunEvent 是 BornAgent 自己的长期存储协议。
 // TypeScript 只能检查编译期代码，Zod 还会检查 SDK 数据、磁盘 JSONL 和未来读回的数据。
@@ -110,6 +112,7 @@ const commonRunStartedData = {
   resume_of_run_id: uuidSchema.optional(),
   workspace_fingerprint: sha256Schema.optional(),
   workspace_resume_fingerprint: workspaceResumeFingerprintSchema.optional(),
+  runtime_policy: persistedRuntimePolicyEvidenceSchema.optional(),
 };
 const chatRunStartedDataSchema = z
   .object({
@@ -132,10 +135,26 @@ const agentRunStartedDataSchema = z
     docker_sandbox: z
       .object({
         image: utf8StringWithin(500).refine(
-          (value) => /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/u.test(value),
-          "Docker image must be digest pinned",
+          (value) =>
+            /^(?:[a-z0-9][a-z0-9._:/-]*@)?sha256:[a-f0-9]{64}$/u.test(
+              value,
+            ),
+          "Docker image must be an immutable digest or config image ID",
         ),
         image_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        image_identity: persistedDockerExecutionImageIdentitySchema.optional(),
+        artifact_contract: z
+          .object({
+            artifact_id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
+            expected_lockfile_sha256: sha256Schema,
+            image_path: utf8StringWithin(2_048).min(1),
+            runtime: utf8StringWithin(200).min(1),
+            runtime_version: utf8StringWithin(200).min(1),
+            supports_c_utf8: z.boolean(),
+            wrapper_sha256: sha256Schema,
+          })
+          .strict()
+          .optional(),
         limits: z
           .object({
             cpus: z.number().min(0.25).max(8),
@@ -148,6 +167,24 @@ const agentRunStartedDataSchema = z
         snapshot_mode: z.literal("disposable_copy"),
       })
       .strict()
+      .superRefine((value, context) => {
+        if (value.image_identity?.kind === "trusted_local_build") {
+          if (
+            value.image !== value.image_identity.config_image_id ||
+            value.image_digest !== value.image_identity.config_image_id ||
+            value.artifact_contract?.artifact_id !==
+              value.image_identity.artifact_id ||
+            value.artifact_contract.expected_lockfile_sha256 !==
+              value.image_identity.artifact_lock_sha256
+          ) {
+            context.addIssue({
+              code: "custom",
+              message:
+                "trusted local Docker build evidence must exact-match its artifact contract",
+            });
+          }
+        }
+      })
       .optional(),
     max_duration_ms: positiveInteger,
     max_command_output_bytes: positiveInteger.optional(),
@@ -161,6 +198,9 @@ const agentRunStartedDataSchema = z
     max_tool_output_bytes: positiveInteger,
     request_timeout_ms: positiveInteger,
     report_format: z.enum(["text", "json"]).optional(),
+    provider_source: z
+      .enum(["in_process_test", "local_ollama", "provider_network"])
+      .optional(),
     require_verification: z.literal("auto").optional(),
     // PHASE7: optional only keeps Phase 0-6 schema-v1 logs replayable; new agent runs persist the profile explicitly.
     task_profile: z.enum(["read-only", "coding"]).optional(),

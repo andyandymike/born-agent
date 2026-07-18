@@ -1,3 +1,5 @@
+import type { DockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
+
 export type PermissionEffect = "allow" | "ask" | "deny";
 
 export type CommandPurpose = "inspect" | "verify";
@@ -13,6 +15,7 @@ export interface EnvironmentPolicyIdentity {
 export interface DockerCommandEnvironmentIdentity {
   readonly executor: "docker";
   readonly imageDigest: string;
+  readonly imageIdentity?: DockerExecutionImageIdentity | undefined;
   readonly imageReference: string;
   readonly network: "none";
   readonly policyVersion: string;

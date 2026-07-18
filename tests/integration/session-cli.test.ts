@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,6 +73,43 @@ describe("real JSONL session CLI integration", () => {
 
   it("never persists or prints secrets nested in an SDK failure", async () => {
     const cwd = await workspace();
+    const policyDirectory = await workspace();
+    const policyPath = join(policyDirectory, "policy.json");
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        profiles: [
+          {
+            docker_acquisition: { kind: "deny" },
+            eval_access: {
+              allowed_suites: ["targeted", "smoke"],
+              max_attempts_per_run: 2,
+            },
+            id: "remote-openai-test",
+            mode: "remote_explicit",
+            model_access: {
+              credential_access: "selected_provider_only",
+              kind: "remote_explicit",
+              limits: {
+                max_output_tokens_per_request: 16,
+                max_provider_requests_per_run: 1,
+                max_reported_total_tokens_per_run: 100,
+              },
+              providers: [
+                {
+                  base_urls: ["https://api.openai.com/v1"],
+                  models: ["gpt-5.6-terra"],
+                  provider: "openai",
+                },
+              ],
+            },
+            schema_version: 1,
+          },
+        ],
+        schema_version: 1,
+      }),
+      "utf8",
+    );
     const secret = "sk-end-to-end-secret-value";
     const memory = createMemoryIO();
     const sdkFailure = Object.assign(
@@ -106,7 +143,18 @@ describe("real JSONL session CLI integration", () => {
       },
     };
     const exitCode = await runCli(
-      ["chat", "ordinary prompt"],
+      [
+        "chat",
+        "ordinary prompt",
+        "--policy-config",
+        policyPath,
+        "--policy-profile",
+        "remote-openai-test",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5.6-terra",
+      ],
       memory.io,
       createRuntime({
         createSessionWriter: JsonlSessionWriter.create,

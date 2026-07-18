@@ -96,10 +96,12 @@ describe("runCli", () => {
     const exitCode = await runCli(["doctor"], memory.io, createRuntime());
     expect(exitCode).toBe(0);
     expect(memory.readStdout()).toContain("[ok] Node.js");
-    expect(memory.readStdout()).toContain("[ok] Provider: openai");
-    expect(memory.readStdout()).toContain("[ok] OpenAI credential: configured");
-    expect(memory.readStdout()).toContain("[ok] Model: gpt-5.6-terra");
-    expect(memory.readStdout()).toContain("Doctor: 7 passed, 0 failed");
+    expect(memory.readStdout()).toContain("[ok] Provider: ollama");
+    expect(memory.readStdout()).toContain("[ok] Ollama service: reachable");
+    expect(memory.readStdout()).toContain("[ok] Model: qwen3:1.7b");
+    expect(memory.readStdout()).toContain("[ok] Runtime policy: local-free-v1 / local_free");
+    expect(memory.readStdout()).toContain("[ok] Credential access: not_required (local_free)");
+    expect(memory.readStdout()).toContain("Doctor: 9 passed, 0 failed");
     expect(memory.readStderr()).toBe("");
   });
 
@@ -115,7 +117,7 @@ describe("runCli", () => {
     const exitCode = await runCli(["doctor"], memory.io, runtime);
     expect(exitCode).toBe(3);
     expect(memory.readStdout()).toContain("[fail] ripgrep");
-    expect(memory.readStdout()).toContain("Doctor: 6 passed, 1 failed");
+    expect(memory.readStdout()).toContain("Doctor: 8 passed, 1 failed");
     expect(memory.readStderr()).toBe("");
   });
 });

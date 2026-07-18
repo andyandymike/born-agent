@@ -42,7 +42,7 @@ const identity = {
   adapter: "deterministic-exact-fake",
   adapterVersion: "phase9-v1",
   configFingerprint: "a".repeat(64),
-  model: "fake-local-model",
+  model: "qwen3:1.7b",
   provider: "ollama" as const,
 };
 

@@ -107,7 +107,7 @@ describe("born chat streaming", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(configuration).toEqual({
+    expect(configuration).toMatchObject({
       endpoint: "http://127.0.0.1:11434",
       model: "qwen3:1.7b",
       provider: "ollama",
@@ -157,7 +157,7 @@ describe("born chat streaming", () => {
   it("does not create a session for missing credentials or invalid timeout", async () => {
     const createSessionWriter = vi.fn();
     for (const [argv, env, expected] of [
-      [["chat", "hello"], {}, 2],
+      [["chat", "hello", "--provider", "openai"], {}, 2],
       [["chat", "hello", "--timeout-ms", "999"], { OPENAI_API_KEY: "key" }, 2],
     ] as const) {
       const memory = createMemoryIO();

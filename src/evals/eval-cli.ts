@@ -11,6 +11,8 @@ export interface EvalRunCliOptions {
   readonly suite: string;
   readonly provider: string;
   readonly model: string;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
   readonly repetitions?: string;
   readonly task?: string;
   readonly ollamaEndpoint?: string;

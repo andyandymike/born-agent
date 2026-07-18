@@ -4,6 +4,7 @@ import {
   createDirectLoopbackFetch,
 } from "../../security/direct-loopback-fetch.js";
 import type { ProviderId } from "../../model/model-backend.js";
+import type { ProviderAccessPolicy } from "../../policy/provider-access-policy.js";
 import type {
   PiRuntimeEvent,
   PiRuntimePort,
@@ -154,8 +155,10 @@ export type PiSdkModel = {
 export interface ProductionPiRuntimePortOptions {
   readonly baseUrl?: string;
   readonly credential?: string;
+  readonly maximumOutputTokens?: number;
   readonly model: string;
   readonly provider: ProviderId;
+  readonly providerAccessPolicy?: ProviderAccessPolicy;
 }
 
 export interface PiRuntimeDriver {
@@ -216,6 +219,20 @@ function withBaseUrl<TModel extends PiSdkModel>(
   return baseUrl === undefined ? model : { ...model, baseUrl };
 }
 
+function withOutputCeiling<TModel extends PiSdkModel>(
+  model: TModel,
+  maximumOutputTokens: number | undefined,
+): TModel {
+  if (maximumOutputTokens === undefined) return model;
+  if (!Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 1) {
+    throw new TypeError("provider output ceiling must be a positive integer");
+  }
+  return {
+    ...model,
+    maxTokens: Math.min(model.maxTokens, maximumOutputTokens),
+  };
+}
+
 type PiProviderModule = {
   readonly anthropicProvider?: () => PiProvider;
   readonly openaiProvider?: () => PiProvider;
@@ -243,7 +260,10 @@ async function loadRemoteDriver(
     const provider = openaiProvider();
     const found = provider.getModels().find((model) => model.id === options.model);
     if (found === undefined) throw modelNotFound(options.provider, options.model);
-    const model = withBaseUrl(found, options.baseUrl);
+    const model = withOutputCeiling(
+      withBaseUrl(found, options.baseUrl),
+      options.maximumOutputTokens,
+    );
     return {
       model,
       stream: (context, streamOptions) =>
@@ -258,7 +278,10 @@ async function loadRemoteDriver(
   const provider = anthropicProvider();
   const found = provider.getModels().find((model) => model.id === options.model);
   if (found === undefined) throw modelNotFound(options.provider, options.model);
-  const model = withBaseUrl(found, options.baseUrl);
+  const model = withOutputCeiling(
+    withBaseUrl(found, options.baseUrl),
+    options.maximumOutputTokens,
+  );
   return {
     model,
     stream: (context, streamOptions) =>
@@ -284,7 +307,7 @@ async function loadOllamaDriver(
       options: PiSdkStreamOptions,
     ) => AsyncIterable<PiSdkAssistantMessageEvent>;
   };
-  const model: PiSdkModel = {
+  const model: PiSdkModel = withOutputCeiling({
     api: "openai-completions",
     baseUrl: `${selected.value}/v1`,
     compat: {
@@ -303,7 +326,7 @@ async function loadOllamaDriver(
     name: options.model,
     provider: "ollama",
     reasoning: false,
-  };
+  }, options.maximumOutputTokens);
   const fetcher = createDirectLoopbackFetch({
     allowedMethods: ["POST"],
     baseURL: selected.value,
@@ -512,6 +535,17 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
     // is the sole production file that imports pi runtime values.
     this.#driverPromise ??= this.#loader(this.#options);
     const driver = await this.#driverPromise;
+    if (signal.aborted) {
+      // PHASE15: driver loading is still preflight. A cancellation observed
+      // before the send boundary must neither reserve a request slot nor call
+      // the transport.
+      yield {
+        error: { code: "request_cancelled", message: "request aborted" },
+        reason: "aborted",
+        type: "error",
+      };
+      return;
+    }
     const messages = this.#messages(request);
     const context: PiSdkContext = {
       messages: [...messages],
@@ -541,6 +575,24 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
       signal,
       timeoutMs: request.timeoutMs,
     };
+
+    if (this.#options.providerAccessPolicy !== undefined) {
+      // PHASE15: policy/endpoint identity is rechecked at the last adapter
+      // boundary. A failed remote send still consumes its atomic request slot,
+      // because quota or billing impact may occur before an error is observed.
+      this.#options.providerAccessPolicy.assertFrozen({
+        endpoint: this.#options.baseUrl,
+        model: this.#options.model,
+        provider: this.#options.provider,
+        source:
+          this.#options.provider === "ollama"
+            ? "local_ollama"
+            : "provider_network",
+      });
+      if (this.#options.provider !== "ollama") {
+        this.#options.providerAccessPolicy.reserveRemoteSend();
+      }
+    }
 
     for await (const event of driver.stream(context, options)) {
       // PHASE8: pi 0.80.7 exposes a cross-provider partial AssistantMessage on

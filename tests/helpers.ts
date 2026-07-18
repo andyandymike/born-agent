@@ -180,7 +180,9 @@ export function createRuntime(
       stdout:
         command === "git"
           ? "git version 2.30.0.windows.2\n"
-          : "ripgrep 15.1.0\n",
+          : command === "ollama"
+            ? "NAME        ID      SIZE\nqwen3:1.7b  abc123  1.4 GB\n"
+            : "ripgrep 15.1.0\n",
     }),
     setTimer: (listener, delayMs) => setTimeout(listener, delayMs),
     timestamp: () => "2026-07-16T00:00:00.000Z",

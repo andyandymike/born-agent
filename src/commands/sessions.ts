@@ -46,6 +46,14 @@ import { SessionLockError } from "../sessions/session-lock.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { executeAgent } from "./agent.js";
 import { countPendingContainerLifecycles } from "../execution/docker/container-reconciliation-runtime.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+  type EffectiveRuntimePolicy,
+} from "../policy/policy-resolver.js";
+import { restoreDockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
 
 const MAX_SHOW_ITEMS = 200;
 const MAX_SHOW_TEXT_BYTES = 128 * 1024;
@@ -66,15 +74,16 @@ export interface SessionsShowOptions {
 export interface SessionsResumeOptions {
   readonly allowDegradedResume: boolean;
   readonly message: string | undefined;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
   readonly sessionId: string;
 }
 
-function secrets(runtime: CliRuntime): readonly (string | undefined)[] {
-  return [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY];
-}
-
-function redact(runtime: CliRuntime, value: string): string {
-  return redactSensitiveText(value, secrets(runtime));
+function redact(_runtime: CliRuntime, value: string): string {
+  // PHASE15: replay is not provider selection and must not read ambient API
+  // keys. Persisted runs are already redacted; pattern redaction is retained
+  // as a second read-only safety net for legacy data.
+  return redactSensitiveText(value);
 }
 
 function writeJson(io: CliIO, runtime: CliRuntime, value: unknown): void {
@@ -360,6 +369,8 @@ export async function executeSessionsShow(
         lastRunId: session.lastRun.runId,
         model: session.lastRun.started.data.model,
         provider: session.lastRun.started.data.provider,
+        runtimePolicy:
+          session.lastRun.started.data.runtime_policy ?? "legacy_unrecorded",
         runs: session.runs.length,
         schemaVersion: 1,
         sessionId: session.sessionId,
@@ -372,6 +383,12 @@ export async function executeSessionsShow(
     io.stdout.write(`Status: ${session.status}\n`);
     io.stdout.write(
       `Backend: ${session.lastRun.started.data.provider}/${session.lastRun.started.data.model}\n`,
+    );
+    const runtimePolicy = session.lastRun.started.data.runtime_policy;
+    io.stdout.write(
+      runtimePolicy === undefined
+        ? "Runtime policy: legacy_unrecorded\n"
+        : `Runtime policy: ${runtimePolicy.profile_id}/${runtimePolicy.profile_mode} (${runtimePolicy.profile_sha256})\n`,
     );
     io.stdout.write(
       `Artifacts: ${session.artifacts.storedReferenceCount} references, ${session.artifacts.objects.length} objects, ${session.artifacts.budgetUsage.sessionBytes ?? 0} captured bytes, ${session.artifacts.truncatedCaptureEventCount} truncated\n`,
@@ -512,9 +529,30 @@ function legacyDomainEvents(
 function historicalAgentOptions(
   session: ReconstructedMultiRunSession,
   task: string,
+  policy: Pick<SessionsResumeOptions, "policyConfig" | "policyProfile">,
 ): AgentCommandOptions | undefined {
   const started = session.lastRun.started.data;
   if (started.command !== "agent") return undefined;
+  const dockerEvidence = started.docker_sandbox;
+  const restoredImageIdentity =
+    dockerEvidence?.image_identity === undefined
+      ? undefined
+      : restoreDockerExecutionImageIdentity(dockerEvidence.image_identity);
+  const dockerArtifactExecution =
+    restoredImageIdentity?.kind === "trusted_local_build" &&
+    dockerEvidence?.artifact_contract !== undefined
+      ? Object.freeze({
+          artifactId: dockerEvidence.artifact_contract.artifact_id,
+          expectedLockfileSha256:
+            dockerEvidence.artifact_contract.expected_lockfile_sha256,
+          imageIdentity: restoredImageIdentity,
+          imagePath: dockerEvidence.artifact_contract.image_path,
+          runtime: dockerEvidence.artifact_contract.runtime,
+          runtimeVersion: dockerEvidence.artifact_contract.runtime_version,
+          supportsCUtf8: dockerEvidence.artifact_contract.supports_c_utf8,
+          wrapperSha256: dockerEvidence.artifact_contract.wrapper_sha256,
+        })
+      : undefined;
   return {
     commandApproval: started.command_approval,
     commandTimeoutMs:
@@ -523,6 +561,9 @@ function historicalAgentOptions(
         : String(started.command_timeout_ms),
     completionPolicy: started.completion_policy,
     dockerImage: started.docker_sandbox?.image,
+    ...(dockerArtifactExecution === undefined
+      ? {}
+      : { dockerArtifactExecution }),
     editApproval: started.edit_approval,
     executor: started.executor,
     maxDurationMs: String(started.max_duration_ms),
@@ -535,7 +576,10 @@ function historicalAgentOptions(
     maxToolOutputBytes: String(started.max_tool_output_bytes),
     mcpServerIds: started.mcp_servers ?? [],
     model: started.model,
+    policyConfig: policy.policyConfig,
+    policyProfile: policy.policyProfile,
     provider: started.provider,
+    providerSource: started.provider_source,
     reportFormat: started.report_format,
     requireVerification: started.require_verification,
     requestTimeoutMs: String(started.request_timeout_ms),
@@ -589,8 +633,35 @@ function canonicalResumePrompt(
 function createBackend(
   options: AgentCommandOptions,
   runtime: CliRuntime,
+  effectivePolicy: EffectiveRuntimePolicy,
 ): { readonly backend: ModelBackend; readonly options: AgentCommandOptions } | string {
-  const config = resolveAgentConfig(options, runtime.env);
+  let request;
+  try {
+    request = resolveProviderPolicyRequest(effectivePolicy, {
+      endpoint:
+        options.provider === "ollama" || options.provider === undefined
+          ? runtime.env.BORN_OLLAMA_BASE_URL
+          : undefined,
+      model: options.model,
+      provider: options.provider,
+      ...(options.providerSource === undefined
+        ? {}
+        : { source: options.providerSource }),
+    });
+  } catch (error) {
+    return error instanceof Error ? error.message : "runtime policy preflight failed";
+  }
+  const normalized = {
+    ...options,
+    model: request.model,
+    provider: request.provider,
+  };
+  const config = resolveAgentConfig(normalized, {
+    ...runtime.env,
+    ...(request.provider === "ollama"
+      ? { BORN_OLLAMA_BASE_URL: request.endpoint }
+      : {}),
+  });
   if (!config.ok) return config.error;
   try {
     const backend = runtime.createModelBackend({
@@ -599,6 +670,7 @@ function createBackend(
         : { endpoint: config.value.ollamaBaseURL }),
       model: config.value.model,
       provider: config.value.provider,
+      runtimePolicy: effectivePolicy,
       requirement: {
         cancellation: true,
         completeUsageForReportedTokenCeiling: true,
@@ -606,10 +678,35 @@ function createBackend(
         tools: true,
       },
     });
-    return { backend, options };
+    return { backend, options: normalized };
   } catch (error) {
     return error instanceof Error ? error.message : "backend preflight failed";
   }
+}
+
+function resumePolicyMismatch(
+  started: ReconstructedRunProjection["started"]["data"],
+  effectivePolicy: EffectiveRuntimePolicy,
+): string | undefined {
+  const persisted = started.runtime_policy;
+  if (persisted === undefined) {
+    // PHASE15: legacy sessions had no policy evidence. Only an Ollama run may
+    // migrate to the built-in local-free profile; policy-less remote history
+    // cannot acquire remote authority during resume.
+    return effectivePolicy.entry.profile.id === "local-free-v1" &&
+      effectivePolicy.entry.profile.mode === "local_free" &&
+      started.provider === "ollama"
+      ? undefined
+      : "legacy session has no exact runtime policy evidence";
+  }
+  if (
+    persisted.profile_id !== effectivePolicy.entry.profile.id ||
+    persisted.profile_mode !== effectivePolicy.entry.profile.mode ||
+    persisted.profile_sha256 !== effectivePolicy.entry.profileSha256
+  ) {
+    return "session runtime policy profile ID/mode/hash does not exact-match";
+  }
+  return undefined;
 }
 
 function blockedResumeMessage(plan: BlockedResumePlan): string {
@@ -678,12 +775,34 @@ export async function executeSessionsResume(
   } catch (error) {
     return usageError(io, error instanceof Error ? error.message : "invalid session id");
   }
+  let effectivePolicy: EffectiveRuntimePolicy;
+  try {
+    effectivePolicy = resolveEffectiveRuntimePolicy(
+      await loadRuntimePolicyRegistry({
+        ...(options.policyConfig === undefined
+          ? {}
+          : { configPath: options.policyConfig }),
+        env: runtime.env,
+        platform: runtime.platform,
+        workspace: runtime.cwd,
+      }),
+      options.policyProfile,
+    );
+  } catch (error) {
+    if (error instanceof RuntimePolicyError) {
+      io.stderr.write(`${error.code}: ${error.message}\n`);
+      return error.exitCode;
+    }
+    return dataError(io, "runtime policy could not be loaded");
+  }
   let writer: V2SessionWriter | undefined;
   try {
     writer = await V2SessionWriter.openExisting(runtime.cwd, options.sessionId);
     runtime.observeSessionWriter?.(writer);
     let session = reconstructMultiRunSession(writer.events);
     let lastRun = session.lastRun;
+    const mismatch = resumePolicyMismatch(lastRun.started.data, effectivePolicy);
+    if (mismatch !== undefined) return usageError(io, mismatch);
     const pendingContainers = countPendingContainerLifecycles(lastRun.events);
     if (pendingContainers > 0) {
       if (runtime.reconcileDockerContainers === undefined || writer.appendRunEvent === undefined) {
@@ -730,7 +849,7 @@ export async function executeSessionsResume(
       runtime,
       options.message?.trim() ?? lastRun.started.data.input.text,
     );
-    const agentOptions = historicalAgentOptions(session, userTurn);
+    const agentOptions = historicalAgentOptions(session, userTurn, options);
     if (agentOptions === undefined) {
       return usageError(io, "chat sessions are not resumable by the Phase 9 agent CLI");
     }
@@ -779,7 +898,7 @@ export async function executeSessionsResume(
       }
     }
 
-    const selected = createBackend(agentOptions, runtime);
+    const selected = createBackend(agentOptions, runtime, effectivePolicy);
     if (typeof selected === "string") {
       return usageError(io, redact(runtime, selected));
     }

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "bornagent-sandbox-node-v1",
+  "platform": "linux/amd64",
+  "preferred_source": "build",
+  "pull": {
+    "image": "docker.io/library/node@sha256:48f53c3f0105ccddcc5e4f520347398dfc0ba9b3008fbfd98a2add27e5797957",
+    "registry": "docker.io",
+    "anonymous": true,
+    "role": "build_base",
+    "expected_compressed_bytes_max": 83886080
+  },
+  "build": {
+    "dockerfile_relative_path": "bornagent-sandbox-node-v1/Dockerfile",
+    "dockerfile_sha256": "8f05f64ccefae549005bcd890622327defc9b19ddac7568a811df171500fa185",
+    "context_manifest_relative_path": "bornagent-sandbox-node-v1/context-manifest.json",
+    "context_manifest_sha256": "897a70411b1ff57ba65a14598ed490cd5ebe763519d09ca43b61db70e54cfab0",
+    "base_images": [
+      "docker.io/library/node@sha256:48f53c3f0105ccddcc5e4f520347398dfc0ba9b3008fbfd98a2add27e5797957"
+    ],
+    "network": "none"
+  },
+  "runtime_contract": {
+    "image_policy_version": "phase13-docker-v1",
+    "numeric_user": "10001:10001",
+    "required_labels": {
+      "org.bornagent.runtime": "node",
+      "org.bornagent.runtime-version": "22.22.0",
+      "org.bornagent.image-policy-version": "phase13-docker-v1",
+      "org.bornagent.exec-wrapper-sha256": "d097ea4c278c2ccdb921db51a7f6052af8841a00928faa570fcdb0cf9fc897f4",
+      "org.bornagent.artifact-id": "bornagent-sandbox-node-v1"
+    }
+  }
+}

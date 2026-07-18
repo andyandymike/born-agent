@@ -1,4 +1,8 @@
 import type { ChatProvider } from "../chat/types.js";
+import type {
+  DockerArtifactExecutionConfig,
+  DockerExecutionImageIdentity,
+} from "../execution/docker/acquisition/docker-image-identity.js";
 
 export interface AgentCommandOptions {
   readonly artifactCaptureBytes?: string | undefined;
@@ -11,6 +15,8 @@ export interface AgentCommandOptions {
   readonly editApproval: string | undefined;
   readonly executor?: string | undefined;
   readonly dockerImage?: string | undefined;
+  /** Internal persisted/acquisition evidence; no CLI flag may construct this. */
+  readonly dockerArtifactExecution?: DockerArtifactExecutionConfig | undefined;
   readonly maxDurationMs: string | undefined;
   readonly maxCommandOutputBytes: string | undefined;
   readonly maxSteps: string | undefined;
@@ -18,7 +24,15 @@ export interface AgentCommandOptions {
   readonly maxToolOutputBytes: string | undefined;
   readonly mcpServerIds?: readonly string[] | undefined;
   readonly model: string | undefined;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
   readonly provider: string | undefined;
+  /** Internal adapter-source evidence; ordinary CLI requests leave this absent. */
+  readonly providerSource?:
+    | "in_process_test"
+    | "local_ollama"
+    | "provider_network"
+    | undefined;
   readonly reportFormat: string | undefined;
   readonly requireVerification: string | undefined;
   readonly requestTimeoutMs: string | undefined;
@@ -42,6 +56,7 @@ export type ExecutionBackendKind = "docker" | "local";
 export interface ResolvedDockerSandboxConfig {
   readonly expectedLockfileSha256?: string;
   readonly image: string;
+  readonly imageIdentity?: DockerExecutionImageIdentity | undefined;
   readonly imagePath: string;
   readonly limits: {
     readonly cpus: number;
@@ -100,12 +115,12 @@ export type AgentBudgetReason =
   | "context_unsafe_compaction"
   | "repeated_tool_call";
 
-export type AgentExitCode = 0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 130;
+export type AgentExitCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 130;
 
 export type AgentTerminal =
   // PHASE4: AgentLoop 返回结构化终态，外层 command 只负责资源关闭和转换成进程退出码。
   | { readonly exitCode: 0; readonly type: "completed" }
-  | { readonly exitCode: 1 | 4 | 5 | 6; readonly type: "failed" }
+  | { readonly exitCode: 1 | 3 | 4 | 5 | 6; readonly type: "failed" }
   | { readonly exitCode: 7; readonly reason: AgentBudgetReason; readonly type: "budget_exceeded" }
   | { readonly exitCode: 8; readonly reason: string; readonly type: "incomplete" }
   | { readonly exitCode: 130; readonly type: "cancelled" };

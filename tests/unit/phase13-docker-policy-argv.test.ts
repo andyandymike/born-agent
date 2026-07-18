@@ -105,6 +105,50 @@ describe("Phase 13 Docker image and policy core", () => {
     ).toThrow("does not match trusted policy");
   });
 
+  it("executes a trusted local build by config ID instead of a mutable tag", () => {
+    const configImageId = `sha256:${"1".repeat(64)}` as const;
+    const lockSha256 = "2".repeat(64);
+    const identity = {
+      artifactId: "bornagent-sandbox-node-v1",
+      artifactLockSha256: lockSha256,
+      baseImageDigests: [
+        `docker.io/library/node@sha256:${"3".repeat(64)}`,
+      ],
+      configImageId,
+      contextManifestSha256: "4".repeat(64),
+      dockerfileSha256: "5".repeat(64),
+      kind: "trusted_local_build" as const,
+    };
+    const localPolicy = validateDockerImagePolicy({
+      expectedLockfileSha256: lockSha256,
+      image: configImageId,
+      imagePath: "/usr/local/bin:/usr/bin:/bin",
+      localBuildIdentity: identity,
+      runtime: "node",
+      runtimeVersion: "22.22.0",
+      supportsCUtf8: true,
+      wrapperSha256: WRAPPER_DIGEST,
+    });
+    const validated = validateLocalDockerImage(
+      localPolicy,
+      inspection({
+        id: configImageId,
+        labels: {
+          "org.bornagent.artifact-id": identity.artifactId,
+          "org.bornagent.exec-wrapper-sha256": WRAPPER_DIGEST,
+          "org.bornagent.image-policy-version": "phase13-docker-v1",
+          "org.bornagent.lockfile-sha256": lockSha256,
+          "org.bornagent.runtime": "node",
+          "org.bornagent.runtime-version": "22.22.0",
+        },
+        repoDigests: [],
+      }),
+    );
+
+    expect(validated.image.reference).toBe(configImageId);
+    expect(validated.identity).toEqual(identity);
+  });
+
   it("enforces resource hard limits", () => {
     expect(
       validateDockerResourceLimits({

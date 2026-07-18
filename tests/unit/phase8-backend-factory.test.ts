@@ -139,7 +139,7 @@ describe("BackendFactory preflight", () => {
     expect(onRuntime).not.toHaveBeenCalled();
   });
 
-  it("fails a missing remote key with exit 2 before runtime/socket", () => {
+  it("fails a missing remote key with exit 4 before runtime/socket", () => {
     const guard = new ProviderNetworkGuard();
     const onRuntime = vi.fn();
     const factory = createFactory({ guard, onRuntime });
@@ -153,7 +153,7 @@ describe("BackendFactory preflight", () => {
     ).toThrowError(
       expect.objectContaining({
         code: "configuration_credential_missing",
-        exitCode: 2,
+        exitCode: 4,
       }),
     );
     expect(guard.report().blockedRemoteAttemptCount).toBe(0);

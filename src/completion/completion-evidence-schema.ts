@@ -14,6 +14,7 @@ import type {
   CompletionEvidence,
   IncompleteEvidence,
 } from "./completion-types.js";
+import { dockerExecutionImageIdentitySchema } from "../execution/docker/acquisition/docker-image-identity.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const nonnegativeInteger = z.number().int().nonnegative();
@@ -96,6 +97,7 @@ const executionEnvironment = z
   .object({
     executor: z.enum(["local", "docker"]),
     imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+    imageIdentity: dockerExecutionImageIdentitySchema.optional(),
     isolation: z.enum(["none", "docker"]),
     network: z.enum(["host", "none"]),
     policyVersion: boundedString(128),

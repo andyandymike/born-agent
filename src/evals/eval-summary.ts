@@ -6,6 +6,8 @@ import type { LoadedEvalAssets } from "./eval-suite-loader.js";
 import { aggregateEvalDenominators, aggregateReportedUsage, summarizeDistribution, type EvalAttemptMetricRow } from "./metrics-collector.js";
 import type { EvalExitCode } from "./eval-exit-code.js";
 import type { EvalRunCompatibility, ComparableEvalRun } from "./eval-comparator.js";
+import type { persistRuntimePolicyEvidence } from "../policy/policy-evidence.js";
+import { persistedRuntimePolicyEvidenceSchema } from "../policy/policy-evidence.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const compatibilityTaskSchema = z.object({
@@ -28,8 +30,9 @@ export const evalRunSummarySchema = z.object({
   model: z.string(),
   startedAt: z.string(),
   completedAt: z.string(),
-  fullSuiteExecution: z.literal("not_run_by_policy"),
+  fullSuiteExecution: z.enum(["not_run_by_policy", "executed"]),
   noCostEvidence: evalNoCostEvidenceSchema,
+  runtimePolicy: persistedRuntimePolicyEvidenceSchema.optional(),
   denominators: z.object({
     scheduled: z.number().int().nonnegative(), valid: z.number().int().nonnegative(), harnessInvalid: z.number().int().nonnegative(),
     cancelled: z.number().int().nonnegative(), missing: z.number().int().nonnegative(), taskPasses: z.number().int().nonnegative(),
@@ -52,7 +55,21 @@ export const evalRunSummarySchema = z.object({
     taskId: z.string(), passed: z.boolean(), falseComplete: z.boolean(), solvedIncomplete: z.boolean(), safetyViolation: z.boolean(),
   }).strict()),
   limitation: z.literal("descriptive_only_no_statistical_significance_claim"),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (
+    value.fullSuiteExecution === "executed" &&
+    (value.suiteKind !== "full" ||
+      value.runtimePolicy?.profile_mode !== "local_free" ||
+      value.runtimePolicy.explicit_selection !== true ||
+      value.runtimePolicy.paid_capable ||
+      !value.runtimePolicy.allowed_eval_suites.includes("full"))
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "full summary requires an explicit local profile allowing full",
+    });
+  }
+});
 
 export type EvalRunSummary = z.infer<typeof evalRunSummarySchema>;
 
@@ -98,6 +115,8 @@ export function buildEvalRunSummary(input: {
   readonly provider: string;
   readonly model: string;
   readonly noCostEvidence: EvalNoCostEvidence;
+  readonly fullSuiteExecution: "executed" | "not_run_by_policy";
+  readonly runtimePolicy?: ReturnType<typeof persistRuntimePolicyEvidence>;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly exitCode: EvalExitCode;
@@ -144,13 +163,24 @@ export function buildEvalRunSummary(input: {
     model: input.model,
     startedAt: input.startedAt,
     completedAt: input.completedAt,
-    fullSuiteExecution: "not_run_by_policy",
+    fullSuiteExecution: input.fullSuiteExecution,
     noCostEvidence: input.noCostEvidence,
+    ...(input.runtimePolicy === undefined ? {} : { runtimePolicy: input.runtimePolicy }),
     denominators,
     usage: aggregateReportedUsage(input.attempts.map((attempt) => attempt.usage)),
     latencyMs: summarizeDistribution(input.attempts.map((attempt) => attempt.durationMs ?? null)),
     compatibility: { ...compatibility, tasks: [...compatibility.tasks] },
-    config: { provider: input.provider, model: input.model, noCostPolicySha256: input.noCostEvidence.policySha256 },
+    config: {
+      provider: input.provider,
+      model: input.model,
+      noCostPolicySha256: input.noCostEvidence.policySha256,
+      ...(input.runtimePolicy === undefined
+        ? {}
+        : {
+            runtimePolicyProfileId: input.runtimePolicy.profile_id,
+            runtimePolicyProfileSha256: input.runtimePolicy.profile_sha256,
+          }),
+    },
     tasks: [...tasks],
     limitation: "descriptive_only_no_statistical_significance_claim",
   });
@@ -173,6 +203,12 @@ export function renderEvalSummary(summary: EvalRunSummary): string {
     `False completes:     ${String(summary.denominators.falseCompletes)} / ${String(denominator)}`,
     `Solved incomplete:   ${String(summary.denominators.solvedIncomplete)} / ${String(denominator)}`,
     `Execution policy:    ${summary.noCostEvidence.policy}`,
+    ...(summary.runtimePolicy === undefined
+      ? []
+      : [
+          `Runtime profile:     ${String(summary.runtimePolicy.profile_id)} (${String(summary.runtimePolicy.profile_mode)})`,
+          `Runtime policy SHA:  ${String(summary.runtimePolicy.profile_sha256)}`,
+        ]),
     `Model source:        ${summary.noCostEvidence.sourceKind}`,
     `Billable requests:   ${String(summary.noCostEvidence.billableProviderRequestsSent)} sent / ${String(summary.noCostEvidence.forbiddenProviderRequestsBlocked)} blocked`,
     `Estimated API cost:  null (${summary.noCostEvidence.costReason})`,

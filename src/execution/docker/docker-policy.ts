@@ -1,3 +1,10 @@
+import {
+  persistDockerExecutionImageIdentity,
+  persistedDockerExecutionImageIdentitySchema,
+  type DockerExecutionImageIdentity,
+  type TrustedLocalDockerBuildIdentity,
+} from "./acquisition/docker-image-identity.js";
+
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_LABEL_VALUE = /^[\x20-\x7e]{1,500}$/u;
 
@@ -22,6 +29,7 @@ export interface DockerImagePolicyInput {
   readonly image: string;
   readonly imagePath: string;
   readonly imagePolicyVersion?: string;
+  readonly localBuildIdentity?: TrustedLocalDockerBuildIdentity | undefined;
   readonly runtime: string;
   readonly runtimeVersion: string;
   readonly supportsCUtf8: boolean;
@@ -33,6 +41,7 @@ export interface DockerImagePolicy {
   readonly image: DigestPinnedImageReference;
   readonly imagePath: string;
   readonly imagePolicyVersion: string;
+  readonly localBuildIdentity: TrustedLocalDockerBuildIdentity | null;
   readonly runtime: string;
   readonly runtimeVersion: string;
   readonly supportsCUtf8: boolean;
@@ -52,6 +61,7 @@ export interface ValidatedLocalDockerImage {
   readonly architecture: string;
   readonly configImageId: string;
   readonly image: DigestPinnedImageReference;
+  readonly identity: DockerExecutionImageIdentity;
   readonly nonRootUser: `${number}:${number}`;
   readonly policy: DockerImagePolicy;
 }
@@ -179,11 +189,44 @@ export function validateDockerImagePolicy(
   const imagePolicyVersion =
     input.imagePolicyVersion ?? DOCKER_SANDBOX_POLICY_VERSION;
   assertSafeLabel(imagePolicyVersion, "image_policy_version");
+  const localBuildIdentity = input.localBuildIdentity ?? null;
+  let image: DigestPinnedImageReference;
+  if (localBuildIdentity === null) {
+    image = parseDigestPinnedImageReference(input.image);
+  } else {
+    try {
+      persistedDockerExecutionImageIdentitySchema.parse(
+        persistDockerExecutionImageIdentity(localBuildIdentity),
+      );
+    } catch (error) {
+      throw new DockerPolicyError(
+        "invalid_local_build_identity",
+        error instanceof Error
+          ? `trusted local build identity is invalid: ${error.message}`
+          : "trusted local build identity is invalid",
+      );
+    }
+    if (
+      input.image !== localBuildIdentity.configImageId ||
+      expectedLockfileSha256 !== localBuildIdentity.artifactLockSha256
+    ) {
+      throw new DockerPolicyError(
+        "local_build_identity_mismatch",
+        "trusted local build image and artifact lock must exact-match policy",
+      );
+    }
+    image = Object.freeze({
+      digest: localBuildIdentity.configImageId,
+      reference: localBuildIdentity.configImageId,
+      repository: "",
+    });
+  }
   return Object.freeze({
     expectedLockfileSha256,
-    image: parseDigestPinnedImageReference(input.image),
+    image,
     imagePath: validateImagePath(input.imagePath),
     imagePolicyVersion,
+    localBuildIdentity,
     runtime: input.runtime,
     runtimeVersion: input.runtimeVersion,
     supportsCUtf8: input.supportsCUtf8,
@@ -279,7 +322,10 @@ export function validateLocalDockerImage(
       "Docker sandbox requires a Linux container image",
     );
   }
-  if (!inspection.repoDigests.includes(policy.image.reference)) {
+  if (
+    policy.localBuildIdentity === null &&
+    !inspection.repoDigests.includes(policy.image.reference)
+  ) {
     throw new DockerPolicyError(
       "image_digest_mismatch",
       "local Docker image does not expose the approved repository digest",
@@ -289,6 +335,15 @@ export function validateLocalDockerImage(
     throw new DockerPolicyError(
       "invalid_image_id",
       "Docker image inspection returned an invalid config image id",
+    );
+  }
+  if (
+    policy.localBuildIdentity !== null &&
+    inspection.id !== policy.localBuildIdentity.configImageId
+  ) {
+    throw new DockerPolicyError(
+      "image_config_id_mismatch",
+      "local Docker image config ID does not match trusted build identity",
     );
   }
   requireLabel(inspection, "org.bornagent.runtime", policy.runtime);
@@ -314,11 +369,26 @@ export function validateLocalDockerImage(
       policy.expectedLockfileSha256,
     );
   }
+  if (policy.localBuildIdentity !== null) {
+    requireLabel(
+      inspection,
+      "org.bornagent.artifact-id",
+      policy.localBuildIdentity.artifactId,
+    );
+  }
   assertSafeLabel(inspection.architecture, "architecture");
+  const identity: DockerExecutionImageIdentity =
+    policy.localBuildIdentity ??
+    Object.freeze({
+      configImageId: inspection.id as `sha256:${string}`,
+      kind: "registry_digest" as const,
+      reference: policy.image.reference,
+    });
   return Object.freeze({
     architecture: inspection.architecture,
     configImageId: inspection.id,
     image: policy.image,
+    identity,
     nonRootUser: parseNonRootUser(inspection.configuredUser),
     policy,
   });

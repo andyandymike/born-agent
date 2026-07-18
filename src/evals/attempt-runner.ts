@@ -12,6 +12,7 @@ import type { EvalAttemptReport } from "./eval-report-schema.js";
 import type { EvalReportStore } from "./eval-report-store.js";
 import type { LoadedEvalTaskAsset } from "./eval-suite-loader.js";
 import type { EvalHiddenGrader } from "./static-hidden-grader.js";
+import type { PersistedRuntimePolicyEvidenceV1 } from "../policy/policy-evidence.js";
 
 function isPrivate(relativePath: string): boolean {
   return relativePath === ".git" || relativePath.startsWith(".git/") || relativePath === ".bornagent" || relativePath.startsWith(".bornagent/");
@@ -77,6 +78,8 @@ export class AttemptRunner {
     readonly source: EvalExecutionSource;
     readonly guard: EvalTurnGuard;
     readonly model: string;
+    readonly fullSuiteExecution: "executed" | "not_run_by_policy";
+    readonly runtimePolicy: PersistedRuntimePolicyEvidenceV1;
     readonly signal: AbortSignal;
   }): Promise<EvalAttemptReport> {
     const attemptStartedAt = Date.now();
@@ -167,7 +170,8 @@ export class AttemptRunner {
       installedModelDigest: input.source.kind === "local_ollama" ? input.source.installedModelDigest : null,
       adapter: input.source.kind === "local_ollama" ? "ollama-direct-loopback-v1" : "in-process-eval-v1",
       noCostEvidence: input.guard.evidence,
-      fullSuiteExecution: "not_run_by_policy",
+      runtimePolicy: input.runtimePolicy,
+      fullSuiteExecution: input.fullSuiteExecution,
     });
     await this.reports.writeAttempt(report);
     return report;

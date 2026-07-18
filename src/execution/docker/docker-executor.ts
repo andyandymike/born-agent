@@ -30,6 +30,7 @@ import {
   type DockerPreparedExecution,
 } from "./docker-execution-preparer.js";
 import type { SandboxEventAppender } from "./sandbox-event-schema.js";
+import { persistDockerExecutionImageIdentity } from "./acquisition/docker-image-identity.js";
 
 type StopReason = Extract<ContainerLifecycleFact, { type: "stopping" }>["reason"];
 
@@ -119,6 +120,7 @@ function lifecycleIdentity(
   return Object.freeze({
     ...identity,
     image: prepared.docker.image.image,
+    imageIdentity: prepared.docker.image.identity,
     snapshotSha256: prepared.docker.plan.manifest.sha256,
   });
 }
@@ -128,6 +130,13 @@ function containerIdentitySha256(identity: ContainerLifecycleIdentity): string {
     execution_id: identity.executionId,
     hostname: identity.hostname,
     image_digest: identity.image.digest,
+    ...(identity.imageIdentity === undefined
+      ? {}
+      : {
+          image_identity: persistDockerExecutionImageIdentity(
+            identity.imageIdentity,
+          ),
+        }),
     name: identity.name,
     nonce: identity.nonce,
     run_id: identity.runId,
@@ -249,6 +258,9 @@ export class DockerExecutor implements Executor {
         execution_id: executionId,
         file_count: prepared.docker.plan.manifest.fileCount,
         image_digest: prepared.docker.image.image.digest,
+        image_identity: persistDockerExecutionImageIdentity(
+          prepared.docker.image.identity,
+        ),
         limits: {
           cpus: prepared.docker.limits.cpus,
           memory_mib: prepared.docker.limits.memoryMiB,
@@ -301,6 +313,13 @@ export class DockerExecutor implements Executor {
             container_name: fact.identity.name,
             hostname: fact.identity.hostname,
             image_digest: fact.identity.image.digest,
+            ...(fact.identity.imageIdentity === undefined
+              ? {}
+              : {
+                  image_identity: persistDockerExecutionImageIdentity(
+                    fact.identity.imageIdentity,
+                  ),
+                }),
             nonce: fact.identity.nonce,
             snapshot_sha256: fact.identity.snapshotSha256,
           });

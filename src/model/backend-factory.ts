@@ -23,6 +23,9 @@ import {
   CredentialResolver,
   type CredentialHandle,
 } from "../security/credential-resolver.js";
+import type { EffectiveRuntimePolicy } from "../policy/policy-resolver.js";
+import { ProviderAccessPolicy } from "../policy/provider-access-policy.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
 
 export interface AgentCapabilityRequirement {
   readonly cancellation: boolean;
@@ -35,14 +38,14 @@ export type BackendPreflightErrorCode =
   | "configuration_capability_unsupported"
   | "configuration_credential_missing"
   | "configuration_model_unknown"
-  | "configuration_provider_unknown";
+  | "configuration_provider_unknown"
+  | "configuration_policy_denied";
 
 export class BackendPreflightError extends Error {
-  readonly exitCode = 2;
-
   constructor(
     readonly code: BackendPreflightErrorCode,
     message: string,
+    readonly exitCode: 2 | 4 = 2,
   ) {
     super(`${code}: ${message}`);
     this.name = "BackendPreflightError";
@@ -54,6 +57,7 @@ export interface BackendCreationRequest {
   readonly model: string;
   readonly provider: string;
   readonly requirement: AgentCapabilityRequirement;
+  readonly runtimePolicy?: EffectiveRuntimePolicy;
   readonly transportScope?: ProviderTransportScope;
 }
 
@@ -61,6 +65,8 @@ export interface PiRuntimeFactoryInput {
   readonly credential: CredentialHandle | null;
   readonly endpoint: string | undefined;
   readonly model: ModelCatalogEntry;
+  readonly maximumOutputTokens?: number | undefined;
+  readonly providerAccessPolicy?: ProviderAccessPolicy | undefined;
   readonly transportScope: ProviderTransportScope;
 }
 
@@ -107,6 +113,7 @@ function capabilityFailures(
 
 function configurationFingerprint(input: {
   readonly model: ModelCatalogEntry;
+  readonly policySha256?: string | undefined;
   readonly transportScope: ProviderTransportScope;
 }): string {
   // Only non-secret, frozen selection data contributes. Endpoint and key are
@@ -117,6 +124,7 @@ function configurationFingerprint(input: {
         adapter: "pi-ai",
         adapterVersion: PI_AI_PACKAGE_VERSION,
         model: input.model.modelId,
+        policySha256: input.policySha256,
         provider: input.model.provider,
         transportScope: input.transportScope,
       }),
@@ -170,21 +178,56 @@ export class BackendFactory {
       );
     }
 
+    const transportScope = request.transportScope ?? "provider_network";
+    let endpoint = request.endpoint ?? DEFAULT_PROVIDER_ENDPOINTS[provider];
+    let providerAccessPolicy: ProviderAccessPolicy | undefined;
+    let maximumOutputTokens: number | undefined;
+    if (request.runtimePolicy !== undefined) {
+      try {
+        // PHASE15: provider/model/endpoint authority is resolved before the
+        // credential resolver. A denied local-free request therefore cannot
+        // even read an ambient sentinel API key.
+        providerAccessPolicy = new ProviderAccessPolicy(request.runtimePolicy);
+        const allowed = providerAccessPolicy.resolve({
+          endpoint,
+          model: modelId,
+          provider,
+          source: provider === "ollama" ? "local_ollama" : "provider_network",
+        });
+        endpoint = allowed.endpoint ?? endpoint;
+        const access = request.runtimePolicy.entry.profile.modelAccess;
+        if (access.kind === "remote_explicit") {
+          maximumOutputTokens = access.limits.maxOutputTokensPerRequest;
+        }
+      } catch (error) {
+        if (error instanceof RuntimePolicyError) {
+          throw new BackendPreflightError(
+            "configuration_policy_denied",
+            error.message,
+            error.exitCode === 1 ? 2 : error.exitCode,
+          );
+        }
+        throw error;
+      }
+    }
+
     const credential = this.#credentialResolver.resolve(provider);
-    // PHASE8: absent remote keys are expected in local_free_only development,
-    // but still fail this selection before runtime/request creation with exit 2.
+    // PHASE15: this branch is reachable only after a remote profile explicitly
+    // allowed the selection. Missing selected-provider credentials are therefore
+    // exit 4, distinct from an earlier policy denial at exit 2.
     if (credential.status === "missing") {
       throw new BackendPreflightError(
         "configuration_credential_missing",
         `${credential.variableName} is not configured for ${provider}`,
+        4,
       );
     }
 
-    const transportScope = request.transportScope ?? "provider_network";
-    const endpoint = request.endpoint ?? DEFAULT_PROVIDER_ENDPOINTS[provider];
     this.#networkGuard.assertAllowed({
       endpoint,
+      model: modelId,
       provider,
+      runtimePolicy: request.runtimePolicy,
       transportScope,
     });
 
@@ -196,6 +239,12 @@ export class BackendFactory {
         credential.status === "configured" ? credential.credential : null,
       endpoint,
       model: entry,
+      ...(maximumOutputTokens === undefined
+        ? {}
+        : { maximumOutputTokens }),
+      ...(providerAccessPolicy === undefined
+        ? {}
+        : { providerAccessPolicy }),
       transportScope,
     });
     return new PiModelBackend({
@@ -208,6 +257,7 @@ export class BackendFactory {
         adapterVersion: PI_AI_PACKAGE_VERSION,
         configFingerprint: configurationFingerprint({
           model: entry,
+          policySha256: request.runtimePolicy?.entry.profileSha256,
           transportScope,
         }),
         model: entry.modelId,
@@ -225,7 +275,14 @@ export function createProductionBackendFactory(
   return new BackendFactory({
     credentialResolver: new CredentialResolver(environment),
     networkGuard,
-    runtimeFactory: ({ credential, endpoint, model, transportScope }) => {
+    runtimeFactory: ({
+      credential,
+      endpoint,
+      maximumOutputTokens,
+      model,
+      providerAccessPolicy,
+      transportScope,
+    }) => {
       if (transportScope !== "provider_network") {
         throw new TypeError(
           "production pi runtime cannot use the in-process contract scope",
@@ -236,8 +293,14 @@ export function createProductionBackendFactory(
         ...(credential === null
           ? {}
           : { credential: credential.reveal() }),
+        ...(maximumOutputTokens === undefined
+          ? {}
+          : { maximumOutputTokens }),
         model: model.modelId,
         provider: model.provider,
+        ...(providerAccessPolicy === undefined
+          ? {}
+          : { providerAccessPolicy }),
       });
     },
   });

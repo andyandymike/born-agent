@@ -22,6 +22,7 @@ import type {
   ContainerRecoveryEventAppender,
   ContainerRecoveryResult,
 } from "../execution/docker/container-reconciliation-runtime.js";
+import type { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -41,6 +42,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   readonly createMcpClientManager?: (options: {
     readonly events: McpEventAppender;
     readonly prompt: ApprovalPrompt;
+    readonly secrets?: readonly (string | undefined)[];
   }) => McpClientManager;
   readonly createCheckpointStore?: (
     workspace: string,
@@ -53,6 +55,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   ) => Promise<DockerSandboxDoctorReport>;
   readonly execPath: string;
   readonly evalRuntime?: EvalCliRuntime;
+  readonly dockerArtifactAcquirer?: DockerArtifactAcquirer;
   readonly reconcileDockerContainers?: (input: {
     readonly appender: ContainerRecoveryEventAppender;
     readonly events: readonly DecodedRunEvent[];

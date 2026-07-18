@@ -2,6 +2,8 @@ export type ChatProvider = "anthropic" | "ollama" | "openai";
 
 export interface ChatCommandOptions {
   readonly model: string | undefined;
+  readonly policyConfig?: string | undefined;
+  readonly policyProfile?: string | undefined;
   readonly prompt: string;
   readonly provider: string | undefined;
   readonly timeoutMs: string | undefined;

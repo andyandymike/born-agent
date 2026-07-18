@@ -95,7 +95,7 @@ describe("runStreamingChat", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(configuration).toEqual({
+    expect(configuration).toMatchObject({
       endpoint: "http://127.0.0.1:11434",
       model: "qwen3:1.7b",
       provider: "ollama",
@@ -104,6 +104,13 @@ describe("runStreamingChat", () => {
         completeUsageForReportedTokenCeiling: false,
         streaming: true,
         tools: true,
+      },
+    });
+    expect(configuration).toMatchObject({
+      runtimePolicy: {
+        entry: {
+          profile: { id: "local-free-v1", mode: "local_free" },
+        },
       },
     });
     expect(writer.events[0]).toMatchObject({
@@ -119,7 +126,7 @@ describe("runStreamingChat", () => {
 
     await expect(
       runStreamingChat(
-        options,
+        { ...options, model: "gpt-5.6-terra", provider: "openai" },
         createRuntime({ createSessionWriter, env: {} }),
         missingRenderer,
       ),
@@ -133,7 +140,7 @@ describe("runStreamingChat", () => {
     ).resolves.toBe(2);
     expect(createSessionWriter).not.toHaveBeenCalled();
     expect(missingRenderer.diagnostics[0]).toContain(
-      "configuration_credential_missing",
+      "policy_provider_denied",
     );
     expect(invalidRenderer.diagnostics[0]).toContain("usage/config error");
   });

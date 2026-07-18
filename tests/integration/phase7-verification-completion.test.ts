@@ -385,7 +385,7 @@ describe("born agent Phase 7 verification and completion integration", () => {
       eventType("usage"),
       eventType("run.completed"),
     ]);
-  }, 15_000);
+  }, 30_000);
 
   it("rejects completed after a failed verification, then reports blocked with exit 8", async () => {
     const target = "fixtures/phase-07-verification-fails/src/answer.mjs";

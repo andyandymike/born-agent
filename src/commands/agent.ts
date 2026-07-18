@@ -62,6 +62,23 @@ import type {
   Phase13SandboxRunEventType,
   SandboxEventAppender,
 } from "../execution/docker/sandbox-event-schema.js";
+import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
+import { RuntimePolicyError } from "../policy/policy-errors.js";
+import {
+  resolveEffectiveRuntimePolicy,
+  resolveProviderPolicyRequest,
+  type EffectiveRuntimePolicy,
+  type ResolvedProviderPolicyRequest,
+} from "../policy/policy-resolver.js";
+import { persistRuntimePolicyEvidence } from "../policy/policy-evidence.js";
+import { credentialSecretsForPolicy } from "../policy/provider-access-policy.js";
+import { DockerAcquisitionError } from "../execution/docker/acquisition/docker-acquisition-errors.js";
+import { BUILT_IN_DOCKER_ARTIFACT_ID } from "../execution/docker/acquisition/docker-artifact-registry.js";
+import {
+  dockerExecutionImageIdentitySha256,
+  persistDockerExecutionImageIdentity,
+  type DockerArtifactExecutionConfig,
+} from "../execution/docker/acquisition/docker-image-identity.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
@@ -82,6 +99,23 @@ async function closeResumedWriter(
   await execution?.writer.close().catch(() => undefined);
 }
 
+function sameArtifactExecution(
+  left: DockerArtifactExecutionConfig,
+  right: DockerArtifactExecutionConfig,
+): boolean {
+  return (
+    left.artifactId === right.artifactId &&
+    left.expectedLockfileSha256 === right.expectedLockfileSha256 &&
+    left.imagePath === right.imagePath &&
+    left.runtime === right.runtime &&
+    left.runtimeVersion === right.runtimeVersion &&
+    left.supportsCUtf8 === right.supportsCUtf8 &&
+    left.wrapperSha256 === right.wrapperSha256 &&
+    dockerExecutionImageIdentitySha256(left.imageIdentity) ===
+      dockerExecutionImageIdentitySha256(right.imageIdentity)
+  );
+}
+
 export async function executeAgent(
   options: AgentCommandOptions,
   runtime: CliRuntime,
@@ -90,13 +124,132 @@ export async function executeAgent(
 ): Promise<AgentExitCode> {
   // PHASE4: 命令边界负责配置、真实资源装配和关闭；循环策略全部下沉到 runAgentLoop。
   const renderer = new ConsoleEventRenderer(io, options.verbose);
-  const configResult = resolveAgentConfig(options, runtime.env);
+  let effectivePolicy: EffectiveRuntimePolicy;
+  let policyRequest: ResolvedProviderPolicyRequest;
+  try {
+    effectivePolicy = resolveEffectiveRuntimePolicy(
+      await loadRuntimePolicyRegistry({
+        ...(options.policyConfig === undefined ? {} : { configPath: options.policyConfig }),
+        env: runtime.env,
+        platform: runtime.platform,
+        workspace: runtime.cwd,
+      }),
+      options.policyProfile,
+    );
+    const requestedProvider = options.provider ?? runtime.env.BORN_PROVIDER;
+    policyRequest = resolveProviderPolicyRequest(effectivePolicy, {
+      endpoint:
+        requestedProvider?.trim().toLowerCase() === "ollama" || requestedProvider === undefined
+          ? runtime.env.BORN_OLLAMA_BASE_URL
+          : undefined,
+      model: options.model ?? runtime.env.BORN_MODEL,
+      provider: requestedProvider,
+      ...(options.providerSource === undefined
+        ? {}
+        : { source: options.providerSource }),
+    });
+  } catch (error) {
+    if (error instanceof RuntimePolicyError) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      await closeResumedWriter(resumedExecution);
+      return error.exitCode;
+    }
+    renderer.renderDiagnostic("runtime policy internal error");
+    await closeResumedWriter(resumedExecution);
+    return 1;
+  }
+  let resolvedOptions = options;
+  const requestedExecutor = options.executor ?? runtime.env.BORN_EXECUTOR;
+  if (requestedExecutor === "docker") {
+    const persistedArtifact = options.dockerArtifactExecution;
+    const hasExplicitLegacyImage =
+      options.dockerImage !== undefined ||
+      (runtime.env.BORN_DOCKER_IMAGE !== undefined &&
+        persistedArtifact === undefined);
+    if (persistedArtifact !== undefined || !hasExplicitLegacyImage) {
+      if (runtime.dockerArtifactAcquirer === undefined) {
+        renderer.renderDiagnostic(
+          "docker_acquisition_unavailable: runtime has no Docker acquisition port",
+        );
+        await closeResumedWriter(resumedExecution);
+        return 3;
+      }
+      try {
+        // PHASE15: selecting Docker authorizes only the package-owned artifact
+        // ID. Prompt/repository/model text cannot supply an image, Dockerfile,
+        // context, registry, or builder; the same acquisition service backs
+        // both `docker prepare` and this missing-artifact path.
+        const acquired =
+          persistedArtifact === undefined
+            ? await runtime.dockerArtifactAcquirer.prepare({
+                artifactId: BUILT_IN_DOCKER_ARTIFACT_ID,
+                policy: effectivePolicy,
+              })
+            : await runtime.dockerArtifactAcquirer.status({
+                artifactId: persistedArtifact.artifactId,
+                policy: effectivePolicy,
+              });
+        if (
+          acquired.executionConfig === null ||
+          (persistedArtifact !== undefined &&
+            !sameArtifactExecution(
+              persistedArtifact,
+              acquired.executionConfig,
+            ))
+        ) {
+          throw new DockerAcquisitionError(
+            "docker_acquisition_identity_mismatch",
+            "trusted Docker artifact is missing or changed since the run identity was recorded",
+            3,
+          );
+        }
+        resolvedOptions = {
+          ...options,
+          dockerArtifactExecution: acquired.executionConfig,
+        };
+      } catch (error) {
+        if (error instanceof DockerAcquisitionError) {
+          renderer.renderDiagnostic(`${error.code}: ${error.message}`);
+          await closeResumedWriter(resumedExecution);
+          return error.exitCode;
+        }
+        renderer.renderDiagnostic("docker_acquisition_internal: Docker acquisition failed internally");
+        await closeResumedWriter(resumedExecution);
+        return 1;
+      }
+    }
+  }
+  const configResult = resolveAgentConfig(
+    {
+      ...resolvedOptions,
+      model: policyRequest.model,
+      provider: policyRequest.provider,
+    },
+    {
+      ...runtime.env,
+      ...(policyRequest.provider === "ollama"
+        ? { BORN_OLLAMA_BASE_URL: policyRequest.endpoint }
+        : {}),
+    },
+  );
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
     await closeResumedWriter(resumedExecution);
     return 2;
   }
-  const config = configResult.value;
+  let config = configResult.value;
+  const selectedModelAccess = effectivePolicy.entry.profile.modelAccess;
+  if (selectedModelAccess.kind === "remote_explicit") {
+    config = Object.freeze({
+      ...config,
+      // Provider-reported token accounting is not a dollar hard cap, but the
+      // smaller policy ceiling still bounds when this run stops at a turn edge.
+      maxTokens: Math.min(
+        config.maxTokens,
+        selectedModelAccess.limits.maxReportedTotalTokensPerRun,
+      ),
+    });
+  }
   let backend: ModelBackend;
   try {
     // PHASE8: factory preflight freezes one provider/model and proves required
@@ -104,9 +257,7 @@ export async function executeAgent(
     backend =
       resumedExecution?.backend ??
       runtime.createModelBackend({
-        ...(config.ollamaBaseURL === undefined
-          ? {}
-          : { endpoint: config.ollamaBaseURL }),
+        ...(policyRequest.endpoint === undefined ? {} : { endpoint: policyRequest.endpoint }),
         model: config.model,
         provider: config.provider,
         requirement: {
@@ -115,6 +266,7 @@ export async function executeAgent(
           streaming: true,
           tools: true,
         },
+        runtimePolicy: effectivePolicy,
       });
     if (
       backend.identity.model !== config.model ||
@@ -126,20 +278,29 @@ export async function executeAgent(
       );
     }
   } catch (error) {
+    if (error instanceof BackendPreflightError) {
+      renderer.renderDiagnostic(`usage/config error: ${error.message}`);
+      await closeResumedWriter(resumedExecution);
+      return error.exitCode;
+    }
     if (
-      error instanceof BackendPreflightError ||
-      (error instanceof Error &&
-        "exitCode" in error &&
-        error.exitCode === 2)
+      error instanceof Error &&
+      "exitCode" in error &&
+      (error.exitCode === 2 || error.exitCode === 4)
     ) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
       await closeResumedWriter(resumedExecution);
-      return 2;
+      return error.exitCode;
     }
     renderer.renderDiagnostic("internal protocol error");
     await closeResumedWriter(resumedExecution);
     return 1;
   }
+  const secrets = credentialSecretsForPolicy(
+    effectivePolicy,
+    config.provider,
+    runtime.env,
+  );
   const modelEvidence = runtime.agentModelEvidence(config.provider);
   if (config.taskProfile === "coding" && modelEvidence === null) {
     renderer.renderDiagnostic(
@@ -218,9 +379,39 @@ export async function executeAgent(
           : {
               docker_sandbox: {
                 image: config.dockerSandbox.image,
-                image_digest: config.dockerSandbox.image.slice(
-                  config.dockerSandbox.image.lastIndexOf("@") + 1,
-                ),
+                image_digest: config.dockerSandbox.image.includes("@")
+                  ? config.dockerSandbox.image.slice(
+                      config.dockerSandbox.image.lastIndexOf("@") + 1,
+                    )
+                  : config.dockerSandbox.image,
+                ...(config.dockerSandbox.imageIdentity === undefined
+                  ? {}
+                  : {
+                      image_identity: persistDockerExecutionImageIdentity(
+                        config.dockerSandbox.imageIdentity,
+                      ),
+                    }),
+                ...(resolvedOptions.dockerArtifactExecution === undefined
+                  ? {}
+                  : {
+                      artifact_contract: {
+                        artifact_id:
+                          resolvedOptions.dockerArtifactExecution.artifactId,
+                        expected_lockfile_sha256:
+                          resolvedOptions.dockerArtifactExecution
+                            .expectedLockfileSha256,
+                        image_path:
+                          resolvedOptions.dockerArtifactExecution.imagePath,
+                        runtime:
+                          resolvedOptions.dockerArtifactExecution.runtime,
+                        runtime_version:
+                          resolvedOptions.dockerArtifactExecution.runtimeVersion,
+                        supports_c_utf8:
+                          resolvedOptions.dockerArtifactExecution.supportsCUtf8,
+                        wrapper_sha256:
+                          resolvedOptions.dockerArtifactExecution.wrapperSha256,
+                      },
+                    }),
                 limits: {
                   cpus: config.dockerSandbox.limits.cpus,
                   memory_mib: config.dockerSandbox.limits.memoryMiB,
@@ -243,6 +434,10 @@ export async function executeAgent(
         max_tool_output_bytes: config.maxToolOutputBytes,
         model: config.model,
         provider: config.provider,
+        ...(resolvedOptions.providerSource === undefined
+          ? {}
+          : { provider_source: resolvedOptions.providerSource }),
+        runtime_policy: persistRuntimePolicyEvidence(effectivePolicy.evidence),
         ...(resumedExecution === undefined
           ? {}
           : {
@@ -338,10 +533,7 @@ export async function executeAgent(
               },
             },
             runId,
-            secrets: [
-              runtime.env.OPENAI_API_KEY,
-              runtime.env.ANTHROPIC_API_KEY,
-            ],
+            secrets,
             sessionId,
             workspace: runtime.cwd,
           });
@@ -531,6 +723,7 @@ export async function executeAgent(
           },
         },
         prompt,
+        secrets,
       });
       additionalTools = await mcpManager.startSelected({
         configs: selected,
@@ -596,7 +789,7 @@ export async function executeAgent(
       reportFormat: config.reportFormat,
       runId,
       ...(sandboxEvents === undefined ? {} : { sandboxEvents }),
-      secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
+      secrets,
       taskProfile: config.taskProfile,
       sessionId,
       timestamp: runtime.timestamp,
@@ -646,7 +839,7 @@ export async function executeAgent(
           terminal === "completed"
             ? io.stdout.write(report)
             : io.stderr.write(report),
-        secrets: [runtime.env.OPENAI_API_KEY, runtime.env.ANTHROPIC_API_KEY],
+        secrets,
         tools,
       },
       userController.signal,
