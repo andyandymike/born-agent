@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type { ArtifactOutputMaterializationPort } from "../artifacts/artifact-session-runtime.js";
 import type { ModelToolDefinition } from "../model/model-backend.js";
 import type { RuntimeToolValidator } from "./validators/runtime-tool-validator.js";
+import type { PlanMutationControl } from "../plans/plan-mutation-control.js";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
@@ -49,6 +50,8 @@ export type CompletionControlSignal =
       readonly reportText: string;
     };
 
+export type ToolControlSignal = CompletionControlSignal | PlanMutationControl;
+
 export interface CompletionRuntimeLike {
   createIncomplete(
     reason: string,
@@ -60,7 +63,7 @@ export type ToolRawResult =
   // PHASE3: executor 返回结构化 value；Registry 统一负责 JSON 序列化、脱敏和最终字节上限。
   | {
       readonly ok: true;
-      readonly control?: CompletionControlSignal;
+      readonly control?: ToolControlSignal;
       /** Already-sanitized exact observation for protocol adapters such as MCP. */
       readonly preSerializedOutput?: string;
       readonly truncated: boolean;
@@ -68,7 +71,7 @@ export type ToolRawResult =
     }
   | {
       readonly error: ToolError;
-      readonly control?: CompletionControlSignal;
+      readonly control?: ToolControlSignal;
       readonly ok: false;
       readonly preSerializedOutput?: string;
       // PHASE6: execution failures can still carry bounded stdout/stderr evidence;
@@ -82,13 +85,13 @@ export type ToolExecution =
   // 以及第二回合实际提交给模型的字符串完全一致。
   | {
       readonly ok: true;
-      readonly control?: CompletionControlSignal;
+      readonly control?: ToolControlSignal;
       readonly output: string;
       readonly truncated: boolean;
     }
   | {
       readonly error: ToolError;
-      readonly control?: CompletionControlSignal;
+      readonly control?: ToolControlSignal;
       readonly ok: false;
       readonly output: string;
       readonly truncated: boolean;

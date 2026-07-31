@@ -218,6 +218,9 @@ export class VerifiedCompletionPolicy implements CompletionPolicy {
     // PHASE7: This returned acceptance is still not user-visible success. AgentLoop
     // must durably persist completion.evaluated and the matching tool result first.
     const evidence = freezeEvidence({
+      ...(state.attributionScope === undefined
+        ? {}
+        : { attributionScope: state.attributionScope }),
       changedByRun: state.changedByRun,
       diffCheck: state.diffCheck,
       finalSnapshot,

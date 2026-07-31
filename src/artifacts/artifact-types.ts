@@ -46,6 +46,7 @@ export interface ArtifactStoredReference {
   readonly bytes: number;
   readonly captureStatus: ArtifactStoredCaptureStatus;
   readonly captureTruncated: boolean;
+  readonly eventId?: string;
   readonly mediaType: ArtifactMediaType;
   readonly objectRef: string;
   readonly originEventId: string;

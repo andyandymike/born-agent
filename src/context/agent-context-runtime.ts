@@ -9,7 +9,9 @@ import {
 import type {
   ContextArtifactReference,
   ContextItem,
+  ContextJson,
 } from "./context-item.js";
+import { createContextItem } from "./context-item.js";
 import {
   ContextPlanner,
   type MaterializedCanonicalContext,
@@ -20,6 +22,14 @@ import type {
   TokenEstimator,
   TokenEstimatorMetadata,
 } from "./token-estimator.js";
+import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
+import type { TaskContextProjection } from "../coordination/task-context-projection.js";
+
+export interface FrozenTaskContextInput {
+  readonly projection: TaskContextProjection;
+  readonly recency: number;
+  readonly sourceEventIds: readonly string[];
+}
 
 export interface AgentContextRuntimeOptions {
   readonly budget: ContextBudget;
@@ -28,6 +38,7 @@ export interface AgentContextRuntimeOptions {
   readonly repositoryRules?: RepositoryRuleSet;
   readonly repositoryRulesEventId?: string;
   readonly systemInstructions: string;
+  readonly taskContext?: () => FrozenTaskContextInput;
 }
 
 export interface AgentContextPlanningInput {
@@ -100,6 +111,7 @@ export class AgentContextRuntime {
   readonly #projector: ContextProjector;
   readonly #repositoryRules: FrozenRepositoryRulesInput | null;
   readonly #systemInstructions: string;
+  readonly #taskContext: (() => FrozenTaskContextInput) | undefined;
 
   public constructor(options: AgentContextRuntimeOptions) {
     this.budget = options.budget;
@@ -115,6 +127,7 @@ export class AgentContextRuntime {
       options.repositoryRulesEventId,
     );
     this.#systemInstructions = options.systemInstructions;
+    this.#taskContext = options.taskContext;
   }
 
   public plan(input: AgentContextPlanningInput): AgentContextPlanningResult {
@@ -124,10 +137,40 @@ export class AgentContextRuntime {
   public project(
     input: AgentContextPlanningInput,
   ): AgentContextProjectionResult {
+    const taskContext = this.#taskContext?.();
+    const taskContextItem =
+      taskContext === undefined
+        ? undefined
+        : (() => {
+            const canonical = canonicalJson(taskContext.projection);
+            return createContextItem(
+              {
+                authority: "authoritative",
+                content: `BORNAGENT_TASK_CONTEXT_V1\n${canonical}`,
+                kind: "state_fact",
+                metadata: {
+                  agent_mode: taskContext.projection.agentMode,
+                  schema_version: 1,
+                  task_context_sha256: sha256Canonical(
+                    taskContext.projection,
+                  ),
+                } as ContextJson,
+                priority: "critical",
+                protectedCategory: "user_instruction",
+                recency: taskContext.recency,
+                role: "system",
+                sourceEventIds: taskContext.sourceEventIds,
+                visibility: "provider_context",
+              },
+              this.#estimator,
+            );
+          })();
+    const additionalItems = [
+      ...(input.additionalItems ?? []),
+      ...(taskContextItem === undefined ? [] : [taskContextItem]),
+    ];
     const state = this.#projector.project({
-      ...(input.additionalItems === undefined
-        ? {}
-        : { additionalItems: input.additionalItems }),
+      ...(additionalItems.length === 0 ? {} : { additionalItems }),
       ...(input.artifactRefsByEventId === undefined
         ? {}
         : { artifactRefsByEventId: input.artifactRefsByEventId }),

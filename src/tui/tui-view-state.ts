@@ -1,3 +1,6 @@
+import type { OutcomeReport } from "../coordination/outcome-report.js";
+import type { TaskStateProjection } from "../coordination/task-state-types.js";
+
 export type TuiRunStatus =
   | "budget_exceeded"
   | "cancelled"
@@ -201,8 +204,10 @@ export interface ApprovalTranscriptViewItem {
 export interface TuiViewState {
   readonly approval: ApprovalView | null;
   readonly context: ContextView;
+  readonly outcomeReport: OutcomeReport | null;
   readonly run: RunView | null;
   readonly session: SessionView;
+  readonly taskState: TaskStateProjection;
   readonly transcript: readonly TranscriptViewItem[];
 }
 
@@ -216,6 +221,7 @@ export function createInitialTuiViewState(): TuiViewState {
       estimatedInputTokens: null,
       protectedEstimatedTokens: null,
     },
+    outcomeReport: null,
     run: null,
     session: {
       actionBlocked: false,
@@ -223,6 +229,17 @@ export function createInitialTuiViewState(): TuiViewState {
       id: null,
       lastSessionSeq: 0,
       resumeBlocked: false,
+    },
+    taskState: {
+      activeGoalId: null,
+      blockers: [],
+      currentApprovedPlan: null,
+      goals: [],
+      lastSessionSeq: 0,
+      pendingDraft: null,
+      plans: [],
+      readyForCompletion: false,
+      trackingMode: "legacy_untracked",
     },
     transcript: [],
   };

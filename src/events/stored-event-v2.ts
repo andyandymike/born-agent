@@ -5,6 +5,8 @@ import { phase10ArtifactRunEventDataSchemas } from "../artifacts/artifact-event-
 import { phase10RepositoryRulesRunEventDataSchemas } from "../repository-rules/repository-rules-event-schema.js";
 import { phase12McpRunEventDataSchemas } from "../mcp/mcp-event-schema.js";
 import { phase13SandboxRunEventDataSchemas } from "../execution/docker/sandbox-event-schema.js";
+import { phase16TaskSessionEventDataSchemas } from "../coordination/task-event-schema.js";
+import { phase16GoalChangeRunEventDataSchemas } from "../coordination/goal-change-event-schema.js";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
@@ -215,6 +217,19 @@ export const phase9RunEventDataSchemas = {
   "tool.call.recovered": toolCallRecoveredDataSchema,
 } as const;
 
+// PHASE16: the decoder owns the complete v2 registry, while the Phase 9
+// aliases remain intentionally narrower so 16A does not accidentally expose
+// Goal/Plan writer methods before the user and agent authority ports exist.
+export const v2SessionEventDataSchemas = {
+  ...phase9SessionEventDataSchemas,
+  ...phase16TaskSessionEventDataSchemas,
+} as const;
+
+export const v2RunEventDataSchemas = {
+  ...phase9RunEventDataSchemas,
+  ...phase16GoalChangeRunEventDataSchemas,
+} as const;
+
 export type Phase9SessionEventType = keyof typeof phase9SessionEventDataSchemas;
 export type Phase9RunEventType = keyof typeof phase9RunEventDataSchemas;
 
@@ -222,4 +237,13 @@ export type Phase9SessionEventData<TType extends Phase9SessionEventType> =
   z.infer<(typeof phase9SessionEventDataSchemas)[TType]>;
 export type Phase9RunEventData<TType extends Phase9RunEventType> = z.infer<
   (typeof phase9RunEventDataSchemas)[TType]
+>;
+
+export type V2SessionEventType = keyof typeof v2SessionEventDataSchemas;
+export type V2RunEventType = keyof typeof v2RunEventDataSchemas;
+export type V2SessionEventData<TType extends V2SessionEventType> = z.infer<
+  (typeof v2SessionEventDataSchemas)[TType]
+>;
+export type V2RunEventData<TType extends V2RunEventType> = z.infer<
+  (typeof v2RunEventDataSchemas)[TType]
 >;

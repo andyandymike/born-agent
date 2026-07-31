@@ -8,6 +8,15 @@ import type {
   Phase9RunEventType,
 } from "../events/stored-event-v2.js";
 import type { DecodedStoredEvent } from "../events/event-decoder-registry.js";
+import type { Phase16RunBinding } from "../events/phase16-run-event-extension.js";
+import type {
+  Phase16TaskSessionEventData,
+  Phase16TaskSessionEventType,
+} from "../coordination/task-event-schema.js";
+import type {
+  Phase16GoalChangeRunEventData,
+  Phase16GoalChangeRunEventType,
+} from "../coordination/goal-change-event-schema.js";
 
 export interface SessionWriter {
   readonly path: string;
@@ -26,6 +35,23 @@ export interface SessionWriter {
     eventId: string,
     type: TType,
     data: Phase9RunEventData<TType>,
+  ): Promise<unknown>;
+  appendPhase16RunStarted?(
+    runId: string,
+    eventId: string,
+    data: Extract<RunEvent, { type: "run.started" }>["data"] &
+      Phase16RunBinding,
+    timestamp: string,
+  ): Promise<unknown>;
+  appendGoalChangeEvent?<TType extends Phase16GoalChangeRunEventType>(
+    runId: string,
+    eventId: string,
+    type: TType,
+    data: Phase16GoalChangeRunEventData<TType>,
+  ): Promise<unknown>;
+  appendTaskEvent?<TType extends Phase16TaskSessionEventType>(
+    type: TType,
+    data: Phase16TaskSessionEventData<TType>,
   ): Promise<unknown>;
   close(): Promise<void>;
   readDecodedEvents?(): readonly DecodedStoredEvent[];

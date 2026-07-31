@@ -15,6 +15,8 @@ import {
   sameDiffStat,
   samePaths,
 } from "../completion/completion-evidence-bindings.js";
+import { sha256Canonical } from "../completion/canonical-json.js";
+import type { GoalRevisionAttributionScope } from "../completion/completion-types.js";
 
 type StartedEvent = Extract<RunEvent, { type: "run.started" }>;
 type BackendSelectedEvent = Extract<RunEvent, { type: "backend.selected" }>;
@@ -379,6 +381,11 @@ function validateBudgetTerminal(
 }
 
 export interface ReconstructSessionOptions {
+  readonly agentMode?: "build" | "plan";
+  readonly completionAttribution?: {
+    readonly changedPaths: readonly string[];
+    readonly scope: GoalRevisionAttributionScope;
+  };
   readonly inheritedCallIds?: ReadonlySet<string>;
   readonly recoveredCallIds?: ReadonlySet<string>;
 }
@@ -409,6 +416,23 @@ export function reconstructSession(
   let usage: UsageEvent["data"] | undefined;
   let terminal: TerminalRunEvent | undefined;
   let verificationGeneration = 0;
+
+  const completionChangedPaths = (): readonly string[] =>
+    options.completionAttribution?.changedPaths ??
+    netChangedPaths(
+      [...patchAttempts.values()].flatMap((attempt) =>
+        attempt.applyCompleted === undefined ? [] : [attempt.applyCompleted]
+      ),
+    );
+  const completionScopeMatches = (
+    scope: GoalRevisionAttributionScope | undefined,
+  ): boolean => {
+    const expected = options.completionAttribution?.scope;
+    return expected === undefined
+      ? scope === undefined
+      : scope !== undefined &&
+          sha256Canonical(scope) === sha256Canonical(expected);
+  };
 
   events.forEach((event, index) => {
     if (event.session_id !== first.session_id || event.run_id !== first.run_id) {
@@ -952,15 +976,14 @@ export function reconstructSession(
       ) {
         throw new Error("completion evidence does not belong to this coding run");
       }
-      const changedPaths = netChangedPaths(
-        [...patchAttempts.values()].flatMap((attempt) =>
-          attempt.applyCompleted === undefined ? [] : [attempt.applyCompleted]
-        ),
-      );
+      const changedPaths = completionChangedPaths();
       if (
-        !samePaths(changedPaths, evidenceChangedPaths(event.data.evidence))
+        !samePaths(changedPaths, evidenceChangedPaths(event.data.evidence)) ||
+        !completionScopeMatches(event.data.evidence.attributionScope)
       ) {
-        throw new Error("completion evidence changed paths do not match patch journal");
+        throw new Error(
+          "completion evidence does not match its attributed change journal",
+        );
       }
       const classifiedExecutions = new Set(
         [...verifications.values()].map(
@@ -1040,11 +1063,7 @@ export function reconstructSession(
       ) {
         throw new Error("blocked completion must evaluate to task_blocked");
       }
-      const changedPaths = netChangedPaths(
-        [...patchAttempts.values()].flatMap((attempt) =>
-          attempt.applyCompleted === undefined ? [] : [attempt.applyCompleted]
-        ),
-      );
+      const changedPaths = completionChangedPaths();
       if (
         event.data.effect !== "error" &&
         !samePaths(changedPaths, event.data.changed_paths)
@@ -1242,11 +1261,13 @@ export function reconstructSession(
     } else if (terminal.type === "run.incomplete") {
       const final = steps.at(-1)?.completed;
       const profile = first.data.task_profile ?? "read-only";
+      const phase16Plan = options.agentMode === "plan";
       if (
         activeStep !== undefined ||
         terminal.data.steps !== steps.length ||
         usage === undefined ||
-        profile !== "coding"
+        (profile !== "coding" &&
+          !(phase16Plan && terminal.data.reason === "clarification_required"))
       ) {
         throw new Error("incomplete run lacks coding step or usage evidence");
       }

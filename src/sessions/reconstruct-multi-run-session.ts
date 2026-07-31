@@ -16,7 +16,17 @@ import type {
   DecodedStoredEvent,
 } from "../events/event-decoder-registry.js";
 import type { RunEvent } from "../events/run-event.js";
+import {
+  PHASE16_RUN_BINDING_KEYS,
+  phase16RunBindingSchema,
+  stripPhase16RunBinding,
+} from "../events/phase16-run-event-extension.js";
+import { TaskStateMachine } from "../coordination/task-state-machine.js";
+import { TaskStateProjectionError } from "../coordination/task-state-error.js";
+import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import { reconstructSession } from "./reconstruct-session.js";
+import { projectGoalChangeLedger } from "../coordination/goal-change-ledger.js";
+import { goalChangeAttributionScope } from "../coordination/goal-change-seed.js";
 
 export type ReconstructedRunStatus =
   | "budget_exceeded"
@@ -53,11 +63,12 @@ export interface ReconstructedRunProjection {
 export interface ReconstructedMultiRunSession {
   readonly artifacts: ArtifactSessionLedgerProjection;
   readonly events: readonly DecodedStoredEvent[];
-  readonly lastRun: ReconstructedRunProjection;
+  readonly lastRun: ReconstructedRunProjection | null;
   readonly runs: readonly ReconstructedRunProjection[];
   readonly sessionEvents: readonly DecodedSessionEvent[];
   readonly sessionId: string;
-  readonly status: ReconstructedRunStatus;
+  readonly status: ReconstructedRunStatus | "idle";
+  readonly taskState: TaskStateProjection;
 }
 
 interface MutableRunProjection {
@@ -67,13 +78,21 @@ interface MutableRunProjection {
 }
 
 export class SessionProjectionError extends Error {
-  public constructor(message: string, options: ErrorOptions = {}) {
+  public readonly code: string | undefined;
+
+  public constructor(
+    message: string,
+    options: ErrorOptions & { readonly code?: string } = {},
+  ) {
     super(message, options);
     this.name = "SessionProjectionError";
+    this.code = options.code;
   }
 }
 
 const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
+  "goal.change.recorded",
+  "goal.execution.baseline.captured",
   "sandbox.container.cleaned",
   "sandbox.container.create.requested",
   "sandbox.container.created",
@@ -157,7 +176,13 @@ function toLegacyDomainEvent(
   }
   if (NON_LEGACY_RUN_EVENT_TYPES.has(event.type)) return undefined;
   return runEventSchema.parse({
-    data: event.data,
+    data:
+      event.type === "run.started"
+        ? stripPhase16RunBinding(event.data)
+        : event.type === "run.completed" &&
+            event.data.completion_mode === "plan_ready"
+          ? { ...event.data, completion_mode: "model_final" }
+        : event.data,
     event_id: event.eventId,
     run_id: event.runId,
     schema_version: 1,
@@ -189,6 +214,7 @@ function validateRunDomainSemantics(
   events: readonly DecodedRunEvent[],
   terminal: DecodedTerminalRunEvent | undefined,
   runs: ReadonlyMap<string, MutableRunProjection>,
+  allEvents: readonly DecodedStoredEvent[],
 ): void {
   assertV2BackendBoundary(events);
   const domainEvents: RunEvent[] = [];
@@ -227,11 +253,44 @@ function validateRunDomainSemantics(
     });
   }
   try {
+    const started = events[0];
+    const bindingCandidate = Object.fromEntries(
+      PHASE16_RUN_BINDING_KEYS.flatMap((key) =>
+        started?.type === "run.started" && Object.hasOwn(started.data, key)
+          ? [[key, started.data[key]]]
+          : [],
+      ),
+    );
+    const binding = phase16RunBindingSchema.safeParse(bindingCandidate);
+    const lastSessionSeq = events.at(-1)?.sessionSeq ?? 0;
+    const completionAttribution =
+      binding.success && binding.data.agent_mode === "build"
+        ? (() => {
+            const ledger = projectGoalChangeLedger(
+              allEvents.filter((event) => event.sessionSeq <= lastSessionSeq),
+              binding.data.goal_id,
+              binding.data.goal_revision,
+            );
+            if (ledger === null) {
+              throw new SessionProjectionError(
+                `run ${runId} has no durable Goal execution baseline`,
+              );
+            }
+            return {
+              changedPaths: ledger.netChangedPaths,
+              scope: goalChangeAttributionScope(ledger),
+            };
+          })()
+        : undefined;
     // PHASE9: envelope continuity is insufficient for resume. Reusing the
     // original reconstructor proves command/patch/tool/approval pairings for
     // every run. The synthetic failure exists only in memory so a legal crash
     // tail can be checked without inventing a persisted terminal fact.
     reconstructSession(domainEvents, {
+      ...(binding.success ? { agentMode: binding.data.agent_mode } : {}),
+      ...(completionAttribution === undefined
+        ? {}
+        : { completionAttribution }),
       inheritedCallIds: new Set(
         events
           .filter(
@@ -393,6 +452,7 @@ export function reconstructMultiRunSession(
       run.events,
       run.terminal,
       mutableRuns,
+      events,
     );
   }
 
@@ -427,9 +487,28 @@ export function reconstructMultiRunSession(
       ...(run.terminal === undefined ? {} : { terminal: run.terminal }),
     };
   });
-  const lastRun = runs.at(-1);
-  if (lastRun === undefined) {
-    throw new SessionProjectionError("session contains no run.started event");
+  const lastRun = runs.at(-1) ?? null;
+
+  let taskState: TaskStateProjection;
+  try {
+    taskState = TaskStateMachine.project(events);
+  } catch (error) {
+    if (error instanceof TaskStateProjectionError) {
+      throw new SessionProjectionError(
+        `task state projection failed at session_seq ${error.sessionSeq} (${error.eventType}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
+  if (
+    lastRun === null &&
+    (taskState.trackingMode !== "phase16" || taskState.goals.length === 0)
+  ) {
+    throw new SessionProjectionError(
+      "runless session must contain a durable Phase 16 Goal",
+    );
   }
 
   return {
@@ -439,6 +518,7 @@ export function reconstructMultiRunSession(
     runs,
     sessionEvents,
     sessionId,
-    status: lastRun.status,
+    status: lastRun?.status ?? "idle",
+    taskState,
   };
 }

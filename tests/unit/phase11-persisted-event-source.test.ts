@@ -34,6 +34,7 @@ function event(
 
 class FakeSubscribableWriter implements PersistedEventWriter {
   readonly events: TuiPersistedEvent[];
+  closed = false;
   listener: ((event: TuiPersistedEvent) => void) | null = null;
 
   public constructor(events: readonly TuiPersistedEvent[] = []) {
@@ -42,6 +43,10 @@ class FakeSubscribableWriter implements PersistedEventWriter {
 
   public readDecodedEvents(): readonly TuiPersistedEvent[] {
     return [...this.events];
+  }
+
+  public isClosed(): boolean {
+    return this.closed;
   }
 
   public subscribeDurableEvents(
@@ -239,6 +244,30 @@ describe("Phase 11 PersistedEventSource", () => {
       sessionId: SESSION_B,
     });
     expect(firstWriter.listener).toBeNull();
+  });
+
+  it("reconciles a closed short-lived writer with its same-session successor", () => {
+    const delivered: number[] = [];
+    const fatal = vi.fn();
+    const firstWriter = new FakeSubscribableWriter([event(1)]);
+    const secondWriter = new FakeSubscribableWriter([event(1), event(2)]);
+    const source = createSource(
+      (value) => delivered.push(value.sessionSeq),
+      fatal,
+    );
+
+    source.observe(firstWriter);
+    firstWriter.closed = true;
+    source.observe(secondWriter);
+
+    expect(delivered).toEqual([1, 2]);
+    expect(fatal).not.toHaveBeenCalled();
+    expect(firstWriter.listener).toBeNull();
+    expect(source.status).toMatchObject({
+      lastSessionSeq: 2,
+      phase: "observing",
+      sessionId: SESSION_A,
+    });
   });
 
   it("rejects malformed session identity and keeps close idempotent", () => {

@@ -24,6 +24,7 @@ import { isReadableDirectory } from "../system/is-readable-directory.js";
 import { runExecutable } from "../system/run-executable.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
 import { createAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
+import { createPlanToolRegistry } from "../tools/create-plan-tool-registry.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
 import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog-port.js";
@@ -39,6 +40,7 @@ import { NodeEvalRuntime } from "../evals/eval-runtime.js";
 import { reconcilePersistedContainers } from "../execution/docker/container-reconciliation-runtime.js";
 import { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
 import { NodeDockerAcquisitionPort } from "../execution/docker/acquisition/node-docker-acquisition-port.js";
+import { UserStateModelQualificationGate } from "../model/user-state-model-qualification-gate.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -85,6 +87,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       timers,
     });
   const permissionEngine = new PermissionEngine(localFreeOnlyPermissionPolicy);
+  const localModelCatalog = new NodeOllamaLocalCatalogPort();
   return {
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
@@ -120,6 +123,14 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     },
     createAgentToolRegistry: async (registryOptions) => {
       if (registryOptions.taskProfile === "read-only") {
+        if (registryOptions.updatePlanTool !== undefined) {
+          return createPlanToolRegistry(
+            registryOptions.workspace,
+            registryOptions.updatePlanTool,
+            registryOptions.secrets ?? [],
+            registryOptions.artifactRuntime,
+          );
+        }
         return createReadonlyToolRegistry(
           registryOptions.workspace,
           registryOptions.secrets ?? [],
@@ -216,6 +227,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       });
     },
     createSessionWriter: V2SessionWriter.create,
+    supportsPhase16TaskState: true,
     // PHASE14: construct credential-aware provider machinery only for ordinary model commands; `born eval` owns a separate no-credential runtime.
     createModelBackend: (request) => createProductionBackendFactory(options.env).create(request),
     cwd: options.cwd,
@@ -245,14 +257,18 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     }),
     isReadableDirectory,
     nodeVersion: options.nodeVersion,
+    modelQualificationGate: new UserStateModelQualificationGate({
+      env: options.env,
+      platform: options.platform,
+      refreshLocalModelCatalog: (request) => localModelCatalog.refresh(request),
+    }),
     // PHASE4: duration budgets use a monotonic clock so wall-clock adjustments cannot
     // accidentally extend or prematurely exhaust a run; timestamps remain UTC wall time.
     now: () => performance.now(),
     onCancel: options.onCancel,
     platform: options.platform,
     randomUUID,
-    refreshLocalModelCatalog: (request) =>
-      new NodeOllamaLocalCatalogPort().refresh(request),
+    refreshLocalModelCatalog: (request) => localModelCatalog.refresh(request),
     reconcileDockerContainers: ({ appender, events }) =>
       reconcilePersistedContainers(
         events,

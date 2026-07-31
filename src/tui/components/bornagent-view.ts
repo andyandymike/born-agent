@@ -10,6 +10,10 @@ import type {
   TranscriptViewItem,
   TuiViewState,
 } from "../tui-view-state.js";
+import { renderGoalHeader } from "./goal-header.js";
+import { renderOutcomeCard } from "./outcome-card.js";
+import { renderPlanPanel } from "./plan-panel.js";
+import { renderTodoList } from "./todo-list.js";
 
 const DEFAULT_TRANSCRIPT_VIEWPORT_ROWS = 16;
 const MAX_TRANSCRIPT_VIEWPORT_ROWS = 100;
@@ -69,10 +73,31 @@ export class BornAgentViewComponent implements Component {
 
     // PHASE11: sanitize again at the final display boundary. Reducers sanitize
     // durable events too, but draft input and caller-built states are not facts.
+    const phase16 =
+      this.#view.taskState.trackingMode === "phase16"
+        ? [
+            ...renderGoalHeader(
+              this.#view.taskState,
+              this.#ephemeral.selectedAgentMode,
+            ).map((line) => this.#line(line, width)),
+            ...renderPlanPanel(this.#view.taskState).map((line) =>
+              this.#line(line, width),
+            ),
+            ...renderTodoList(this.#view.taskState).map((line) =>
+              this.#line(line, width),
+            ),
+            ...renderOutcomeCard(this.#view.outcomeReport).map((line) =>
+              this.#line(line, width),
+            ),
+          ]
+        : [];
     return [
       this.#line(this.#renderStatus(), width),
+      ...phase16,
       ...this.#renderTranscript(width),
+      ...this.#renderPlanDecision(width),
       ...this.#renderApproval(width),
+      ...this.#renderDiagnostic(width),
       ...this.#renderInput(width),
     ];
   }
@@ -194,11 +219,77 @@ export class BornAgentViewComponent implements Component {
     ];
   }
 
+  #renderPlanDecision(width: number): string[] {
+    const dialog = this.#ephemeral.planDecisionDialog;
+    if (dialog === null) return [];
+    const action =
+      dialog.action === "approve_build"
+        ? "APPROVE & BUILD"
+        : dialog.action.toUpperCase();
+    const stale =
+      this.#view.session.id !== dialog.sessionId ||
+      this.#view.session.lastSessionSeq !== dialog.expectedSessionSeq;
+    const confirmFocused =
+      this.#ephemeral.planDecisionFocus === "confirm";
+    return [
+      this.#line(`PLAN DECISION | ${action}${stale ? " | STALE" : ""}`, width),
+      this.#line(
+        `session=${dialog.sessionId} seq=${String(dialog.expectedSessionSeq)}`,
+        width,
+      ),
+      this.#line(
+        `goal=${dialog.goalId}@${String(dialog.goalRevision)} | ${dialog.goalObjective}`,
+        width,
+      ),
+      this.#line(
+        `plan=${dialog.planId}@${String(dialog.revision)} | sha256=${dialog.planSha256}`,
+        width,
+      ),
+      this.#line(
+        `replaces approved revision=${dialog.currentApprovedRevision === null ? "none" : String(dialog.currentApprovedRevision)}`,
+        width,
+      ),
+      ...dialog.items.flatMap((item, index) => [
+        this.#line(
+          `${String(index + 1)}. [${item.required ? "required" : "optional"}] ${item.itemId}: ${item.title}`,
+          width,
+        ),
+        this.#line(`   acceptance: ${item.acceptance}`, width),
+      ]),
+      ...(dialog.reason === null
+        ? []
+        : [this.#line(`reason: ${dialog.reason}`, width)]),
+      this.#line(
+        "WARNING | Plan approval does not approve patches, commands, MCP calls, or completion.",
+        width,
+      ),
+      this.#line(
+        stale
+          ? "[CANCEL]  confirm disabled by stale identity"
+          : confirmFocused
+            ? "cancel  [CONFIRM]"
+            : "[CANCEL]  confirm (default cancel)",
+        width,
+      ),
+    ];
+  }
+
   #renderInput(width: number): string[] {
     const blocked = this.#view.session.actionBlocked ? " | blocked" : "";
     return [
       this.#line(`INPUT${blocked}`, width),
       this.#line(`> ${this.#ephemeral.draftInput}`, width),
     ];
+  }
+
+  #renderDiagnostic(width: number): string[] {
+    return this.#ephemeral.coreDiagnostic === null
+      ? []
+      : [
+          this.#line(
+            `DIAGNOSTIC | ${this.#ephemeral.coreDiagnostic}`,
+            width,
+          ),
+        ];
   }
 }

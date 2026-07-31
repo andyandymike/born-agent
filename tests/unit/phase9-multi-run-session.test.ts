@@ -314,7 +314,7 @@ describe("Phase 9 multi-run session reconstruction", () => {
       runId: V2_ONLY_RUN,
       status: "interrupted",
     });
-    expect(projection.lastRun.terminal).toBeUndefined();
+    expect(projection.lastRun!.terminal).toBeUndefined();
     expect(projection.events.map((event) => event.type)).not.toContain(
       "run.failed",
     );

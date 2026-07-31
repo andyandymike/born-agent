@@ -11,6 +11,7 @@ import type {
   PiTuiRenderer,
   PiTuiRendererOptions,
 } from "../../src/tui/pi-tui-renderer.js";
+import type { TuiEphemeralState } from "../../src/tui/tui-ephemeral-state.js";
 import type { TuiViewState } from "../../src/tui/tui-view-state.js";
 import { createMemoryIO, createRuntime } from "../helpers.js";
 
@@ -60,7 +61,57 @@ class AutoExitRenderer implements PiTuiRenderer {
   }
 }
 
+class DiagnosticExitRenderer implements PiTuiRenderer {
+  diagnostic: string | null = null;
+  readonly stop = vi.fn();
+  private exitQueued = false;
+
+  public constructor(
+    private readonly onInput: PiTuiRendererOptions["onInput"],
+  ) {}
+
+  public start(): void {
+    queueMicrotask(() => {
+      this.onInput?.("hi");
+      this.onInput?.("\r");
+    });
+  }
+
+  public update(_view: TuiViewState, ephemeral: TuiEphemeralState): void {
+    if (this.exitQueued || ephemeral.coreDiagnostic === null) return;
+    this.diagnostic = ephemeral.coreDiagnostic;
+    this.exitQueued = true;
+    queueMicrotask(() => {
+      this.onInput?.("\u0003");
+      this.onInput?.("\u0003");
+    });
+  }
+}
+
 describe("Phase 11 born tui command boundary", () => {
+  it("surfaces a pre-session config error through ephemeral TUI state", async () => {
+    const tuiWorkspace = await workspace();
+    let renderer: DiagnosticExitRenderer | undefined;
+    const runtime = createRuntime({
+      agentModelEvidence: () => null,
+      cwd: tuiWorkspace,
+      tuiHost: {
+        createRenderer: (options) => {
+          renderer = new DiagnosticExitRenderer(options.onInput);
+          return renderer;
+        },
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+      },
+    });
+
+    const exitCode = await runCli(["tui"], createMemoryIO().io, runtime);
+
+    expect(exitCode).toBe(0);
+    expect(renderer?.diagnostic).toContain("--task-profile read-only");
+    expect(renderer?.stop).toHaveBeenCalledOnce();
+  });
+
   it("uses the same durable core event sequence as born agent with a zero-cost fake backend", async () => {
     const tuiWorkspace = await workspace();
     const cliWorkspace = await workspace();

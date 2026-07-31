@@ -9,6 +9,8 @@ import {
   AGENT_SYSTEM_INSTRUCTIONS,
   READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
 } from "../agent/system-instructions.js";
+import type { AgentMode } from "../agent/agent-mode.js";
+import { systemInstructionsForAgentMode } from "../agent/mode-system-instructions.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import { persistDockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
 import { finishTaskInputSchema } from "../completion/finish-task-tool.js";
@@ -22,6 +24,7 @@ import { listFilesInputSchema } from "../tools/list-files-tool.js";
 import { readFileInputSchema } from "../tools/read-file-tool.js";
 import { runCommandInputSchema } from "../tools/run-command-tool.js";
 import { searchInputSchema } from "../tools/search-tool.js";
+import { updatePlanInputSchema } from "../plans/update-plan-input-schema.js";
 import { SourceStateDigestBuilder } from "../verification/source-state-digest.js";
 import type { SourceStateDigest } from "../verification/source-state-digest.js";
 import {
@@ -105,6 +108,7 @@ function schema(schema: z.ZodType): Readonly<Record<string, unknown>> {
 
 export function agentToolSchemaSha256(
   taskProfile: ResolvedAgentConfig["taskProfile"],
+  agentMode?: AgentMode,
 ): string {
   const definitions = [
     { name: "list_files", schema: schema(listFilesInputSchema) },
@@ -117,6 +121,9 @@ export function agentToolSchemaSha256(
           { name: "finish_task", schema: schema(finishTaskInputSchema) },
           { name: "run_command", schema: schema(runCommandInputSchema) },
         ]),
+    ...(agentMode === undefined
+      ? []
+      : [{ name: "update_plan", schema: schema(updatePlanInputSchema) }]),
   ].sort((left, right) => left.name.localeCompare(right.name, "en"));
   return sha256Canonical({ definitions, strict: true, version: 1 });
 }
@@ -159,6 +166,7 @@ export function agentPolicySha256(config: ResolvedAgentConfig): string {
 }
 
 export interface WorkspaceResumeFingerprintBuildInput {
+  readonly agentMode?: AgentMode;
   readonly backend: ModelBackend;
   readonly config: ResolvedAgentConfig;
   readonly platform: NodeJS.Platform;
@@ -173,7 +181,9 @@ export async function buildWorkspaceResumeFingerprint(
     buildSourceState(input.workspace),
   ]);
   const instructions =
-    input.config.taskProfile === "read-only"
+    input.agentMode !== undefined
+      ? systemInstructionsForAgentMode(input.agentMode)
+      : input.config.taskProfile === "read-only"
       ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
       : AGENT_SYSTEM_INSTRUCTIONS;
   // PHASE9: exact resume compares code/policy/tool identities and repository
@@ -199,6 +209,9 @@ export async function buildWorkspaceResumeFingerprint(
     },
     systemInstructionsSha256: sha256Text(instructions),
     taskProfile: input.config.taskProfile,
-    toolSchemaSha256: agentToolSchemaSha256(input.config.taskProfile),
+    toolSchemaSha256: agentToolSchemaSha256(
+      input.config.taskProfile,
+      input.agentMode,
+    ),
   });
 }

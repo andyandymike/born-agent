@@ -157,6 +157,19 @@ function finalSourceState(snapshot: VerificationSnapshot | null) {
 
 function commonReport(evidence: CompletionEvidence | IncompleteEvidence) {
   return {
+    ...(evidence.attributionScope === undefined
+      ? {}
+      : {
+          attribution_scope: {
+            baseline_event_id: evidence.attributionScope.baselineEventId,
+            change_event_ids: [...evidence.attributionScope.changeEventIds],
+            goal_id: evidence.attributionScope.goalId,
+            goal_revision: evidence.attributionScope.goalRevision,
+            kind: evidence.attributionScope.kind,
+            ledger_sha256: evidence.attributionScope.ledgerSha256,
+            source_run_ids: [...evidence.attributionScope.sourceRunIds],
+          },
+        }),
     changed: sortedChanged(evidence.changedByRun).map(changedFileReport),
     diff_check: {
       checked_paths: [...evidence.diffCheck.checkedPaths].sort(),

@@ -2,13 +2,35 @@ import type { AgentCommandOptions } from "../agent/agent-types.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { executeAgent } from "../commands/agent.js";
 import { executeSessionsResume } from "../commands/sessions.js";
+import {
+  renderTaskCommandFailure,
+  taskMutationContext,
+  taskWriterFactory,
+} from "../commands/task-control-plane-command.js";
+import { GoalManager } from "../goals/goal-manager.js";
+import { PlanFileLoader } from "../plans/plan-file-loader.js";
+import { PlanStore } from "../plans/plan-store.js";
+import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { SessionCatalog } from "../sessions/session-catalog.js";
+import { V2SessionWriter } from "../sessions/v2-session-writer.js";
+import {
+  PHASE16_RUN_BINDING_KEYS,
+  phase16RunBindingSchema,
+} from "../events/phase16-run-event-extension.js";
 import { ApprovalController } from "./approval-controller.js";
 import { PersistedEventSource } from "./persisted-event-source.js";
 import { TuiAbortBridge } from "./tui-abort-bridge.js";
 import { TuiApprovalPrompt } from "./tui-approval-prompt.js";
-import { TuiController, type TuiCorePort } from "./tui-controller.js";
+import {
+  TuiController,
+  type TuiCorePort,
+  type TuiCoreRunResult,
+} from "./tui-controller.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
+import type {
+  Phase16MutationIntent,
+  Phase16StartIntent,
+} from "./phase16-user-intent.js";
 
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
@@ -17,10 +39,29 @@ export interface TuiCommandOptions
   readonly task: string | undefined;
 }
 
-const SILENT_TUI_IO: CliIO = {
-  stderr: { write: () => undefined },
-  stdout: { write: () => undefined },
-};
+const MAX_EPHEMERAL_DIAGNOSTIC_CHARS = 2_048;
+
+async function captureCoreRun(
+  run: (io: CliIO) => Promise<number>,
+): Promise<TuiCoreRunResult> {
+  let diagnostic = "";
+  const io: CliIO = {
+    stderr: {
+      write: (value) => {
+        if (diagnostic.length >= MAX_EPHEMERAL_DIAGNOSTIC_CHARS) return;
+        diagnostic += value.slice(
+          0,
+          MAX_EPHEMERAL_DIAGNOSTIC_CHARS - diagnostic.length,
+        );
+      },
+    },
+    // Durable model/tool facts reach the TUI through PersistedEventSource.
+    stdout: { write: () => undefined },
+  };
+  const exitCode = await run(io);
+  const normalized = diagnostic.replace(/\s+/gu, " ").trim();
+  return { diagnostic: normalized.length === 0 ? null : normalized, exitCode };
+}
 
 function usage(io: CliIO, message: string): 2 {
   io.stderr.write(`usage/config error: ${message}\n`);
@@ -30,6 +71,8 @@ function usage(io: CliIO, message: string): 2 {
 function agentOptions(
   options: TuiCommandOptions,
   task: string,
+  mode?: "build" | "plan",
+  modeSource?: "explicit_tui" | "tui_default",
 ): AgentCommandOptions {
   return {
     artifactCaptureBytes: options.artifactCaptureBytes,
@@ -48,6 +91,13 @@ function agentOptions(
     maxTokens: options.maxTokens,
     maxToolOutputBytes: options.maxToolOutputBytes,
     mcpServerIds: options.mcpServerIds,
+    ...(mode === undefined
+      ? {}
+      : {
+          inputSurface: "tui" as const,
+          mode,
+          ...(modeSource === undefined ? {} : { modeSource }),
+        }),
     model: options.model,
     policyConfig: options.policyConfig,
     policyProfile: options.policyProfile,
@@ -60,9 +110,349 @@ function agentOptions(
     sandboxPids: options.sandboxPids,
     sandboxTmpMiB: options.sandboxTmpMiB,
     task,
-    taskProfile: options.taskProfile,
+    taskProfile:
+      mode === "plan"
+        ? "read-only"
+        : mode === "build"
+          ? "coding"
+          : options.taskProfile,
     verbose: false,
   };
+}
+
+function intentSession(
+  intent: Phase16MutationIntent,
+): { readonly expectedSessionSeq: number; readonly sessionId: string } {
+  if (intent.sessionId === null || intent.expectedSessionSeq === null) {
+    throw new RangeError("Phase 16 mutation requires an exact session snapshot");
+  }
+  return {
+    expectedSessionSeq: intent.expectedSessionSeq,
+    sessionId: intent.sessionId,
+  };
+}
+
+async function executeTuiMutation(
+  intent: Phase16MutationIntent,
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<number> {
+  try {
+    const binding = intentSession(intent);
+    const context = taskMutationContext(
+      runtime,
+      binding.sessionId,
+      "tui",
+      binding.expectedSessionSeq,
+    );
+    const writerFactory = taskWriterFactory(runtime);
+    switch (intent.type) {
+      case "revise_goal":
+        await new GoalManager(writerFactory).reviseActiveGoal({
+          baseRevision: intent.baseRevision,
+          context,
+          goalId: intent.goalId,
+          objective: intent.objective,
+        });
+        return 0;
+      case "abandon_goal":
+        await new GoalManager(writerFactory).abandonActiveGoal({
+          context,
+          goalId: intent.goalId,
+          reason: intent.reason,
+          revision: intent.revision,
+        });
+        return 0;
+      case "approve_plan":
+        await new PlanStore(writerFactory).approveDraft({
+          context,
+          goalId: intent.goalId,
+          goalRevision: intent.goalRevision,
+          planId: intent.planId,
+          revision: intent.revision,
+          sha256: intent.sha256,
+        });
+        return 0;
+      case "reject_plan":
+        await new PlanStore(writerFactory).rejectDraft({
+          context,
+          goalId: intent.goalId,
+          goalRevision: intent.goalRevision,
+          planId: intent.planId,
+          reason: intent.reason,
+          revision: intent.revision,
+          sha256: intent.sha256,
+        });
+        return 0;
+      case "replace_plan_from_file": {
+        const editablePlan = await new PlanFileLoader().load(
+          runtime.cwd,
+          intent.path,
+        );
+        await new PlanStore(writerFactory).replaceDraft({
+          base:
+            intent.base === null
+              ? null
+              : {
+                  planId: intent.base.planId,
+                  revision: intent.base.revision,
+                  sha256: intent.base.planSha256,
+                },
+          context,
+          editablePlan,
+          goalId: intent.goalId,
+          goalRevision: intent.goalRevision,
+        });
+        return 0;
+      }
+    }
+  } catch (error) {
+    return renderTaskCommandFailure(error, io);
+  }
+}
+
+function allocateRunId(
+  session: ReturnType<typeof reconstructMultiRunSession>,
+  runtime: CliRuntime,
+): string {
+  const used = new Set(session.runs.map((run) => run.runId));
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const candidate = runtime.randomUUID();
+    if (candidate !== session.sessionId && !used.has(candidate)) return candidate;
+  }
+  throw new Error("could not allocate a unique TUI run id");
+}
+
+async function executeFreshTaskRun(
+  input: {
+    readonly expectedSessionSeq: number;
+    readonly mode: "build" | "plan";
+    readonly modeSource: "explicit_tui" | "tui_default";
+    readonly modelTask: string;
+    readonly options: TuiCommandOptions;
+    readonly sessionId: string;
+  },
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<number> {
+  const writer = await V2SessionWriter.openExisting(
+    runtime.cwd,
+    input.sessionId,
+    { createEventId: runtime.randomUUID, timestamp: runtime.timestamp },
+  );
+  runtime.observeSessionWriter?.(writer);
+  const session = reconstructMultiRunSession(writer.events);
+  if (session.taskState.lastSessionSeq !== input.expectedSessionSeq) {
+    await writer.close();
+    io.stderr.write(
+      `stale_snapshot: expected session sequence ${String(input.expectedSessionSeq)}, current ${String(session.taskState.lastSessionSeq)}\n`,
+    );
+    return 2;
+  }
+  const activeGoal = session.taskState.goals.find(
+    (goal) => goal.content.goalId === session.taskState.activeGoalId,
+  );
+  if (activeGoal?.status !== "active") {
+    await writer.close();
+    io.stderr.write("active_goal_required: an active Goal is required\n");
+    return 2;
+  }
+  return executeAgent(
+    agentOptions(
+      input.options,
+      input.modelTask,
+      input.mode,
+      input.modeSource,
+    ),
+    runtime,
+    io,
+    undefined,
+    {
+      modelTask: input.modelTask,
+      runId: allocateRunId(session, runtime),
+      sessionId: input.sessionId,
+      writer,
+    },
+  );
+}
+
+function continuationFields(
+  session: Awaited<ReturnType<SessionCatalog["read"]>>,
+): Pick<
+  Parameters<typeof executeSessionsResume>[0],
+  "continueApprovedPlan" | "planRevision" | "planSha256"
+> {
+  const current = session.taskState.currentApprovedPlan;
+  return current === null
+    ? {}
+    : {
+        continueApprovedPlan: true,
+        planRevision: String(current.revision),
+        planSha256: current.planSha256,
+      };
+}
+
+function goalHasStartedRun(
+  session: Awaited<ReturnType<SessionCatalog["read"]>>,
+  goalId: string,
+  goalRevision: number,
+): boolean {
+  return session.runs.some((run) => {
+    const binding = phase16RunBindingSchema.safeParse(
+      Object.fromEntries(
+        PHASE16_RUN_BINDING_KEYS.map((key) => [key, run.started.data[key]]),
+      ),
+    );
+    return (
+      binding.success &&
+      binding.data.goal_id === goalId &&
+      binding.data.goal_revision === goalRevision
+    );
+  });
+}
+
+async function executeTuiStart(
+  intent: Phase16StartIntent,
+  selectedMode: "build" | "plan",
+  modeSource: "explicit_tui" | "tui_default",
+  options: TuiCommandOptions,
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<number> {
+  try {
+    const catalog = new SessionCatalog(runtime.cwd);
+    if (intent.type === "submit_idle_message" && intent.sessionId === null) {
+      return executeAgent(
+        agentOptions(options, intent.text, selectedMode, modeSource),
+        runtime,
+        io,
+      );
+    }
+    if (intent.type === "start_new_goal" && intent.sessionId === null) {
+      return executeAgent(
+        agentOptions(options, intent.text, selectedMode, modeSource),
+        runtime,
+        io,
+      );
+    }
+    if (intent.sessionId === null || intent.expectedSessionSeq === null) {
+      io.stderr.write("stale_snapshot: existing run requires a session binding\n");
+      return 2;
+    }
+
+    let expectedSessionSeq = intent.expectedSessionSeq;
+    let message: string | undefined;
+    let mode = selectedMode;
+    if (intent.type === "start_new_goal") {
+      const writerFactory = taskWriterFactory(runtime);
+      await new GoalManager(writerFactory).startNewGoal({
+        context: taskMutationContext(
+          runtime,
+          intent.sessionId,
+          "tui",
+          expectedSessionSeq,
+        ),
+        objective: intent.text,
+        parentGoalId: null,
+        replaceActive:
+          intent.currentGoalId === null || intent.currentGoalRevision === null
+            ? null
+            : {
+                confirmedAbandon: true,
+                goalId: intent.currentGoalId,
+                revision: intent.currentGoalRevision,
+              },
+      });
+      const afterGoal = await catalog.read(intent.sessionId);
+      expectedSessionSeq = afterGoal.taskState.lastSessionSeq;
+      message = intent.text;
+    } else if (intent.type === "submit_idle_message") {
+      message = intent.text;
+    } else {
+      mode = intent.mode;
+    }
+
+    const session = await catalog.read(intent.sessionId);
+    const activeGoal = session.taskState.goals.find(
+      (goal) => goal.content.goalId === session.taskState.activeGoalId,
+    );
+    if (activeGoal?.status !== "active") {
+      io.stderr.write("active_goal_required: an active Goal is required\n");
+      return 2;
+    }
+    if (
+      mode === "build" &&
+      session.taskState.pendingDraft !== null
+    ) {
+      io.stderr.write(
+        "plan_approval_required: reject or approve the pending Plan before Build\n",
+      );
+      return 2;
+    }
+    if (intent.type === "start_run_without_message") {
+      if (
+        intent.reason === "retry_goal_start" &&
+        goalHasStartedRun(
+          session,
+          activeGoal.content.goalId,
+          activeGoal.content.revision,
+        )
+      ) {
+        io.stderr.write(
+          "retry_goal_start_invalid: this Goal already has a durable run; use /continue\n",
+        );
+        return 2;
+      }
+      if (
+        intent.reason === "approved_plan_build" &&
+        (mode !== "build" ||
+          session.taskState.currentApprovedPlan === null ||
+          session.taskState.pendingDraft !== null)
+      ) {
+        io.stderr.write(
+          "approved_plan_build_invalid: an exact approved Plan with no pending draft is required\n",
+        );
+        return 2;
+      }
+    }
+    if (session.lastRun === null) {
+      return executeFreshTaskRun(
+        {
+          expectedSessionSeq,
+          mode,
+          modeSource,
+          modelTask: message ?? activeGoal.content.objective,
+          options,
+          sessionId: intent.sessionId,
+        },
+        runtime,
+        io,
+      );
+    }
+
+    const continuePlan =
+      mode === "build" && session.taskState.currentApprovedPlan !== null
+        ? continuationFields(session)
+        : {};
+    return executeSessionsResume(
+      {
+        allowDegradedResume: options.allowDegradedResume,
+        ...continuePlan,
+        expectedSessionSeq,
+        inputSurface: "tui",
+        message,
+        mode,
+        modeSource,
+        policyConfig: options.policyConfig,
+        policyProfile: options.policyProfile,
+        sessionId: intent.sessionId,
+      },
+      runtime,
+      io,
+    );
+  } catch (error) {
+    return renderTaskCommandFailure(error, io);
+  }
 }
 
 export async function executeTui(
@@ -72,6 +462,13 @@ export async function executeTui(
 ): Promise<0 | 1 | 2> {
   if (options.task !== undefined && options.resumeSessionId !== undefined) {
     return usage(io, "task and --resume are mutually exclusive");
+  }
+  if (
+    options.mode !== undefined &&
+    options.mode !== "plan" &&
+    options.mode !== "build"
+  ) {
+    return usage(io, "agent mode must be plan or build");
   }
   const host = runtime.tuiHost;
   if (host === undefined || !host.stdinIsTTY || !host.stdoutIsTTY) {
@@ -103,24 +500,58 @@ export async function executeTui(
     onCancel: abortBridge.onCancel,
   };
   const catalog = new SessionCatalog(runtime.cwd);
+  const continuousPhase16 = runtime.supportsPhase16TaskState === true;
   const core: TuiCorePort = {
     cancelActiveRun: () => abortBridge.cancelActiveRun(),
     loadSession: async (sessionId) =>
       (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
+    ...(continuousPhase16
+      ? {
+          mutateIntent: (intent: Phase16MutationIntent) =>
+            captureCoreRun((coreIo) =>
+              executeTuiMutation(intent, tuiRuntime, coreIo),
+            ),
+        }
+      : {}),
     resumeSession: (sessionId, message) =>
-      executeSessionsResume(
-        {
-          allowDegradedResume: options.allowDegradedResume,
-          message,
-          policyConfig: options.policyConfig,
-          policyProfile: options.policyProfile,
-          sessionId,
-        },
-        tuiRuntime,
-        SILENT_TUI_IO,
+      captureCoreRun((coreIo) =>
+        executeSessionsResume(
+          {
+            allowDegradedResume: options.allowDegradedResume,
+            ...(options.mode === undefined ? {} : { mode: options.mode }),
+            inputSurface: "tui",
+            message,
+            policyConfig: options.policyConfig,
+            policyProfile: options.policyProfile,
+            sessionId,
+          },
+          tuiRuntime,
+          coreIo,
+        ),
       ),
     startTask: (task) =>
-      executeAgent(agentOptions(options, task), tuiRuntime, SILENT_TUI_IO),
+      captureCoreRun((coreIo) =>
+        executeAgent(agentOptions(options, task), tuiRuntime, coreIo),
+      ),
+    ...(continuousPhase16
+      ? {
+          startIntent: (
+            intent: Phase16StartIntent,
+            selectedMode: "build" | "plan",
+            modeSource: "explicit_tui" | "tui_default",
+          ) =>
+            captureCoreRun((coreIo) =>
+              executeTuiStart(
+                intent,
+                selectedMode,
+                modeSource,
+                options,
+                tuiRuntime,
+                coreIo,
+              ),
+            ),
+        }
+      : {}),
   };
   let initialSnapshot: readonly TuiPersistedEvent[] = [];
   if (options.resumeSessionId !== undefined) {
@@ -150,6 +581,15 @@ export async function executeTui(
   const controller = new TuiController({
     approvalController,
     core,
+    createIntentId: runtime.randomUUID,
+    initialMode:
+      options.mode === "build" || options.mode === "plan"
+        ? options.mode
+        : "plan",
+    initialModeSource:
+      options.mode === "build" || options.mode === "plan"
+        ? "explicit_tui"
+        : "tui_default",
     renderer,
     source,
   });

@@ -241,7 +241,7 @@ describe("Phase 9 deterministic exact checkpoint crash fixture", () => {
       checkpointStore,
     ).build({
       backend,
-      events: interrupted.lastRun.events,
+      events: interrupted.lastRun!.events,
     });
     expect(built.continuation).toMatchObject({ state: "opaque-turn-1" });
     const savedFingerprint = fingerprint();
@@ -559,12 +559,12 @@ describe("Phase 9 deterministic exact checkpoint crash fixture", () => {
     const reconstructed = reconstructMultiRunSession(
       await readStoredSession(writer.path),
     );
-    expect(reconstructed.lastRun.status).toBe("completed");
+    expect(reconstructed.lastRun!.status).toBe("completed");
     expect(
-      reconstructed.lastRun.events.map((event) => event.type),
+      reconstructed.lastRun!.events.map((event) => event.type),
     ).toContain("resume.pending_call.adopted");
     expect(
-      reconstructed.lastRun.events.map((event) => event.type),
+      reconstructed.lastRun!.events.map((event) => event.type),
     ).toContain("tool.call.recovered");
     expect(0, "remote/billable request count").toBe(0);
   });

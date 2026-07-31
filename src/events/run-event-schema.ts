@@ -31,6 +31,9 @@ const incompleteReasonSchema = z.enum([
   "task_blocked",
   "completion_signal_required",
   "no_changes_for_coding_task",
+  "clarification_required",
+  "plan_approval_required",
+  "plan_incomplete",
 ]);
 const utf8StringWithin = (maximumBytes: number) =>
   z
@@ -402,7 +405,7 @@ const runCompletedSchema = z
     data: z
       .object({
         completion_mode: z
-          .enum(["model_final", "verified_finish_task"])
+          .enum(["model_final", "plan_ready", "verified_finish_task"])
           .optional(),
         duration_ms: nonnegativeInteger,
         evidence_sha256: sha256Schema.optional(),
@@ -432,10 +435,14 @@ const runCompletedSchema = z
             message: "verified completion requires evidence and report hashes",
           });
         }
-        if (value.completion_mode === "model_final" && (hasEvidence || hasReport)) {
+        if (
+          (value.completion_mode === "model_final" ||
+            value.completion_mode === "plan_ready") &&
+          (hasEvidence || hasReport)
+        ) {
           context.addIssue({
             code: "custom",
-            message: "model final completion cannot claim verified evidence",
+            message: "non-finish completion cannot claim verified evidence",
           });
         }
       }),

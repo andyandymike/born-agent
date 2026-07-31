@@ -4,12 +4,25 @@ import { basename, dirname } from "node:path";
 
 import { phase10ArtifactRunEventDataSchemas } from "../artifacts/artifact-event-schema.js";
 import type { Phase10ArtifactEvent } from "../artifacts/artifact-types.js";
+import { TaskStateMachine } from "../coordination/task-state-machine.js";
+import { assertGoalChangeLedgerSemantics } from "../coordination/goal-change-ledger.js";
+import {
+  phase16TaskSessionEventDataSchemas,
+  type Phase16TaskSessionEventData,
+  type Phase16TaskSessionEventType,
+} from "../coordination/task-event-schema.js";
+import {
+  phase16GoalChangeRunEventDataSchemas,
+  type Phase16GoalChangeRunEventData,
+  type Phase16GoalChangeRunEventType,
+} from "../coordination/goal-change-event-schema.js";
 import {
   decodeStoredEvents,
   type DecodedStoredEvent,
 } from "../events/event-decoder-registry.js";
 import { assertPhase9RunEventSemantics } from "../events/phase9-run-event-semantics.js";
 import type { RunEvent } from "../events/run-event.js";
+import type { Phase16RunBinding } from "../events/phase16-run-event-extension.js";
 import {
   phase9RunEventDataSchemas,
   phase9SessionEventDataSchemas,
@@ -140,6 +153,10 @@ export class V2SessionWriter implements SessionWriter {
     return this.events;
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
   subscribeDurableEvents(
     listener: (event: DecodedStoredEvent) => void,
   ): () => void {
@@ -181,6 +198,33 @@ export class V2SessionWriter implements SessionWriter {
     return this.appendEnvelope(envelope);
   }
 
+  /**
+   * Phase 16 task facts are intentionally exposed as a distinct writer method.
+   * Trusted user and agent PlanStore ports own construction of their origin;
+   * callers cannot accidentally pass a task event through the Phase 9 API.
+   */
+  async appendTaskEvent<TType extends Phase16TaskSessionEventType>(
+    type: TType,
+    data: Phase16TaskSessionEventData<TType>,
+  ): Promise<DecodedStoredEvent> {
+    phase16TaskSessionEventDataSchemas[type].parse(data);
+    const eventId = this.createEventId();
+    if (!isCanonicalUuid(eventId)) {
+      throw new Error("event id must be a canonical UUID");
+    }
+    const envelope = storedEventEnvelopeV2Schema.parse({
+      data,
+      event_id: eventId,
+      schema_version: 2,
+      scope: "session",
+      session_id: this.sessionId,
+      session_seq: this.rawValues.length + 1,
+      timestamp: this.timestamp(),
+      type,
+    });
+    return this.appendEnvelope(envelope);
+  }
+
   async appendArtifactEvent(
     runId: string,
     event: Phase10ArtifactEvent,
@@ -194,6 +238,23 @@ export class V2SessionWriter implements SessionWriter {
       runId,
       timestamp: this.timestamp(),
       type: event.type,
+    });
+  }
+
+  async appendGoalChangeEvent<TType extends Phase16GoalChangeRunEventType>(
+    runId: string,
+    eventId: string,
+    type: TType,
+    data: Phase16GoalChangeRunEventData<TType>,
+  ): Promise<DecodedStoredEvent> {
+    phase16GoalChangeRunEventDataSchemas[type].parse(data);
+    if (!isCanonicalUuid(eventId)) throw new Error("event id must be a canonical UUID");
+    return this.appendRunEnvelope({
+      data,
+      eventId,
+      runId,
+      timestamp: this.timestamp(),
+      type,
     });
   }
 
@@ -220,6 +281,25 @@ export class V2SessionWriter implements SessionWriter {
       runId,
       timestamp: this.timestamp(),
       type,
+    });
+  }
+
+  async appendPhase16RunStarted(
+    runId: string,
+    eventId: string,
+    data: Extract<RunEvent, { type: "run.started" }>["data"] &
+      Phase16RunBinding,
+    timestamp: string,
+  ): Promise<DecodedStoredEvent> {
+    if (!isCanonicalUuid(eventId)) {
+      throw new Error("event id must be a canonical UUID");
+    }
+    return this.appendRunEnvelope({
+      data,
+      eventId,
+      runId,
+      timestamp,
+      type: "run.started",
     });
   }
 
@@ -285,6 +365,11 @@ export class V2SessionWriter implements SessionWriter {
     // checkpoint/adoption fact. Run the same semantic state machine used by
     // replay before any prospective Phase 9 event reaches durable storage.
     assertPhase9RunEventSemantics(decoded);
+    // PHASE16: schema-valid Goal/Plan events can still be stale or violate a
+    // cross-event authority invariant. Reject the prospective state before
+    // bytes reach the append+sync commit point.
+    TaskStateMachine.project(decoded);
+    assertGoalChangeLedgerSemantics(decoded);
     const event = decoded.at(-1);
     if (event === undefined) throw new Error("stored envelope produced no event");
     await this.store.appendEncodedLine(JSON.stringify(envelope));

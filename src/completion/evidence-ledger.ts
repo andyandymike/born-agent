@@ -52,6 +52,9 @@ export function createIncompleteEvidence(
   reason: IncompleteReason,
 ): Readonly<IncompleteEvidence> {
   return immutableClone({
+    ...(state.attributionScope === undefined
+      ? {}
+      : { attributionScope: state.attributionScope }),
     changedByRun: state.changedByRun,
     diffCheck: state.diffCheck,
     finalSnapshot: state.finalSnapshot,

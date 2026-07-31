@@ -16,16 +16,27 @@ import {
   sameDiffStat,
   samePaths,
 } from "../completion/completion-evidence-bindings.js";
+import { sha256Canonical } from "../completion/canonical-json.js";
+import type { GoalRevisionAttributionScope } from "../completion/completion-types.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import type {
   Phase9RunEventData,
 } from "./stored-event-v2.js";
+import type { Phase16RunBinding } from "./phase16-run-event-extension.js";
+import type {
+  Phase16GoalChangeRunEventData,
+  Phase16GoalChangeRunEventType,
+} from "../coordination/goal-change-event-schema.js";
 
 export interface RunEventRenderer {
   render(event: RunEvent): Promise<void> | void;
 }
 
 export interface EventPublisherOptions {
+  readonly completionAttribution?: () => {
+    readonly changedPaths: readonly string[];
+    readonly scope: GoalRevisionAttributionScope;
+  };
   readonly randomUUID: () => string;
   readonly renderer: RunEventRenderer;
   readonly runId: string;
@@ -211,6 +222,7 @@ export class EventPublisher {
   private startedProvider: string | undefined;
   private taskProfile: "read-only" | "coding" | undefined;
   private taskProfileExplicit = false;
+  private phase16AgentMode: "plan" | "build" | undefined;
   private outputChars = 0;
   private seq = 0;
   private started = false;
@@ -236,6 +248,25 @@ export class EventPublisher {
   private verificationGeneration = 0;
 
   constructor(private readonly options: EventPublisherOptions) {}
+
+  private completionChangedPaths(): readonly string[] {
+    return this.options.completionAttribution?.().changedPaths ??
+      netChangedPaths(
+        [...this.patchApplies.values()].flatMap((apply) =>
+          apply.completedData === undefined ? [] : [apply.completedData]
+        ),
+      );
+  }
+
+  private completionScopeMatches(
+    scope: GoalRevisionAttributionScope | undefined,
+  ): boolean {
+    const expected = this.options.completionAttribution?.().scope;
+    return expected === undefined
+      ? scope === undefined
+      : scope !== undefined &&
+          sha256Canonical(scope) === sha256Canonical(expected);
+  }
 
   get outputLength(): number {
     return this.outputChars;
@@ -288,6 +319,76 @@ export class EventPublisher {
     this.persistedEvents.push(event);
     await this.options.renderer.render(event);
     return event;
+  }
+
+  async publishPhase16RunStarted(
+    data: Extract<RunEvent, { type: "run.started" }>["data"],
+    binding: Phase16RunBinding,
+  ): Promise<Extract<RunEvent, { type: "run.started" }>> {
+    const draft = { data, type: "run.started" as const };
+    this.validateTransition(draft);
+    if (this.options.writer.appendPhase16RunStarted === undefined) {
+      throw new EventPersistenceError(
+        new TypeError("session writer does not support Phase 16 run binding"),
+      );
+    }
+    const event = runEventSchema.parse({
+      ...draft,
+      event_id: this.options.randomUUID(),
+      run_id: this.options.runId,
+      schema_version: 1,
+      seq: this.seq + 1,
+      session_id: this.options.sessionId,
+      timestamp: this.options.timestamp(),
+    }) as Extract<RunEvent, { type: "run.started" }>;
+    try {
+      await this.options.writer.appendPhase16RunStarted(
+        this.options.runId,
+        event.event_id,
+        { ...event.data, ...binding },
+        event.timestamp,
+      );
+    } catch (error) {
+      throw new EventPersistenceError(error);
+    }
+    this.applyTransition(event);
+    this.phase16AgentMode = binding.agent_mode;
+    this.persistedEvents.push(event);
+    await this.options.renderer.render(event);
+    return event;
+  }
+
+  async publishGoalChangeEvent<
+    TType extends Phase16GoalChangeRunEventType,
+  >(
+    type: TType,
+    data: Phase16GoalChangeRunEventData<TType>,
+    eventId = this.options.randomUUID(),
+  ): Promise<void> {
+    if (
+      !this.started ||
+      this.terminal ||
+      this.phase16AgentMode !== "build" ||
+      this.backendSelected === undefined ||
+      this.options.writer.appendGoalChangeEvent === undefined
+    ) {
+      throw new EventPersistenceError(
+        new TypeError("Goal change facts require an active Phase 16 Build run"),
+      );
+    }
+    try {
+      await this.options.writer.appendGoalChangeEvent(
+        this.options.runId,
+        eventId,
+        type,
+        data,
+      );
+    } catch (error) {
+      throw new EventPersistenceError(error);
+    }
+    // These v2-only facts participate in the same run sequence even though
+    // the historical RunEvent union deliberately remains byte-compatible.
+    this.seq += 1;
   }
 
   async adoptPendingCall(
@@ -951,15 +1052,14 @@ export class EventPublisher {
       ) {
         throw new Error("completion evidence must be a unique projection for this run");
       }
-      const changedPaths = netChangedPaths(
-        [...this.patchApplies.values()].flatMap((apply) =>
-          apply.completedData === undefined ? [] : [apply.completedData]
-        ),
-      );
+      const changedPaths = this.completionChangedPaths();
       if (
-        !samePaths(changedPaths, evidenceChangedPaths(draft.data.evidence))
+        !samePaths(changedPaths, evidenceChangedPaths(draft.data.evidence)) ||
+        !this.completionScopeMatches(draft.data.evidence.attributionScope)
       ) {
-        throw new Error("completion evidence changed paths do not match patch journal");
+        throw new Error(
+          "completion evidence does not match its attributed change journal",
+        );
       }
       const classifiedExecutions = new Set(
         [...this.verifications.values()].map(
@@ -1038,11 +1138,7 @@ export class EventPublisher {
       ) {
         throw new Error("blocked finish candidate must evaluate to task_blocked");
       }
-      const changedPaths = netChangedPaths(
-        [...this.patchApplies.values()].flatMap((apply) =>
-          apply.completedData === undefined ? [] : [apply.completedData]
-        ),
-      );
+      const changedPaths = this.completionChangedPaths();
       if (
         draft.data.effect !== "error" &&
         !samePaths(changedPaths, draft.data.changed_paths)
@@ -1178,9 +1274,15 @@ export class EventPublisher {
         throw new Error("agent completion does not match completed step evidence");
       }
       if (
-        (this.taskProfile === "coding" &&
+        (this.phase16AgentMode === "plan" &&
+          draft.data.completion_mode !== "plan_ready") ||
+        (this.phase16AgentMode === "build" &&
           draft.data.completion_mode !== "verified_finish_task") ||
-        (this.taskProfile === "read-only" &&
+        (this.phase16AgentMode === undefined &&
+          this.taskProfile === "coding" &&
+          draft.data.completion_mode !== "verified_finish_task") ||
+        (this.phase16AgentMode === undefined &&
+          this.taskProfile === "read-only" &&
           ((this.taskProfileExplicit &&
             draft.data.completion_mode !== "model_final") ||
             draft.data.completion_mode === "verified_finish_task"))
@@ -1215,7 +1317,11 @@ export class EventPublisher {
         this.activeAgentStep !== undefined ||
         draft.data.steps !== this.agentSteps.size ||
         draft.data.tool_calls !== this.completedToolCalls ||
-        !this.usagePublished
+        (!this.usagePublished &&
+          !(
+            draft.data.reason === "plan_approval_required" &&
+            this.agentSteps.size === 0
+          ))
       ) {
         throw new Error("run.incomplete counts do not match agent evidence");
       }

@@ -127,7 +127,20 @@ const modelEvidenceReportSchema = z
   })
   .strict();
 
+const attributionScopeReportSchema = z
+  .object({
+    baseline_event_id: z.string().uuid(),
+    change_event_ids: z.array(z.string().uuid()).max(512),
+    goal_id: z.string().uuid(),
+    goal_revision: z.number().int().positive(),
+    kind: z.literal("goal_revision"),
+    ledger_sha256: sha256Schema,
+    source_run_ids: z.array(z.string().uuid()).max(256),
+  })
+  .strict();
+
 const commonReportFields = {
+  attribution_scope: attributionScopeReportSchema.optional(),
   changed: z.array(changedFileReportSchema).max(10_000),
   diff_check: diffCheckReportSchema,
   final_source_state: sourceStateReportSchema.nullable(),

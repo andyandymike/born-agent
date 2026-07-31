@@ -3,9 +3,9 @@ import { z } from "zod";
 import { runEventSchema } from "./run-event-schema.js";
 import type { RunEvent } from "./run-event.js";
 import {
-  phase9RunEventDataSchemas,
-  phase9SessionEventDataSchemas,
   storedEventEnvelopeV2Schema,
+  v2RunEventDataSchemas,
+  v2SessionEventDataSchemas,
 } from "./stored-event-v2.js";
 import type {
   Phase9RunEventData,
@@ -13,7 +13,16 @@ import type {
   Phase9SessionEventData,
   Phase9SessionEventType,
   RunScopedEnvelopeV2,
+  V2RunEventData,
+  V2RunEventType,
+  V2SessionEventData,
+  V2SessionEventType,
 } from "./stored-event-v2.js";
+import {
+  PHASE16_RUN_BINDING_KEYS,
+  phase16RunBindingSchema,
+  type Phase16RunBinding,
+} from "./phase16-run-event-extension.js";
 
 const LEGACY_RUN_EVENT_TYPES = [
   "run.started",
@@ -60,7 +69,7 @@ type LegacyRunStartedData = Extract<
   { type: "run.started" }
 >["data"];
 
-export type CurrentRunStartedData = LegacyRunStartedData &
+type ResumeRunExtension =
   (
     | {
         readonly resume_mode?: never;
@@ -71,6 +80,10 @@ export type CurrentRunStartedData = LegacyRunStartedData &
         readonly resume_of_run_id: string;
       }
   );
+
+export type CurrentRunStartedData = LegacyRunStartedData &
+  ResumeRunExtension &
+  (Phase16RunBinding | Record<string, never>);
 
 interface DecodedEventBase<TType extends string, TData> {
   readonly data: TData;
@@ -116,6 +129,13 @@ export type DecodedPhase9SessionEvent = {
   >;
 }[Phase9SessionEventType];
 
+export type DecodedV2SessionEvent = {
+  [TType in V2SessionEventType]: DecodedSessionEventBase<
+    TType,
+    V2SessionEventData<TType>
+  >;
+}[V2SessionEventType];
+
 export type DecodedPhase9RunEvent = {
   [TType in Phase9RunEventType]: DecodedRunEventBase<
     TType,
@@ -123,12 +143,19 @@ export type DecodedPhase9RunEvent = {
   >;
 }[Phase9RunEventType];
 
+export type DecodedV2RunEvent = {
+  [TType in V2RunEventType]: DecodedRunEventBase<
+    TType,
+    V2RunEventData<TType>
+  >;
+}[V2RunEventType];
+
 export type DecodedRunEvent =
   | DecodedRunStartedEvent
   | DecodedLegacyCompatibleRunEvent<LegacyCompatibleRunEvent>
-  | DecodedPhase9RunEvent;
+  | DecodedV2RunEvent;
 
-export type DecodedSessionEvent = DecodedPhase9SessionEvent;
+export type DecodedSessionEvent = DecodedV2SessionEvent;
 export type DecodedStoredEvent = DecodedRunEvent | DecodedSessionEvent;
 
 export type StoredEventDecodeErrorCode =
@@ -251,13 +278,29 @@ function resumeExtensionFromData(
     .parse(extension);
 }
 
-function withoutResumeExtension(data: unknown): unknown {
+function phase16ExtensionFromData(
+  data: unknown,
+): Phase16RunBinding | Record<string, never> {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return {};
+  }
+  const record = data as Readonly<Record<string, unknown>>;
+  const extension: Record<string, unknown> = {};
+  for (const field of PHASE16_RUN_BINDING_KEYS) {
+    if (Object.hasOwn(record, field)) extension[field] = record[field];
+  }
+  if (Object.keys(extension).length === 0) return {};
+  return phase16RunBindingSchema.parse(extension);
+}
+
+function withoutRunStartExtensions(data: unknown): unknown {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     return data;
   }
   const copy = { ...(data as Record<string, unknown>) };
   delete copy.resume_mode;
   delete copy.resume_of_run_id;
+  for (const field of PHASE16_RUN_BINDING_KEYS) delete copy[field];
   return copy;
 }
 
@@ -268,10 +311,14 @@ function parseLegacyCompatibleV2Data(
     envelope.type === "run.started"
       ? resumeExtensionFromData(envelope.data)
       : ({} as const);
+  const phase16Extension =
+    envelope.type === "run.started"
+      ? phase16ExtensionFromData(envelope.data)
+      : ({} as const);
   const parsed = runEventSchema.parse({
     data:
       envelope.type === "run.started"
-        ? withoutResumeExtension(envelope.data)
+        ? withoutRunStartExtensions(envelope.data)
         : envelope.data,
     event_id: envelope.event_id,
     run_id: envelope.run_id,
@@ -282,7 +329,11 @@ function parseLegacyCompatibleV2Data(
     type: envelope.type,
   });
   if (parsed.type !== "run.started") return parsed.data;
-  return { ...parsed.data, ...extension } as CurrentRunStartedData;
+  return {
+    ...parsed.data,
+    ...extension,
+    ...phase16Extension,
+  } as CurrentRunStartedData;
 }
 
 function isTerminalType(type: string): boolean {
@@ -414,7 +465,7 @@ export class EventDecoderRegistry {
       });
     }
     for (const [type, dataSchema] of Object.entries(
-      phase9SessionEventDataSchemas,
+      v2SessionEventDataSchemas,
     )) {
       this.entries.set(registryKey(2, type), {
         dataSchema,
@@ -422,7 +473,7 @@ export class EventDecoderRegistry {
         scope: "session",
       });
     }
-    for (const [type, dataSchema] of Object.entries(phase9RunEventDataSchemas)) {
+    for (const [type, dataSchema] of Object.entries(v2RunEventDataSchemas)) {
       this.entries.set(registryKey(2, type), {
         dataSchema,
         legacyCompatible: false,

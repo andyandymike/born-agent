@@ -1,0 +1,229 @@
+import type { DecodedStoredEvent } from "../events/event-decoder-registry.js";
+import type {
+  Phase16TaskSessionEventData,
+  Phase16TaskSessionEventType,
+} from "./task-event-schema.js";
+import type { TaskStateProjection } from "./task-state-types.js";
+import {
+  reconstructMultiRunSession,
+  type ReconstructedMultiRunSession,
+} from "../sessions/reconstruct-multi-run-session.js";
+import { V2SessionWriter } from "../sessions/v2-session-writer.js";
+
+export interface TaskMutationContext {
+  /** TUI-only optimistic binding, rechecked after the writer lock is held. */
+  readonly expectedSessionSeq?: number;
+  readonly inputSurface: "cli" | "tui";
+  readonly now: () => string;
+  readonly randomUuid: () => string;
+  readonly sessionId: string;
+  readonly workspace: string;
+}
+
+export type TaskControlPlaneErrorCode =
+  | "active_goal_conflict"
+  | "goal_not_found"
+  | "goal_stale"
+  | "goal_terminal"
+  | "legacy_goal_required"
+  | "parent_goal_invalid"
+  | "plan_draft_conflict"
+  | "plan_not_found"
+  | "plan_stale"
+  | "session_effect_reconciliation_required"
+  | "stale_snapshot"
+  | "task_identity_allocation_failed";
+
+export class TaskControlPlaneError extends Error {
+  override readonly name = "TaskControlPlaneError";
+
+  constructor(
+    readonly code: TaskControlPlaneErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+export interface TaskMutationBlocker {
+  readonly code: "session_effect_reconciliation_required";
+  readonly details: readonly string[];
+}
+
+function key(runId: string, localId: string): string {
+  return `${runId}\u0000${localId}`;
+}
+
+/**
+ * A control-plane mutation cannot cross an unresolved side-effect boundary.
+ * The last run is authoritative because Phase 9 adoption re-expresses an
+ * inherited call in that run before recovery continues.
+ */
+export function taskMutationBlocker(
+  session: ReconstructedMultiRunSession,
+): TaskMutationBlocker | null {
+  if (session.lastRun === null) return null;
+
+  const calls = new Set<string>();
+  const commands = new Set<string>();
+  const patches = new Set<string>();
+  const mcpCalls = new Set<string>();
+  const mcpServers = new Set<string>();
+
+  for (const event of session.lastRun.events) {
+    switch (event.type) {
+      case "tool.call.requested":
+      case "resume.pending_call.adopted":
+        calls.add(key(event.runId, event.data.call_id));
+        break;
+      case "tool.call.completed":
+      case "tool.call.recovered":
+        calls.delete(key(event.runId, event.data.call_id));
+        break;
+      case "command.execution.requested":
+      case "command.started":
+        commands.add(key(event.runId, event.data.execution_id));
+        break;
+      case "command.completed":
+        if (
+          event.data.cleanup_verified &&
+          event.data.termination !== "cleanup_failed"
+        ) {
+          commands.delete(key(event.runId, event.data.execution_id));
+        }
+        break;
+      case "patch.apply.started":
+        patches.add(key(event.runId, event.data.plan_id));
+        break;
+      case "patch.apply.completed":
+        patches.delete(key(event.runId, event.data.plan_id));
+        break;
+      case "mcp.server.start.requested":
+      case "mcp.server.start.effect_unknown":
+      case "mcp.server.started":
+        mcpServers.add(key(event.runId, event.data.server_id));
+        break;
+      case "mcp.server.start.failed":
+      case "mcp.server.stopped":
+        mcpServers.delete(key(event.runId, event.data.server_id));
+        break;
+      case "mcp.tool.call.started":
+      case "mcp.tool.call.effect_unknown":
+        mcpCalls.add(key(event.runId, event.data.call_id));
+        break;
+      case "mcp.tool.call.completed":
+        mcpCalls.delete(key(event.runId, event.data.call_id));
+        break;
+      default:
+        break;
+    }
+  }
+
+  const details = [
+    ...(calls.size === 0 ? [] : [`pending_tool_calls=${String(calls.size)}`]),
+    ...(commands.size === 0
+      ? []
+      : [`unknown_commands=${String(commands.size)}`]),
+    ...(patches.size === 0
+      ? []
+      : [`pending_patches=${String(patches.size)}`]),
+    ...(mcpCalls.size === 0
+      ? []
+      : [`unknown_mcp_calls=${String(mcpCalls.size)}`]),
+    ...(mcpServers.size === 0
+      ? []
+      : [`unknown_mcp_servers=${String(mcpServers.size)}`]),
+  ];
+  return details.length === 0
+    ? null
+    : Object.freeze({
+        code: "session_effect_reconciliation_required",
+        details: Object.freeze(details),
+      });
+}
+
+export interface LockedTaskMutationSession {
+  readonly session: ReconstructedMultiRunSession;
+  readonly state: TaskStateProjection;
+  append<TType extends Phase16TaskSessionEventType>(
+    type: TType,
+    data: Phase16TaskSessionEventData<TType>,
+  ): Promise<{
+    readonly event: DecodedStoredEvent;
+    readonly session: ReconstructedMultiRunSession;
+    readonly state: TaskStateProjection;
+  }>;
+}
+
+export type TaskMutationWriterFactory = (
+  context: TaskMutationContext,
+) => Promise<V2SessionWriter>;
+
+async function defaultWriterFactory(
+  context: TaskMutationContext,
+): Promise<V2SessionWriter> {
+  return V2SessionWriter.openExisting(context.workspace, context.sessionId, {
+    createEventId: context.randomUuid,
+    timestamp: context.now,
+  });
+}
+
+export async function withTaskMutation<T>(
+  context: TaskMutationContext,
+  operation: (locked: LockedTaskMutationSession) => Promise<T> | T,
+  writerFactory: TaskMutationWriterFactory = defaultWriterFactory,
+): Promise<T> {
+  const writer = await writerFactory(context);
+  try {
+    const session = reconstructMultiRunSession(writer.events);
+    if (
+      context.expectedSessionSeq !== undefined &&
+      session.taskState.lastSessionSeq !== context.expectedSessionSeq
+    ) {
+      throw new TaskControlPlaneError(
+        "stale_snapshot",
+        `session changed since the TUI snapshot (expected ${String(context.expectedSessionSeq)}, current ${String(session.taskState.lastSessionSeq)})`,
+      );
+    }
+    const blocker = taskMutationBlocker(session);
+    if (blocker !== null) {
+      throw new TaskControlPlaneError(
+        blocker.code,
+        `session effect reconciliation is required (${blocker.details.join(", ")})`,
+      );
+    }
+    const locked: LockedTaskMutationSession = {
+      append: async (type, data) => {
+        const event = await writer.appendTaskEvent(type, data);
+        const nextSession = reconstructMultiRunSession(writer.events);
+        return {
+          event,
+          session: nextSession,
+          state: nextSession.taskState,
+        };
+      },
+      session,
+      state: session.taskState,
+    };
+    return await operation(locked);
+  } finally {
+    await writer.close();
+  }
+}
+
+export function allocateTaskUuid(
+  context: TaskMutationContext,
+  used: ReadonlySet<string>,
+): string {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const candidate = context.randomUuid();
+    if (candidate !== context.sessionId && !used.has(candidate)) {
+      return candidate;
+    }
+  }
+  throw new TaskControlPlaneError(
+    "task_identity_allocation_failed",
+    "could not allocate a unique task identity",
+  );
+}

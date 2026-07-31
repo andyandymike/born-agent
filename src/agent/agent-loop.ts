@@ -12,8 +12,14 @@ import type {
 } from "../model/model-events.js";
 import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
-import type { ToolExecution, ToolRegistryLike } from "../tools/tool-types.js";
-import type { CompletionControlSignal } from "../tools/tool-types.js";
+import type {
+  CompletionControlSignal,
+  ToolControlSignal,
+  ToolExecution,
+  ToolRegistryLike,
+} from "../tools/tool-types.js";
+import type { AgentMode } from "./agent-mode.js";
+import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import type { TurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import type { RecoveredToolObservation } from "../resume/resume-types.js";
 import type {
@@ -30,6 +36,18 @@ import {
 } from "../context/agent-context-controller.js";
 
 type RunAbortReason = "max_duration" | "user";
+
+function isPlanMutationControl(
+  control: ToolControlSignal | undefined,
+): control is Extract<ToolControlSignal, { readonly kind: "plan_revision_proposed" }> {
+  return control?.kind === "plan_revision_proposed";
+}
+
+function isCompletionControl(
+  control: ToolControlSignal | undefined,
+): control is CompletionControlSignal {
+  return control?.kind === "completion";
+}
 
 interface CompletedTurn {
   readonly call?: ModelToolCall;
@@ -68,6 +86,12 @@ export interface AgentLoopDeps {
   // PHASE4: Loop 只依赖 provider-neutral model、只读 Registry、Publisher、预算和时钟，
   // 因此测试无需真实网络、磁盘、timer 或子进程。
   readonly budget: BudgetTracker;
+  readonly beforeVerifiedRunCompleted?: (input: {
+    readonly callId: string;
+    readonly evidenceSha256: string;
+    readonly reportSha256: string;
+  }) => Promise<void>;
+  readonly agentMode?: AgentMode;
   readonly clock: AgentClock;
   readonly context?: AgentContextController;
   readonly instructions?: string;
@@ -82,6 +106,7 @@ export interface AgentLoopDeps {
   ) => void;
   readonly secrets?: readonly (string | undefined)[];
   readonly tools: ToolRegistryLike;
+  readonly taskState?: () => TaskStateProjection;
 }
 
 interface RequestAbortState {
@@ -581,6 +606,15 @@ export async function runAgentLoop(
         });
       }
       const control = execution.control;
+      if (isPlanMutationControl(control)) {
+        if (inherited.toolName !== "update_plan" || !execution.ok) {
+          return await publishInternalFailure(
+            "unexpected_tool_control",
+            "plan mutation control did not come from a successful update_plan call",
+          );
+        }
+        return await publishIncomplete(control.reason);
+      }
       if (control !== undefined && inherited.toolName !== "finish_task") {
         return await publishInternalFailure(
           "unexpected_tool_control",
@@ -594,14 +628,22 @@ export async function runAgentLoop(
           execution.error.retryable,
         );
       }
-      if (inherited.toolName === "finish_task" && control === undefined) {
+      if (
+        inherited.toolName === "finish_task" &&
+        !isCompletionControl(control)
+      ) {
         return await publishInternalFailure(
           "missing_completion_control",
           "finish_task did not return a completion decision",
         );
       }
-      if (control?.effect === "accept") {
+      if (isCompletionControl(control) && control.effect === "accept") {
         await publishAggregateUsage();
+        await deps.beforeVerifiedRunCompleted?.({
+          callId: inherited.callId,
+          evidenceSha256: control.evidenceSha256,
+          reportSha256: control.reportSha256,
+        });
         await publisher.publish({
           data: {
             completion_mode: "verified_finish_task",
@@ -621,7 +663,7 @@ export async function runAgentLoop(
         );
         return { exitCode: 0, type: "completed" };
       }
-      if (control?.effect === "incomplete") {
+      if (isCompletionControl(control) && control.effect === "incomplete") {
         return await publishIncomplete(control.reason as CompletionReason, control);
       }
       if (!execution.ok && execution.error.category === "cancelled") {
@@ -848,6 +890,41 @@ export async function runAgentLoop(
             reason: "max_duration",
           });
         }
+        if (deps.agentMode === "plan") {
+          const state = deps.taskState?.();
+          if (state === undefined) {
+            return await publishInternalFailure(
+              "task_state_unavailable",
+              "Plan mode requires a durable task-state projection",
+            );
+          }
+          const activeGoal = state.goals.find(
+            (goal) => goal.content.goalId === state.activeGoalId,
+          );
+          const hasReviewablePlan =
+            activeGoal?.status === "active" &&
+            (state.pendingDraft?.goalId === activeGoal.content.goalId ||
+              state.currentApprovedPlan?.goalId === activeGoal.content.goalId);
+          if (!hasReviewablePlan) {
+            return await publishIncomplete("clarification_required");
+          }
+          await publishAggregateUsage();
+          await publisher.publish({
+            data: {
+              completion_mode: "plan_ready",
+              duration_ms: budget.elapsedMs(),
+              model_turns: budget.snapshot().steps,
+              output_chars: publisher.outputLength,
+              ...(lastProviderResponseId === undefined
+                ? {}
+                : { provider_response_id: lastProviderResponseId }),
+              steps: budget.snapshot().steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.completed",
+          });
+          return { exitCode: 0, type: "completed" };
+        }
         if (taskProfile === "coding") {
           // PHASE7: Natural text has no finish_task call/result identity. It stays
           // an internal candidate and cannot be upgraded into verified completion.
@@ -982,6 +1059,15 @@ export async function runAgentLoop(
         });
       }
       const control = execution.control;
+      if (isPlanMutationControl(control)) {
+        if (turn.call.name !== "update_plan" || !execution.ok) {
+          return await publishInternalFailure(
+            "unexpected_tool_control",
+            "plan mutation control did not come from a successful update_plan call",
+          );
+        }
+        return await publishIncomplete(control.reason);
+      }
       if (control !== undefined && turn.call.name !== "finish_task") {
         return await publishInternalFailure(
           "unexpected_tool_control",
@@ -995,16 +1081,24 @@ export async function runAgentLoop(
           execution.error.retryable,
         );
       }
-      if (turn.call.name === "finish_task" && control === undefined) {
+      if (
+        turn.call.name === "finish_task" &&
+        !isCompletionControl(control)
+      ) {
         return await publishInternalFailure(
           "missing_completion_control",
           "finish_task did not return a completion decision",
         );
       }
-      if (control?.effect === "accept") {
+      if (isCompletionControl(control) && control.effect === "accept") {
         // PHASE7: completion.evaluated and matching tool.call.completed are already
         // durable here; only now may the terminal and deterministic report appear.
         await publishAggregateUsage();
+        await deps.beforeVerifiedRunCompleted?.({
+          callId: turn.call.callId,
+          evidenceSha256: control.evidenceSha256,
+          reportSha256: control.reportSha256,
+        });
         await publisher.publish({
           data: {
             completion_mode: "verified_finish_task",
@@ -1024,7 +1118,7 @@ export async function runAgentLoop(
         );
         return { exitCode: 0, type: "completed" };
       }
-      if (control?.effect === "incomplete") {
+      if (isCompletionControl(control) && control.effect === "incomplete") {
         return await publishIncomplete(control.reason as CompletionReason, control);
       }
       if (!execution.ok && execution.error.category === "cancelled") {

@@ -264,6 +264,21 @@ describe("Phase 11 pi-tui renderer", () => {
     expect(text).not.toContain("[ALLOW]");
   });
 
+  it("renders and sanitizes an ephemeral pre-session diagnostic", () => {
+    const component = new BornAgentViewComponent(
+      createInitialTuiViewState(),
+      ephemeral({
+        coreDiagnostic:
+          "restart with --task-profile read-only\u001b]0;owned-title\u0007",
+      }),
+    );
+
+    const text = component.render(100).join("\n");
+    expect(text).toContain("DIAGNOSTIC | restart with --task-profile read-only");
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("owned-title");
+  });
+
   it("exposes a start-update-stop adapter over a recording surface", () => {
     const surface = new RecordingSurface();
     const onInput = vi.fn(() => ({ consume: true } as const));

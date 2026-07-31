@@ -54,6 +54,12 @@ import {
   type EffectiveRuntimePolicy,
 } from "../policy/policy-resolver.js";
 import { restoreDockerExecutionImageIdentity } from "../execution/docker/acquisition/docker-image-identity.js";
+import { agentModeSchema } from "../agent/agent-mode.js";
+import { stripPhase16RunBinding } from "../events/phase16-run-event-extension.js";
+import { CompletionTransitionReconciler } from "../coordination/completion-transition-reconciler.js";
+import { GoalChangeRecordReconciler } from "../coordination/goal-change-record-reconciler.js";
+import { OutcomeReportBuilder } from "../coordination/outcome-report.js";
+import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
 
 const MAX_SHOW_ITEMS = 200;
 const MAX_SHOW_TEXT_BYTES = 128 * 1024;
@@ -73,7 +79,16 @@ export interface SessionsShowOptions {
 
 export interface SessionsResumeOptions {
   readonly allowDegradedResume: boolean;
+  readonly continueApprovedPlan?: boolean | undefined;
+  /** TUI-only optimistic binding, checked immediately after lock acquisition. */
+  readonly expectedSessionSeq?: number | undefined;
+  /** Internal trusted surface used only for run mode provenance. */
+  readonly inputSurface?: "cli" | "tui";
   readonly message: string | undefined;
+  readonly mode?: string | undefined;
+  readonly modeSource?: AgentCommandOptions["modeSource"];
+  readonly planRevision?: string | undefined;
+  readonly planSha256?: string | undefined;
   readonly policyConfig?: string | undefined;
   readonly policyProfile?: string | undefined;
   readonly sessionId: string;
@@ -355,6 +370,8 @@ export async function executeSessionsShow(
       return usageError(io, "session acquired a writer lock during replay");
     }
     const transcript = buildCanonicalTranscript(session.events);
+    const lastRun = session.lastRun;
+    const outcomeReport = new OutcomeReportBuilder().build(session);
     if (options.json) {
       writeJson(io, runtime, {
         artifacts: publicArtifactFacts(session),
@@ -366,11 +383,14 @@ export async function executeSessionsShow(
               transcript: publicTranscript(transcript),
               transcriptTruncated: transcript.length > MAX_SHOW_ITEMS,
             }),
-        lastRunId: session.lastRun.runId,
-        model: session.lastRun.started.data.model,
-        provider: session.lastRun.started.data.provider,
+        lastRunId: lastRun?.runId ?? null,
+        model: lastRun?.started.data.model ?? null,
+        outcomeReport,
+        provider: lastRun?.started.data.provider ?? null,
         runtimePolicy:
-          session.lastRun.started.data.runtime_policy ?? "legacy_unrecorded",
+          lastRun === null
+            ? null
+            : lastRun.started.data.runtime_policy ?? "legacy_unrecorded",
         runs: session.runs.length,
         schemaVersion: 1,
         sessionId: session.sessionId,
@@ -379,20 +399,26 @@ export async function executeSessionsShow(
       return 0;
     }
     io.stdout.write(`Session: ${session.sessionId}\n`);
-    io.stdout.write(`Last run: ${session.lastRun.runId}\n`);
+    io.stdout.write(`Last run: ${lastRun?.runId ?? "none"}\n`);
     io.stdout.write(`Status: ${session.status}\n`);
-    io.stdout.write(
-      `Backend: ${session.lastRun.started.data.provider}/${session.lastRun.started.data.model}\n`,
-    );
-    const runtimePolicy = session.lastRun.started.data.runtime_policy;
-    io.stdout.write(
-      runtimePolicy === undefined
-        ? "Runtime policy: legacy_unrecorded\n"
-        : `Runtime policy: ${runtimePolicy.profile_id}/${runtimePolicy.profile_mode} (${runtimePolicy.profile_sha256})\n`,
-    );
+    if (lastRun === null) {
+      io.stdout.write("Backend: none\n");
+      io.stdout.write("Runtime policy: none\n");
+    } else {
+      io.stdout.write(
+        `Backend: ${lastRun.started.data.provider}/${lastRun.started.data.model}\n`,
+      );
+      const runtimePolicy = lastRun.started.data.runtime_policy;
+      io.stdout.write(
+        runtimePolicy === undefined
+          ? "Runtime policy: legacy_unrecorded\n"
+          : `Runtime policy: ${runtimePolicy.profile_id}/${runtimePolicy.profile_mode} (${runtimePolicy.profile_sha256})\n`,
+      );
+    }
     io.stdout.write(
       `Artifacts: ${session.artifacts.storedReferenceCount} references, ${session.artifacts.objects.length} objects, ${session.artifacts.budgetUsage.sessionBytes ?? 0} captured bytes, ${session.artifacts.truncatedCaptureEventCount} truncated\n`,
     );
+    io.stdout.write(renderOutcomeReport(outcomeReport, "text"));
     if (options.context === true) {
       const facts = publicContextFacts(session) as {
         readonly plans: readonly Readonly<Record<string, unknown>>[];
@@ -436,6 +462,8 @@ function lastBackend(run: ReconstructedRunProjection) {
 }
 
 const NON_LEGACY_RUN_EVENTS = new Set([
+  "goal.change.recorded",
+  "goal.execution.baseline.captured",
   "sandbox.container.cleaned",
   "sandbox.container.create.requested",
   "sandbox.container.created",
@@ -513,7 +541,13 @@ function legacyDomainEvents(
     if (NON_LEGACY_RUN_EVENTS.has(event.type)) return [];
     return [
       runEventSchema.parse({
-        data: event.data,
+        data:
+          event.type === "run.started"
+            ? stripPhase16RunBinding(event.data)
+            : event.type === "run.completed" &&
+                event.data.completion_mode === "plan_ready"
+              ? { ...event.data, completion_mode: "model_final" }
+            : event.data,
         event_id: event.eventId,
         run_id: event.runId,
         schema_version: 1,
@@ -529,10 +563,23 @@ function legacyDomainEvents(
 function historicalAgentOptions(
   session: ReconstructedMultiRunSession,
   task: string,
-  policy: Pick<SessionsResumeOptions, "policyConfig" | "policyProfile">,
+  policy: Pick<
+    SessionsResumeOptions,
+    "mode" | "modeSource" | "policyConfig" | "policyProfile"
+    | "inputSurface"
+  > & {
+    readonly continueApprovedPlan?: AgentCommandOptions["continueApprovedPlan"];
+  },
 ): AgentCommandOptions | undefined {
+  if (session.lastRun === null) return undefined;
   const started = session.lastRun.started.data;
   if (started.command !== "agent") return undefined;
+  const selectedMode =
+    policy.mode ??
+    ("agent_mode" in started &&
+    (started.agent_mode === "plan" || started.agent_mode === "build")
+      ? started.agent_mode
+      : undefined);
   const dockerEvidence = started.docker_sandbox;
   const restoredImageIdentity =
     dockerEvidence?.image_identity === undefined
@@ -560,12 +607,13 @@ function historicalAgentOptions(
         ? undefined
         : String(started.command_timeout_ms),
     completionPolicy: started.completion_policy,
-    dockerImage: started.docker_sandbox?.image,
-    ...(dockerArtifactExecution === undefined
+    dockerImage:
+      selectedMode === "plan" ? undefined : started.docker_sandbox?.image,
+    ...(dockerArtifactExecution === undefined || selectedMode === "plan"
       ? {}
       : { dockerArtifactExecution }),
     editApproval: started.edit_approval,
-    executor: started.executor,
+    executor: selectedMode === "plan" ? undefined : started.executor,
     maxDurationMs: String(started.max_duration_ms),
     maxCommandOutputBytes:
       started.max_command_output_bytes === undefined
@@ -575,6 +623,13 @@ function historicalAgentOptions(
     maxTokens: String(started.max_tokens),
     maxToolOutputBytes: String(started.max_tool_output_bytes),
     mcpServerIds: started.mcp_servers ?? [],
+    ...(policy.inputSurface === undefined
+      ? {}
+      : { inputSurface: policy.inputSurface }),
+    mode: selectedMode,
+    ...(policy.modeSource === undefined
+      ? {}
+      : { modeSource: policy.modeSource }),
     model: started.model,
     policyConfig: policy.policyConfig,
     policyProfile: policy.policyProfile,
@@ -600,7 +655,15 @@ function historicalAgentOptions(
         ? undefined
         : String(started.docker_sandbox.limits.tmp_mib),
     task,
-    taskProfile: started.task_profile ?? "read-only",
+    taskProfile:
+      selectedMode === "plan"
+        ? "read-only"
+        : selectedMode === "build"
+          ? "coding"
+          : started.task_profile ?? "read-only",
+    ...(policy.continueApprovedPlan === undefined
+      ? {}
+      : { continueApprovedPlan: policy.continueApprovedPlan }),
     verbose: false,
   };
 }
@@ -800,7 +863,99 @@ export async function executeSessionsResume(
     writer = await V2SessionWriter.openExisting(runtime.cwd, options.sessionId);
     runtime.observeSessionWriter?.(writer);
     let session = reconstructMultiRunSession(writer.events);
+    if (
+      options.expectedSessionSeq !== undefined &&
+      session.taskState.lastSessionSeq !== options.expectedSessionSeq
+    ) {
+      return usageError(
+        io,
+        `stale_snapshot: expected session sequence ${String(options.expectedSessionSeq)}, current ${String(session.taskState.lastSessionSeq)}`,
+      );
+    }
     let lastRun = session.lastRun;
+    if (lastRun === null) {
+      return usageError(
+        io,
+        "idle Phase 16 task has no historical run to resume; start an explicit run instead",
+      );
+    }
+    const reconcileActiveGoalChanges = async (): Promise<number> => {
+      const active = session.taskState.goals.find(
+        (goal) => goal.content.goalId === session.taskState.activeGoalId,
+      );
+      if (active === undefined) return 0;
+      const result = await new GoalChangeRecordReconciler({
+        goalId: active.content.goalId,
+        goalRevision: active.content.revision,
+        randomUUID: runtime.randomUUID,
+        workspace: runtime.cwd,
+        writer: writer!,
+      }).reconcile();
+      if (result.recovered > 0) {
+        session = reconstructMultiRunSession(writer!.events);
+        lastRun = session.lastRun;
+      }
+      return result.recovered;
+    };
+    await reconcileActiveGoalChanges();
+    const completionRecovery = await new CompletionTransitionReconciler({
+      randomUUID: runtime.randomUUID,
+      timestamp: runtime.timestamp,
+      workspace: runtime.cwd,
+      writer,
+    }).reconcile();
+    if (completionRecovery.status === "completed") {
+      io.stdout.write(`Session: ${session.sessionId}\n`);
+      io.stdout.write(`Recovered run: ${completionRecovery.runId}\n`);
+      io.stdout.write(
+        `Completion recovery: ${completionRecovery.appendedEventTypes.join(", ")}\n`,
+      );
+      return 0;
+    }
+    const modeResult =
+      options.mode === undefined
+        ? undefined
+        : agentModeSchema.safeParse(options.mode);
+    if (modeResult !== undefined && !modeResult.success) {
+      return usageError(io, "agent mode must be plan or build");
+    }
+    const continuationFieldsPresent =
+      options.continueApprovedPlan === true ||
+      options.planRevision !== undefined ||
+      options.planSha256 !== undefined;
+    if (
+      continuationFieldsPresent &&
+      !(
+        options.continueApprovedPlan === true &&
+        options.planRevision !== undefined &&
+        options.planSha256 !== undefined
+      )
+    ) {
+      return usageError(
+        io,
+        "--continue-approved-plan requires --plan-revision and --plan-sha256",
+      );
+    }
+    let continueApprovedPlan:
+      | AgentCommandOptions["continueApprovedPlan"]
+      | undefined;
+    if (continuationFieldsPresent) {
+      if (!/^[1-9]\d*$/u.test(options.planRevision ?? "")) {
+        return usageError(io, "plan revision must be a positive integer");
+      }
+      if (!/^[a-f0-9]{64}$/u.test(options.planSha256 ?? "")) {
+        return usageError(io, "plan SHA-256 must be lowercase hexadecimal");
+      }
+      const current = session.taskState.currentApprovedPlan;
+      if (
+        current === null ||
+        current.revision !== Number(options.planRevision) ||
+        current.planSha256 !== options.planSha256
+      ) {
+        return usageError(io, "approved Plan continuation identity is stale");
+      }
+      continueApprovedPlan = current;
+    }
     const mismatch = resumePolicyMismatch(lastRun.started.data, effectivePolicy);
     if (mismatch !== undefined) return usageError(io, mismatch);
     const pendingContainers = countPendingContainerLifecycles(lastRun.events);
@@ -825,6 +980,9 @@ export async function executeSessionsResume(
       }
       session = reconstructMultiRunSession(writer.events);
       lastRun = session.lastRun;
+      if (lastRun === null) {
+        return dataError(io, "reconciled session unexpectedly lost its last run");
+      }
     }
     const historicalBackend = lastBackend(lastRun);
     if (historicalBackend?.data.resume_capability === undefined) {
@@ -849,7 +1007,20 @@ export async function executeSessionsResume(
       runtime,
       options.message?.trim() ?? lastRun.started.data.input.text,
     );
-    const agentOptions = historicalAgentOptions(session, userTurn, options);
+    const agentOptions = historicalAgentOptions(session, userTurn, {
+      ...(options.inputSurface === undefined
+        ? {}
+        : { inputSurface: options.inputSurface }),
+      mode: options.mode,
+      ...(options.modeSource === undefined
+        ? {}
+        : { modeSource: options.modeSource }),
+      policyConfig: options.policyConfig,
+      policyProfile: options.policyProfile,
+      ...(continueApprovedPlan === undefined
+        ? {}
+        : { continueApprovedPlan }),
+    });
     if (agentOptions === undefined) {
       return usageError(io, "chat sessions are not resumable by the Phase 9 agent CLI");
     }
@@ -898,6 +1069,25 @@ export async function executeSessionsResume(
       }
     }
 
+    for (const reconciliation of patchReconciliations) {
+      if (reconciliation.status !== "reconciled") continue;
+      await writer.appendSessionEvent("side_effect.reconciled", {
+        effect_id: reconciliation.planId,
+        effect_kind: "patch",
+        evidence_sha256: sha256Canonical(reconciliation),
+        observed: reconciliation.observed,
+        source_run_id: lastRun.runId,
+      });
+    }
+    if (patchReconciliations.length > 0) {
+      session = reconstructMultiRunSession(writer.events);
+      lastRun = session.lastRun;
+      if (lastRun === null) {
+        return dataError(io, "patch reconciliation lost the source run");
+      }
+      await reconcileActiveGoalChanges();
+    }
+
     const selected = createBackend(agentOptions, runtime, effectivePolicy);
     if (typeof selected === "string") {
       return usageError(io, redact(runtime, selected));
@@ -905,6 +1095,9 @@ export async function executeSessionsResume(
     const config = resolveAgentConfig(agentOptions, runtime.env);
     if (!config.ok) return usageError(io, config.error);
     const currentFingerprint = await buildWorkspaceResumeFingerprint({
+      ...(agentOptions.mode === undefined
+        ? {}
+        : { agentMode: agentModeSchema.parse(agentOptions.mode) }),
       backend: selected.backend,
       config: config.value,
       platform: runtime.platform,
@@ -947,17 +1140,6 @@ export async function executeSessionsResume(
           );
     if (prompt === undefined) {
       return usageError(io, "canonical transcript exceeds the safe resume prompt bound");
-    }
-
-    for (const reconciliation of patchReconciliations) {
-      if (reconciliation.status !== "reconciled") continue;
-      await writer.appendSessionEvent("side_effect.reconciled", {
-        effect_id: reconciliation.planId,
-        effect_kind: "patch",
-        evidence_sha256: sha256Canonical(reconciliation),
-        observed: reconciliation.observed,
-        source_run_id: lastRun.runId,
-      });
     }
 
     await writer.appendSessionEvent("session.resume.requested", {

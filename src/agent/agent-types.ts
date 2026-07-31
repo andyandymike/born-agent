@@ -1,10 +1,24 @@
 import type { ChatProvider } from "../chat/types.js";
+import type { AgentModeSource } from "./agent-mode.js";
 import type {
   DockerArtifactExecutionConfig,
   DockerExecutionImageIdentity,
 } from "../execution/docker/acquisition/docker-image-identity.js";
 
 export interface AgentCommandOptions {
+  /** Internal exact confirmation used only when a newer draft is pending. */
+  readonly continueApprovedPlan?: {
+    readonly goalId: string;
+    readonly goalRevision: number;
+    readonly planId: string;
+    readonly planSha256: string;
+    readonly revision: number;
+  };
+  /** Internal trusted input surface; ordinary CLI calls leave this absent. */
+  readonly inputSurface?: "cli" | "tui";
+  readonly mode?: string | undefined;
+  /** Internal trusted provenance for a TUI-selected mode. */
+  readonly modeSource?: AgentModeSource;
   readonly artifactCaptureBytes?: string | undefined;
   readonly commandApproval: string | undefined;
   readonly commandTimeoutMs: string | undefined;

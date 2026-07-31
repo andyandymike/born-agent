@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ApprovalController } from "../../src/tui/approval-controller.js";
 import { PersistedEventSource } from "../../src/tui/persisted-event-source.js";
 import type { PiTuiRenderer } from "../../src/tui/pi-tui-renderer.js";
-import { TuiController, type TuiCorePort } from "../../src/tui/tui-controller.js";
+import {
+  TuiController,
+  type TuiCorePort,
+  type TuiCoreRunResult,
+} from "../../src/tui/tui-controller.js";
 import type { TuiPersistedEvent } from "../../src/tui/tui-event-reducer.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -47,15 +51,18 @@ async function flush(): Promise<void> {
 
 function fixture(input: {
   readonly rendererUpdate?: () => void;
-  readonly startTask?: () => Promise<number>;
+  readonly startTask?: () => Promise<TuiCoreRunResult>;
 } = {}) {
   const approvalDecisions: unknown[] = [];
   const cancelActiveRun = vi.fn();
-  const startTask = vi.fn(input.startTask ?? (async () => 0));
+  const startTask = vi.fn(
+    input.startTask ??
+      (async () => ({ diagnostic: null, exitCode: 0 } as const)),
+  );
   const core: TuiCorePort = {
     cancelActiveRun,
     loadSession: async () => [],
-    resumeSession: async () => 0,
+    resumeSession: async () => ({ diagnostic: null, exitCode: 0 }),
     startTask,
   };
   const renderer: PiTuiRenderer = {
@@ -94,9 +101,73 @@ function fixture(input: {
 }
 
 describe("Phase 11 TUI controller", () => {
+  it("decodes Kitty printable press/repeat input and ignores release events", () => {
+    const test = fixture();
+
+    expect(test.controller.handleRawInput("\u001b[97;1:1u")).toEqual({
+      consume: true,
+    });
+    expect(test.controller.handleRawInput("\u001b[98;1:2u")).toEqual({
+      consume: true,
+    });
+    expect(test.controller.handleRawInput("\u001b[97:65;2:1u")).toEqual({
+      consume: true,
+    });
+    expect(test.controller.handleRawInput("\u001b[99;1:3u")).toEqual({
+      consume: true,
+    });
+
+    expect(test.controller.ephemeral.draftInput).toBe("abA");
+  });
+
+  it("does not turn a Kitty Ctrl+C release into a second cancellation", async () => {
+    let finishRun!: (result: TuiCoreRunResult) => void;
+    const run = new Promise<TuiCoreRunResult>((resolve) => {
+      finishRun = resolve;
+    });
+    const test = fixture({ startTask: () => run });
+
+    test.controller.handleRawInput("task");
+    test.controller.handleRawInput("\r");
+    await flush();
+    test.controller.acceptPersistedEvent(started());
+
+    test.controller.handleRawInput("\u001b[99;5:1u");
+    test.controller.handleRawInput("\u001b[99;5:3u");
+    expect(test.cancelActiveRun).toHaveBeenCalledOnce();
+
+    test.controller.acceptPersistedEvent(event("run.cancelled", {}, 2));
+    finishRun({ diagnostic: "Cancelled", exitCode: 130 });
+    await flush();
+  });
+
+  it("shows a pre-session core diagnostic instead of failing silently", async () => {
+    const test = fixture({
+      startTask: async () => ({
+        diagnostic:
+          "usage/config error: restart with --task-profile read-only for local chat",
+        exitCode: 2,
+      }),
+    });
+
+    test.controller.handleRawInput("hi");
+    test.controller.handleRawInput("\r");
+    await flush();
+
+    expect(test.controller.view.session.id).toBeNull();
+    expect(test.controller.ephemeral.coreDiagnostic).toContain(
+      "--task-profile read-only",
+    );
+    expect(test.controller.ephemeral.draftInput).toBe("hi");
+
+    test.controller.handleRawInput("x");
+    expect(test.controller.ephemeral.coreDiagnostic).toBeNull();
+    expect(test.controller.ephemeral.draftInput).toBe("hix");
+  });
+
   it("cancels an active run on Ctrl+C but exits 0 only after returning idle", async () => {
-    let finishRun!: (code: number) => void;
-    const run = new Promise<number>((resolve) => {
+    let finishRun!: (result: TuiCoreRunResult) => void;
+    const run = new Promise<TuiCoreRunResult>((resolve) => {
       finishRun = resolve;
     });
     const test = fixture({ startTask: () => run });
@@ -110,7 +181,7 @@ describe("Phase 11 TUI controller", () => {
     expect(test.cancelActiveRun).toHaveBeenCalledOnce();
 
     test.controller.acceptPersistedEvent(event("run.cancelled", {}, 2));
-    finishRun(130);
+    finishRun({ diagnostic: "Cancelled", exitCode: 130 });
     await flush();
     test.controller.handleRawInput("\u0003");
     await expect(test.controller.waitForExit()).resolves.toBe(0);

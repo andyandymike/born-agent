@@ -13,6 +13,7 @@ import { PatchApprovalGate } from "../approvals/patch-approval-gate.js";
 import { ChangeJournal } from "../changes/change-journal.js";
 import { AtomicPatchApplier } from "../changes/patch-applier.js";
 import { PatchPlanner } from "../changes/patch-planner.js";
+import type { PatchPlan } from "../changes/patch-types.js";
 import type { EventPublisher } from "../events/event-publisher.js";
 import type {
   ExecutionPreparerLike,
@@ -32,11 +33,17 @@ import {
   type PreparedVerificationClassifier,
 } from "../completion/phase7-completion-runtime.js";
 import type { ModelEvidence } from "../completion/completion-types.js";
+import type {
+  CompletionPolicy,
+  GoalRevisionAttributionScope,
+} from "../completion/completion-types.js";
+import type { VerifiedGoalChangeSeed } from "../coordination/goal-change-seed.js";
 import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { createRunCommandTool } from "./run-command-tool.js";
 import type { RegisteredTool, ToolDefinition, ToolRegistration } from "./tool-types.js";
 import type { SandboxEventAppender } from "../execution/docker/sandbox-event-schema.js";
+import type { UpdatePlanInput } from "../plans/update-plan-input-schema.js";
 
 export interface AgentToolRegistryOptions {
   readonly additionalTools?: readonly RegisteredTool[];
@@ -50,6 +57,14 @@ export interface AgentToolRegistryOptions {
   readonly executorKind?: ExecutionBackendKind;
   readonly maxCommandOutputBytes: number;
   readonly modelEvidence: ModelEvidence;
+  readonly goalChange?: {
+    readonly attributionScope: () => GoalRevisionAttributionScope;
+    readonly beforeCapture: (plan: PatchPlan) => Promise<void> | void;
+    readonly completionPolicy: CompletionPolicy;
+    readonly goalId: string;
+    readonly goalRevision: number;
+    readonly seed: VerifiedGoalChangeSeed;
+  };
   readonly now: () => number;
   readonly publisher: EventPublisher;
   readonly randomUUID: () => string;
@@ -60,6 +75,7 @@ export interface AgentToolRegistryOptions {
   readonly taskProfile: TaskProfile;
   readonly sessionId: string;
   readonly timestamp: () => string;
+  readonly updatePlanTool?: ToolDefinition<UpdatePlanInput>;
   readonly workspace: string;
 }
 
@@ -77,6 +93,9 @@ export async function createAgentToolRegistry(
   const planner = await PatchPlanner.create(options.workspace, {
     caseInsensitive: options.caseInsensitivePaths,
   });
+  if (options.goalChange !== undefined && options.artifactRuntime === undefined) {
+    throw new Error("Goal change capture requires the durable artifact runtime");
+  }
   const journal = new ChangeJournal();
   const applier = new AtomicPatchApplier({
     journal,
@@ -101,6 +120,12 @@ export async function createAgentToolRegistry(
       ? undefined
       : await Phase7CompletionRuntime.create({
           classifier: options.verificationClassifier,
+          ...(options.goalChange === undefined
+            ? {}
+            : {
+                attributionScope: options.goalChange.attributionScope,
+                goalChangeSeed: options.goalChange.seed,
+              }),
           journal,
           modelEvidence: options.modelEvidence,
           publisher: options.publisher,
@@ -122,6 +147,16 @@ export async function createAgentToolRegistry(
       approvalGate,
       applier,
       now: options.now,
+      ...(options.goalChange === undefined
+        ? {}
+        : {
+            goalChange: {
+              artifactRuntime: options.artifactRuntime!,
+              beforeCapture: options.goalChange.beforeCapture,
+              goalId: options.goalChange.goalId,
+              goalRevision: options.goalChange.goalRevision,
+            },
+          }),
       ...(completion === undefined
         ? {}
         : {
@@ -150,11 +185,16 @@ export async function createAgentToolRegistry(
       ? []
       : [
           createFinishTaskTool({
-            policy: new VerifiedCompletionPolicy(),
+             policy:
+               options.goalChange?.completionPolicy ??
+               new VerifiedCompletionPolicy(),
             publisher: options.publisher,
             state: () => completion.state(),
           }) as ToolDefinition<unknown>,
         ]),
+    ...(options.updatePlanTool === undefined
+      ? []
+      : [options.updatePlanTool as ToolDefinition<unknown>]),
     ...(options.additionalTools ?? []),
   ];
 
@@ -167,8 +207,8 @@ export async function createAgentToolRegistry(
   );
   const expectedMutations =
     completion === undefined
-      ? "apply_patch,run_command"
-      : "apply_patch,finish_task,run_command";
+      ? `apply_patch,run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`
+      : `apply_patch,finish_task,run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`;
   if (
     mutations.map((definition) => definition.name).sort().join(",") !==
     expectedMutations

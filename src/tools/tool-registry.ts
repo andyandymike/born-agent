@@ -28,19 +28,40 @@ function register(
   if (isRegisteredTool(definition)) return definition;
   const validator = new ZodToolValidator(definition.inputSchema);
   const schema = validator.modelSchema;
+  const variants =
+    schema.type === "object"
+      ? [schema]
+      : Array.isArray(schema.oneOf)
+        ? schema.oneOf.filter(
+            (candidate): candidate is Readonly<Record<string, unknown>> =>
+              typeof candidate === "object" &&
+              candidate !== null &&
+              !Array.isArray(candidate),
+          )
+        : [];
   if (
-    schema.type !== "object" ||
-    schema.additionalProperties !== false ||
-    !Array.isArray(schema.required)
+    variants.length === 0 ||
+    (Array.isArray(schema.oneOf) && variants.length !== schema.oneOf.length) ||
+    variants.some(
+      (variant) =>
+        variant.type !== "object" ||
+        variant.additionalProperties !== false ||
+        !Array.isArray(variant.required),
+    )
   ) {
     throw new Error(`tool ${definition.name} does not have a strict object schema`);
   }
-  const properties =
-    typeof schema.properties === "object" && schema.properties !== null
-      ? (schema.properties as Readonly<Record<string, unknown>>)
-      : {};
-  const required = schema.required as readonly unknown[];
-  if (Object.keys(properties).some((key) => !required.includes(key))) {
+  if (
+    variants.some((variant) => {
+      const properties =
+        typeof variant.properties === "object" &&
+        variant.properties !== null
+          ? (variant.properties as Readonly<Record<string, unknown>>)
+          : {};
+      const required = variant.required as readonly unknown[];
+      return Object.keys(properties).some((key) => !required.includes(key));
+    })
+  ) {
     throw new Error(`tool ${definition.name} has optional JSON schema properties`);
   }
   return Object.freeze({

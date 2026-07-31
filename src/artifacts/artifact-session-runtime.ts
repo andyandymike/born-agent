@@ -264,15 +264,23 @@ export class ArtifactSessionRuntime implements ArtifactSessionRuntimeLike {
       origin_event_id: input.originEventId,
       sha256: stored.artifact.sha256,
     }) as ArtifactStoredEventData;
-    await this.eventAppender.appendArtifactEvent(this.runId, {
+    const durableEvent = await this.eventAppender.appendArtifactEvent(this.runId, {
       data: eventData,
       type: "artifact.stored",
     });
+    const eventId =
+      typeof durableEvent === "object" &&
+      durableEvent !== null &&
+      "eventId" in durableEvent &&
+      typeof durableEvent.eventId === "string"
+        ? durableEvent.eventId
+        : undefined;
     const reference: ArtifactStoredReference = Object.freeze({
       artifactId: stored.artifact.artifactId,
       bytes: stored.artifact.bytes,
       captureStatus: "complete",
       captureTruncated: false,
+      ...(eventId === undefined ? {} : { eventId }),
       mediaType: input.mediaType,
       objectRef: stored.artifact.objectRef,
       originEventId: input.originEventId,

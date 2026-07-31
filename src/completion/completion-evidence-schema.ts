@@ -161,7 +161,20 @@ const modelEvidence = z
   })
   .strict();
 
+const attributionScope = z
+  .object({
+    baselineEventId: z.string().uuid(),
+    changeEventIds: z.array(z.string().uuid()).max(512),
+    goalId: z.string().uuid(),
+    goalRevision: z.number().int().positive(),
+    kind: z.literal("goal_revision"),
+    ledgerSha256: sha256,
+    sourceRunIds: z.array(z.string().uuid()).max(256),
+  })
+  .strict();
+
 const commonEvidenceFields = {
+  attributionScope: attributionScope.optional(),
   changedByRun: z.array(changedFile).max(10_000),
   diffCheck,
   modelEvidence,

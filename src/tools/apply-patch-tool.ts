@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import type { PatchApprovalGate } from "../approvals/patch-approval-gate.js";
+import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
 import {
   MAX_PATCH_BYTES,
   PatchOperationError,
@@ -14,6 +15,12 @@ import {
   type EventPublisher,
 } from "../events/event-publisher.js";
 import type { RunEventDraft } from "../events/run-event.js";
+import type { RunEvent } from "../events/run-event.js";
+import {
+  createGoalChangeRecordedData,
+  type GoalChangeRecordedData,
+} from "../coordination/goal-change-event-schema.js";
+import { GoalChangeLedgerError } from "../coordination/goal-change-ledger.js";
 import { toolError } from "./tool-errors.js";
 import {
   FatalToolExecutionError,
@@ -52,6 +59,12 @@ export interface ApplyPatchToolOptions {
   readonly onApplied?: (result: PatchApplyResult) => Promise<void> | void;
   readonly planner: PatchPlannerLike;
   readonly publisher: EventPublisher;
+  readonly goalChange?: {
+    readonly artifactRuntime: ArtifactSessionRuntimeLike;
+    readonly beforeCapture: (plan: PatchPlan) => Promise<void> | void;
+    readonly goalId: string;
+    readonly goalRevision: number;
+  };
   readonly secrets?: readonly (string | undefined)[];
 }
 
@@ -59,9 +72,9 @@ async function publishBoundary(
   publisher: EventPublisher,
   draft: RunEventDraft,
   workspaceMayHaveChanged: boolean,
-): Promise<void> {
+): Promise<RunEvent> {
   try {
-    await publisher.publish(draft);
+    return await publisher.publish(draft);
   } catch (error) {
     if (error instanceof EventPersistenceError) {
       throw new FatalToolExecutionError(
@@ -81,6 +94,67 @@ async function publishBoundary(
     }
     throw error;
   }
+}
+
+type CapturedGoalChangeFile = GoalChangeRecordedData["files"][number];
+
+function imageReference(
+  reference: Awaited<
+    ReturnType<ArtifactSessionRuntimeLike["materializeText"]>
+  >,
+): CapturedGoalChangeFile["postimage"] {
+  if (
+    reference.eventId === undefined ||
+    reference.captureStatus !== "complete" ||
+    reference.captureTruncated ||
+    reference.mediaType !== "text/plain; charset=utf-8"
+  ) {
+    throw new TypeError("Goal change image is not an exact durable text artifact");
+  }
+  return {
+    artifact_id: reference.artifactId,
+    bytes: reference.bytes,
+    event_id: reference.eventId,
+    object_ref: reference.objectRef,
+    sha256: reference.sha256,
+  };
+}
+
+async function captureGoalChangeFiles(
+  options: NonNullable<ApplyPatchToolOptions["goalChange"]>,
+  plan: PatchPlan,
+  patchPlanEventId: string,
+): Promise<readonly CapturedGoalChangeFile[]> {
+  await options.beforeCapture(plan);
+  const files: CapturedGoalChangeFile[] = [];
+  for (const file of plan.files) {
+    const preimage =
+      file.kind === "create"
+        ? null
+        : imageReference(
+            await options.artifactRuntime.materializeText({
+              bytes: file.preimage,
+              expectedSha256: file.preimageSha256,
+              mediaType: "text/plain; charset=utf-8",
+              originEventId: patchPlanEventId,
+            }),
+          );
+    const postimage = imageReference(
+      await options.artifactRuntime.materializeText({
+        bytes: file.postimage,
+        expectedSha256: file.postimageSha256,
+        mediaType: "text/plain; charset=utf-8",
+        originEventId: patchPlanEventId,
+      }),
+    );
+    files.push({
+      kind: file.kind,
+      path: file.relativePath,
+      postimage,
+      preimage,
+    });
+  }
+  return Object.freeze(files);
 }
 
 function resultJournalSha256(result: PatchApplyResult): string {
@@ -156,7 +230,7 @@ export function createApplyPatchTool(
             };
       }
 
-      await publishBoundary(
+      const patchPlanEvent = await publishBoundary(
         options.publisher,
         {
           data: {
@@ -228,6 +302,40 @@ export function createApplyPatchTool(
             };
       }
 
+      let capturedGoalChangeFiles: readonly CapturedGoalChangeFile[] | undefined;
+      if (options.goalChange !== undefined) {
+        try {
+          capturedGoalChangeFiles = await captureGoalChangeFiles(
+            options.goalChange,
+            plan,
+            patchPlanEvent.event_id,
+          );
+        } catch (error) {
+          if (error instanceof EventPersistenceError) {
+            throw new FatalToolExecutionError(
+              "storage",
+              "Goal change artifacts could not be persisted before patch apply",
+              { cause: error, workspaceMayHaveChanged: false },
+            );
+          }
+          return {
+            error: toolError(
+              error instanceof GoalChangeLedgerError &&
+                error.code === "goal_change_budget_exceeded"
+                ? "limit"
+                : "system",
+              error instanceof GoalChangeLedgerError
+                ? error.code
+                : "goal_change_capture_failed",
+              error instanceof GoalChangeLedgerError
+                ? error.message
+                : "Goal change images could not be captured exactly",
+            ),
+            ok: false,
+          };
+        }
+      }
+
       // PHASE5: apply.started 必须 durable 后才跨越副作用边界；之后任何证据失败都要报告可能已变化。
       await publishBoundary(
         options.publisher,
@@ -270,7 +378,7 @@ export function createApplyPatchTool(
         );
       }
 
-      await publishBoundary(
+      const completedEvent = await publishBoundary(
         options.publisher,
         {
           data: {
@@ -294,6 +402,39 @@ export function createApplyPatchTool(
         },
         true,
       );
+      if (options.goalChange !== undefined) {
+        if (capturedGoalChangeFiles === undefined) {
+          throw new FatalToolExecutionError(
+            "ambiguous_patch_state",
+            "patch completed without its required Goal change images",
+            { workspaceMayHaveChanged: true },
+          );
+        }
+        const record = createGoalChangeRecordedData({
+          call_id: context.callId,
+          files: [...capturedGoalChangeFiles],
+          goal_id: options.goalChange.goalId,
+          goal_revision: options.goalChange.goalRevision,
+          patch_plan_event_id: patchPlanEvent.event_id,
+          source: {
+            event_id: completedEvent.event_id,
+            kind: "patch_completed",
+            run_id: completedEvent.run_id,
+          },
+        });
+        try {
+          await options.publisher.publishGoalChangeEvent(
+            "goal.change.recorded",
+            record,
+          );
+        } catch (error) {
+          throw new FatalToolExecutionError(
+            "ambiguous_patch_state",
+            "patch completed but its Goal change commit record was not durable",
+            { cause: error, workspaceMayHaveChanged: true },
+          );
+        }
+      }
       try {
         await options.onApplied?.(result);
       } catch (error) {

@@ -49,6 +49,8 @@ import {
   createIncompleteEvidence,
   EvidenceLedger,
 } from "./evidence-ledger.js";
+import type { VerifiedGoalChangeSeed } from "../coordination/goal-change-seed.js";
+import type { GoalRevisionAttributionScope } from "./completion-types.js";
 
 export type PreparedVerificationClassification =
   RegistryVerificationClassification;
@@ -58,6 +60,7 @@ export type PreparedVerificationClassifier = (
 ) => Promise<PreparedVerificationClassification | null>;
 
 export interface Phase7CompletionRuntimeOptions {
+  readonly attributionScope?: () => GoalRevisionAttributionScope;
   readonly classifier: PreparedVerificationClassifier;
   readonly journal: ChangeJournal;
   readonly modelEvidence: ModelEvidence;
@@ -67,6 +70,7 @@ export interface Phase7CompletionRuntimeOptions {
   readonly sessionId: string;
   readonly workspace: string;
   readonly gitRunner?: GitArgvRunner;
+  readonly goalChangeSeed?: VerifiedGoalChangeSeed;
 }
 
 export interface ActiveVerificationContext {
@@ -97,7 +101,7 @@ function decodeNulPaths(value: Buffer): readonly string[] {
     );
 }
 
-async function inspectDirtyPaths(
+export async function inspectDirtyPaths(
   workspace: string,
   runner: GitArgvRunner,
 ): Promise<readonly string[]> {
@@ -169,6 +173,9 @@ function summarize(value: string): string {
 }
 
 export class Phase7CompletionRuntime implements CompletionRuntimeLike {
+  private readonly attributionScope:
+    | (() => GoalRevisionAttributionScope)
+    | undefined;
   private readonly classifier: PreparedVerificationClassifier;
   private readonly diffChecker: RunLocalDiffChecker;
   private readonly journal: ChangeJournal;
@@ -189,6 +196,7 @@ export class Phase7CompletionRuntime implements CompletionRuntimeLike {
     preExistingDirtyPaths: readonly string[],
     runner: GitArgvRunner,
   ) {
+    this.attributionScope = options.attributionScope;
     this.classifier = options.classifier;
     this.diffChecker = new RunLocalDiffChecker(runner);
     this.journal = options.journal;
@@ -206,7 +214,11 @@ export class Phase7CompletionRuntime implements CompletionRuntimeLike {
     options: Phase7CompletionRuntimeOptions,
   ): Promise<Phase7CompletionRuntime> {
     const runner = options.gitRunner ?? new NodeGitArgvRunner();
-    const dirty = await inspectDirtyPaths(options.workspace, runner);
+    if (options.goalChangeSeed !== undefined) {
+      options.journal.seedVerified(options.goalChangeSeed);
+    }
+    const dirty = options.goalChangeSeed?.preExistingDirtyPaths ??
+      await inspectDirtyPaths(options.workspace, runner);
     return new Phase7CompletionRuntime(options, dirty, runner);
   }
 
@@ -414,6 +426,9 @@ export class Phase7CompletionRuntime implements CompletionRuntimeLike {
       }
     }
     return {
+      ...(this.attributionScope === undefined
+        ? {}
+        : { attributionScope: this.attributionScope() }),
       activity: {
         activeApproval: false,
         activeCommand: this.tracker.activeCount() > 0,

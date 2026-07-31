@@ -88,6 +88,9 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "completion.candidate",
   "completion.evaluated",
   "completion.evidence",
+  "goal.created",
+  "goal.revised",
+  "goal.status.changed",
   "context.compaction.failed",
   "context.compaction.started",
   "context.estimate.created",
@@ -112,6 +115,12 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "patch.apply.completed",
   "patch.apply.started",
   "patch.plan.created",
+  "plan.approved",
+  "plan.completed",
+  "plan.item.status_changed",
+  "plan.proposed",
+  "plan.rejected",
+  "plan.revised",
   "permission.evaluated",
   "repository.rules.changed",
   "repository.rules.loaded",
@@ -1073,6 +1082,17 @@ function reduceKnownEvent(
     case "sandbox.container.inspected":
     case "sandbox.container.start.requested":
     case "sandbox.container.stopping":
+    case "goal.created":
+    case "goal.revised":
+    case "goal.status.changed":
+    case "goal.change.recorded":
+    case "goal.execution.baseline.captured":
+    case "plan.approved":
+    case "plan.completed":
+    case "plan.item.status_changed":
+    case "plan.proposed":
+    case "plan.rejected":
+    case "plan.revised":
       return state;
     default:
       return assertNever(event);

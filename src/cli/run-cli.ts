@@ -5,6 +5,11 @@ import { executeChat } from "../commands/chat.js";
 import { executeDoctor } from "../commands/doctor.js";
 import { executeModels } from "../commands/models.js";
 import {
+  executeModelsQualificationRemove,
+  executeModelsQualificationShow,
+  executeModelsQualify,
+} from "../commands/model-qualification.js";
+import {
   executeSessionsList,
   executeSessionsResume,
   executeSessionsShow,
@@ -16,6 +21,18 @@ import { executeSandboxDoctor } from "../commands/sandbox-doctor.js";
 import { executeEvalCompare, executeEvalList, executeEvalRun, executeEvalShow } from "../evals/eval-cli.js";
 import { executeDockerPrepare, executeDockerStatus } from "../commands/docker.js";
 import { executePolicyExplain, executePolicyShow, executePolicyValidate } from "../commands/policy.js";
+import {
+  executeGoalAbandon,
+  executeGoalNew,
+  executeGoalSet,
+  executeGoalShow,
+} from "../commands/goal.js";
+import {
+  executePlanApprove,
+  executePlanReject,
+  executePlanReplace,
+  executePlanShow,
+} from "../commands/plan.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -83,6 +100,7 @@ export async function runCli(
     .argument("<task>", "repository task to answer; do not paste API keys")
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--mode <mode>", "agent mode: plan or build")
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
     .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
@@ -177,6 +195,7 @@ export async function runCli(
           maxTokens?: string;
           maxToolOutputBytes?: string;
           mcp: string[];
+          mode?: string;
           model?: string;
           policyConfig?: string;
           policyProfile?: string;
@@ -210,6 +229,7 @@ export async function runCli(
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
             mcpServerIds: options.mcp,
+            mode: options.mode,
             model: options.model,
             policyConfig: options.policyConfig,
             policyProfile: options.policyProfile,
@@ -289,6 +309,7 @@ export async function runCli(
     )
     .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
     .option("--model <model>", "override the provider model")
+    .option("--mode <mode>", "initial agent mode: plan or build")
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
     .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
@@ -336,6 +357,7 @@ export async function runCli(
           maxTokens?: string;
           maxToolOutputBytes?: string;
           mcp: string[];
+          mode?: string;
           model?: string;
           policyConfig?: string;
           policyProfile?: string;
@@ -370,6 +392,7 @@ export async function runCli(
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
             mcpServerIds: options.mcp,
+            mode: options.mode,
             model: options.model,
             policyConfig: options.policyConfig,
             policyProfile: options.policyProfile,
@@ -391,7 +414,7 @@ export async function runCli(
       },
     );
 
-  program
+  const models = program
     .command("models")
     .description("List the versioned local model capability catalog.")
     .option("--provider <provider>", "filter by provider")
@@ -419,6 +442,294 @@ export async function runCli(
             provider: options.provider,
             refreshLocal: options.refreshLocal,
           },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  models.enablePositionalOptions();
+
+  models
+    .command("qualify")
+    .description("Run the bounded explicit protocol qualification suite.")
+    .requiredOption("--model <model>", "exact model id")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
+    .option(
+      "--confirm-remote-requests <count>",
+      "confirm the exact remote request ceiling",
+    )
+    .option("--json", "write strict qualification JSON", false)
+    .action(
+      async (options: {
+        confirmRemoteRequests?: string;
+        json: boolean;
+        model: string;
+        policyConfig?: string;
+        policyProfile?: string;
+      }, command: Command) => {
+        const resolved = command.optsWithGlobals() as typeof options & {
+          provider?: string;
+        };
+        if (resolved.provider === undefined) {
+          io.stderr.write("usage/config error: --provider is required\n");
+          commandExitCode = 2;
+          return;
+        }
+        commandExitCode = await executeModelsQualify(
+          { ...resolved, provider: resolved.provider },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  const qualification = models
+    .command("qualification")
+    .description("Inspect or remove exact local qualification evidence.");
+
+  qualification
+    .command("show")
+    .description("Show evidence for one exact current provider/model identity.")
+    .requiredOption("--model <model>", "exact model id")
+    .option("--policy-profile <id>", "select one complete runtime policy profile")
+    .option("--policy-config <absolute-path>", "load trusted user policy profiles")
+    .option("--json", "write strict qualification JSON", false)
+    .action(
+      async (options: {
+        json: boolean;
+        model: string;
+        policyConfig?: string;
+        policyProfile?: string;
+      }, command: Command) => {
+        const resolved = command.optsWithGlobals() as typeof options & {
+          provider?: string;
+        };
+        if (resolved.provider === undefined) {
+          io.stderr.write("usage/config error: --provider is required\n");
+          commandExitCode = 2;
+          return;
+        }
+        commandExitCode = await executeModelsQualificationShow(
+          { ...resolved, provider: resolved.provider },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  qualification
+    .command("remove")
+    .description("Remove one exact qualification record under an exclusive lock.")
+    .requiredOption("--identity-sha256 <hash>", "exact qualification identity hash")
+    .option("--yes", "confirm exact record removal", false)
+    .option("--json", "write strict removal JSON", false)
+    .action(
+      async (options: {
+        identitySha256: string;
+        json: boolean;
+        yes: boolean;
+      }, command: Command) => {
+        const resolved = command.optsWithGlobals() as typeof options;
+        commandExitCode = await executeModelsQualificationRemove(
+          resolved,
+          runtime,
+          io,
+        );
+      },
+    );
+
+  const goal = program
+    .command("goal")
+    .description("Inspect and mutate durable user-owned Goals without calling a model.");
+
+  goal
+    .command("show")
+    .description("Show the durable Goal projection for one session.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean }) => {
+      commandExitCode = await executeGoalShow(
+        { json: options.json, sessionId },
+        runtime,
+        io,
+      );
+    });
+
+  goal
+    .command("set")
+    .description("Create the initial Goal or revise the exact active Goal.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--text <objective>", "bounded Goal objective")
+    .option("--goal-id <id>", "exact active Goal id")
+    .option("--base-revision <n>", "exact active Goal revision")
+    .action(
+      async (
+        sessionId: string,
+        options: { baseRevision?: string; goalId?: string; text: string },
+      ) => {
+        commandExitCode = await executeGoalSet(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  goal
+    .command("new")
+    .description("Start a new Goal, optionally replacing the exact active Goal.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--text <objective>", "bounded Goal objective")
+    .option("--parent-goal <id>", "explicit earlier parent Goal id")
+    .option("--abandon-current", "confirm exact active Goal replacement", false)
+    .option("--current-goal-id <id>", "exact active Goal id")
+    .option("--current-revision <n>", "exact active Goal revision")
+    .action(
+      async (
+        sessionId: string,
+        options: {
+          abandonCurrent: boolean;
+          currentGoalId?: string;
+          currentRevision?: string;
+          parentGoal?: string;
+          text: string;
+        },
+      ) => {
+        commandExitCode = await executeGoalNew(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  goal
+    .command("abandon")
+    .description("Abandon the exact active Goal.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--goal-id <id>", "exact active Goal id")
+    .requiredOption("--revision <n>", "exact active Goal revision")
+    .requiredOption("--reason <text>", "bounded non-empty reason")
+    .action(
+      async (
+        sessionId: string,
+        options: { goalId: string; reason: string; revision: string },
+      ) => {
+        commandExitCode = await executeGoalAbandon(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  const plan = program
+    .command("plan")
+    .description("Inspect, replace, approve, or reject durable Plans without calling a model.");
+
+  plan
+    .command("show")
+    .description("Show pending, approved, and projected Todo state.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--history", "include superseded and rejected revisions", false)
+    .option("--json", "write canonical JSON", false)
+    .action(
+      async (
+        sessionId: string,
+        options: { history: boolean; json: boolean },
+      ) => {
+        commandExitCode = await executePlanShow(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  plan
+    .command("replace")
+    .description("Propose a user-authored Plan revision from a strict workspace JSON file.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--goal-id <id>", "exact active Goal id")
+    .requiredOption("--goal-revision <n>", "exact active Goal revision")
+    .requiredOption("--file <workspace-relative-json>", "strict workspace-relative Plan JSON")
+    .option("--base-plan-id <id>", "exact current Plan id")
+    .option("--base-revision <n>", "exact current Plan revision")
+    .option("--base-sha256 <hash>", "exact full current Plan SHA-256")
+    .action(
+      async (
+        sessionId: string,
+        options: {
+          basePlanId?: string;
+          baseRevision?: string;
+          baseSha256?: string;
+          file: string;
+          goalId: string;
+          goalRevision: string;
+        },
+      ) => {
+        commandExitCode = await executePlanReplace(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  plan
+    .command("approve")
+    .description("Approve one exact pending Plan revision and full hash.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--goal-id <id>", "exact active Goal id")
+    .requiredOption("--goal-revision <n>", "exact active Goal revision")
+    .requiredOption("--plan-id <id>", "exact pending Plan id")
+    .requiredOption("--revision <n>", "exact pending Plan revision")
+    .requiredOption("--sha256 <hash>", "full pending Plan SHA-256")
+    .action(
+      async (
+        sessionId: string,
+        options: {
+          goalId: string;
+          goalRevision: string;
+          planId: string;
+          revision: string;
+          sha256: string;
+        },
+      ) => {
+        commandExitCode = await executePlanApprove(
+          { ...options, sessionId },
+          runtime,
+          io,
+        );
+      },
+    );
+
+  plan
+    .command("reject")
+    .description("Reject one exact pending Plan revision and full hash.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--goal-id <id>", "exact active Goal id")
+    .requiredOption("--goal-revision <n>", "exact active Goal revision")
+    .requiredOption("--plan-id <id>", "exact pending Plan id")
+    .requiredOption("--revision <n>", "exact pending Plan revision")
+    .requiredOption("--sha256 <hash>", "full pending Plan SHA-256")
+    .requiredOption("--reason <text>", "bounded non-empty rejection reason")
+    .action(
+      async (
+        sessionId: string,
+        options: {
+          goalId: string;
+          goalRevision: string;
+          planId: string;
+          reason: string;
+          revision: string;
+          sha256: string;
+        },
+      ) => {
+        commandExitCode = await executePlanReject(
+          { ...options, sessionId },
           runtime,
           io,
         );
@@ -491,6 +802,14 @@ export async function runCli(
     .description("Create a new run from a verified safe resume boundary.")
     .argument("<session-id>", "canonical session UUID")
     .option("--message <text>", "new user turn for a completed session")
+    .option("--mode <mode>", "agent mode for the new run: plan or build")
+    .option(
+      "--continue-approved-plan",
+      "continue the exact current approved Plan while a draft is pending",
+      false,
+    )
+    .option("--plan-revision <n>", "exact current approved Plan revision")
+    .option("--plan-sha256 <hash>", "exact current approved Plan SHA-256")
     .option("--policy-profile <id>", "select the session's exact runtime policy profile")
     .option("--policy-config <absolute-path>", "load trusted user policy profiles")
     .option(
@@ -501,12 +820,25 @@ export async function runCli(
     .action(
       async (
         sessionId: string,
-        options: { allowDegradedResume: boolean; message?: string; policyConfig?: string; policyProfile?: string },
+        options: {
+          allowDegradedResume: boolean;
+          continueApprovedPlan: boolean;
+          message?: string;
+          mode?: string;
+          planRevision?: string;
+          planSha256?: string;
+          policyConfig?: string;
+          policyProfile?: string;
+        },
       ) => {
         commandExitCode = await executeSessionsResume(
           {
             allowDegradedResume: options.allowDegradedResume,
+            continueApprovedPlan: options.continueApprovedPlan,
             message: options.message,
+            mode: options.mode,
+            planRevision: options.planRevision,
+            planSha256: options.planSha256,
             policyConfig: options.policyConfig,
             policyProfile: options.policyProfile,
             sessionId,

@@ -1,12 +1,37 @@
 import type { UserIntent } from "./user-intent.js";
 
+export interface TuiPlanDecisionDialog {
+  readonly action: "approve" | "approve_build" | "reject";
+  readonly currentApprovedRevision: number | null;
+  readonly expectedSessionSeq: number;
+  readonly goalId: string;
+  readonly goalObjective: string;
+  readonly goalRevision: number;
+  readonly items: readonly {
+    readonly acceptance: string;
+    readonly itemId: string;
+    readonly required: boolean;
+    readonly title: string;
+  }[];
+  readonly planId: string;
+  readonly planSha256: string;
+  readonly reason: string | null;
+  readonly revision: number;
+  readonly sessionId: string;
+}
+
 export interface TuiEphemeralState {
   readonly approvalFocus: "allow" | "deny";
   readonly approvalRequestId: string | null;
+  readonly coreDiagnostic: string | null;
   readonly draftInput: string;
   readonly focusedItemId: string | null;
   readonly foldedItemIds: readonly string[];
+  readonly planDecisionDialog: TuiPlanDecisionDialog | null;
+  readonly planDecisionFocus: "cancel" | "confirm";
   readonly scrollOffset: number;
+  readonly selectedAgentMode: "build" | "plan";
+  readonly selectedAgentModeSource: "explicit_tui" | "tui_default";
 }
 
 export function createInitialTuiEphemeralState(): TuiEphemeralState {
@@ -15,11 +40,52 @@ export function createInitialTuiEphemeralState(): TuiEphemeralState {
   return {
     approvalFocus: "deny",
     approvalRequestId: null,
+    coreDiagnostic: null,
     draftInput: "",
     focusedItemId: null,
     foldedItemIds: [],
+    planDecisionDialog: null,
+    planDecisionFocus: "cancel",
     scrollOffset: 0,
+    selectedAgentMode: "plan",
+    selectedAgentModeSource: "tui_default",
   };
+}
+
+export function openPlanDecisionDialog(
+  state: TuiEphemeralState,
+  dialog: TuiPlanDecisionDialog,
+): TuiEphemeralState {
+  return {
+    ...state,
+    draftInput: "",
+    planDecisionDialog: dialog,
+    planDecisionFocus: "cancel",
+  };
+}
+
+export function closePlanDecisionDialog(
+  state: TuiEphemeralState,
+): TuiEphemeralState {
+  return {
+    ...state,
+    planDecisionDialog: null,
+    planDecisionFocus: "cancel",
+  };
+}
+
+export function setPlanDecisionFocus(
+  state: TuiEphemeralState,
+  focus: "cancel" | "confirm",
+): TuiEphemeralState {
+  return { ...state, planDecisionFocus: focus };
+}
+
+export function setCoreDiagnostic(
+  state: TuiEphemeralState,
+  coreDiagnostic: string | null,
+): TuiEphemeralState {
+  return { ...state, coreDiagnostic };
 }
 
 export function openApprovalDialog(

@@ -5,6 +5,7 @@ const CANONICAL_SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export interface PersistedEventWriter {
+  isClosed?(): boolean;
   readDecodedEvents?(): readonly TuiPersistedEvent[];
   subscribeDurableEvents?(
     listener: (event: TuiPersistedEvent) => void,
@@ -109,6 +110,13 @@ export class PersistedEventSource {
       this.#readAndReconcile(writer);
       if (this.#fatal !== null) this.#detachSubscription();
       return;
+    }
+    if (this.#writer?.isClosed?.() === true) {
+      // PHASE16: idle TUI operations deliberately use short-lived writers.
+      // A successor writer for the same durable prefix is reconciled below;
+      // a still-open writer remains a hard one-active-writer violation.
+      this.#detachSubscription();
+      this.#writer = null;
     }
     if (this.#writer !== null) {
       this.#fail(

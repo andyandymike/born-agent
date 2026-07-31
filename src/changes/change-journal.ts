@@ -1,4 +1,5 @@
 import type { PatchChangeKind, PatchPlan } from "./patch-types.js";
+import type { VerifiedGoalChangeSeed } from "../coordination/goal-change-seed.js";
 
 export interface ChangeJournalEntry {
   readonly addedLines: number;
@@ -24,6 +25,13 @@ function clone(entry: ChangeJournalEntry): ChangeJournalEntry {
 
 export class ChangeJournal {
   private readonly recorded: ChangeJournalEntry[] = [];
+
+  seedVerified(seed: VerifiedGoalChangeSeed): void {
+    if (this.recorded.length !== 0) {
+      throw new Error("ChangeJournal can only be seeded before local mutation");
+    }
+    this.recorded.push(...seed.entriesForJournal());
+  }
 
   recordAppliedPlan(plan: PatchPlan, appliedAt: string): void {
     // PHASE5: journal 只使用本次 run 亲眼见到的 pre/post snapshot；`git diff HEAD`

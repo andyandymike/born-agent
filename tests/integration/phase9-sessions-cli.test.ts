@@ -365,13 +365,13 @@ describe("Phase 9 sessions CLI", () => {
 
     const after = reconstructMultiRunSession(await readStoredSession(stored.path));
     expect(after.runs).toHaveLength(2);
-    expect(after.lastRun.runId).not.toBe(before.lastRun.runId);
+    expect(after.lastRun!.runId).not.toBe(before.lastRun!.runId);
     expect(after.lastRun).toMatchObject({
       resumeMode: "canonical_degraded",
-      resumeOfRunId: before.lastRun.runId,
+      resumeOfRunId: before.lastRun!.runId,
       status: "completed",
     });
-    expect(after.lastRun.started.data.input.text).toBe("one more check");
+    expect(after.lastRun!.started.data.input.text).toBe("one more check");
     const request = after.sessionEvents.find(
       (event) => event.type === "session.resume.requested",
     );
@@ -379,7 +379,7 @@ describe("Phase 9 sessions CLI", () => {
       data: {
         message: "one more check",
         requested_mode: "canonical_degraded",
-        source_run_id: before.lastRun.runId,
+        source_run_id: before.lastRun!.runId,
       },
     });
   });

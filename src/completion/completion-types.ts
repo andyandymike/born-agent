@@ -15,6 +15,9 @@ export const COMPLETION_REASON_CODES = [
   "task_blocked",
   "completion_signal_required",
   "no_changes_for_coding_task",
+  "clarification_required",
+  "plan_approval_required",
+  "plan_incomplete",
 ] as const;
 
 export type CompletionReason = (typeof COMPLETION_REASON_CODES)[number];
@@ -104,7 +107,18 @@ export interface ModelEvidence {
   readonly remoteBillableRequests: 0;
 }
 
+export interface GoalRevisionAttributionScope {
+  readonly baselineEventId: string;
+  readonly changeEventIds: readonly string[];
+  readonly goalId: string;
+  readonly goalRevision: number;
+  readonly kind: "goal_revision";
+  readonly ledgerSha256: string;
+  readonly sourceRunIds: readonly string[];
+}
+
 export interface CompletionEvidence {
+  readonly attributionScope?: GoalRevisionAttributionScope | undefined;
   readonly changedByRun: readonly ChangedFileEvidence[];
   readonly diffCheck: CheckEvidence;
   readonly finalSnapshot: VerificationSnapshot;
@@ -117,6 +131,7 @@ export interface CompletionEvidence {
 }
 
 export interface IncompleteEvidence {
+  readonly attributionScope?: GoalRevisionAttributionScope | undefined;
   readonly changedByRun: readonly ChangedFileEvidence[];
   readonly diffCheck: CheckEvidence;
   readonly finalSnapshot: VerificationSnapshot | null;
@@ -144,6 +159,7 @@ export interface ChangeJournalEvidenceState {
 }
 
 export interface CompletionState {
+  readonly attributionScope?: GoalRevisionAttributionScope | undefined;
   readonly activity: CompletionActivityState;
   readonly changedByRun: readonly ChangedFileEvidence[];
   readonly diffCheck: CheckEvidence;

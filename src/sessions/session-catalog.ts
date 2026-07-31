@@ -105,6 +105,7 @@ function hasPendingEffect(events: readonly DecodedRunEvent[]): boolean {
 }
 
 function resumeStatus(session: ReconstructedMultiRunSession): CatalogResumeStatus {
+  if (session.lastRun === null) return "not_resumable";
   if (hasPendingEffect(session.lastRun.events)) return "pending_effect_blocked";
   if (session.status === "completed") return "message_required";
   const capability = lastBackend(session.lastRun.events)?.data.resume_capability;
@@ -132,16 +133,21 @@ function entryFromProjection(
   session: ReconstructedMultiRunSession,
 ): SessionCatalogEntry {
   const last = session.events.at(-1);
+  const activeGoal = session.taskState.goals.find(
+    (goal) => goal.content.goalId === session.taskState.activeGoalId,
+  );
   return {
     changedCount: changedCount(session),
     lastTimestamp: last?.timestamp ?? null,
-    model: session.lastRun.started.data.model,
+    model: session.lastRun?.started.data.model ?? null,
     path,
-    provider: session.lastRun.started.data.provider,
+    provider: session.lastRun?.started.data.provider ?? null,
     resumeStatus: resumeStatus(session),
     sessionId: session.sessionId,
     status: session.status,
-    taskSummary: safeSummary(session.lastRun.started.data.input.text),
+    taskSummary: safeSummary(
+      session.lastRun?.started.data.input.text ?? activeGoal?.content.objective ?? "",
+    ),
   };
 }
 

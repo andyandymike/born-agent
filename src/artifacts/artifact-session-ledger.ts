@@ -176,6 +176,16 @@ function hasArtifactOriginAuthority(
     }
     return true;
   }
+  if (origin.type === "patch.plan.created") {
+    if (origin.sessionSeq >= event.sessionSeq) {
+      fail(
+        event,
+        "artifact_origin_invalid",
+        "patch-plan artifact origin must be durable before capture",
+      );
+    }
+    return true;
+  }
   if (origin.type === "repository.rules.loaded") {
     const originData =
       origin.data !== null &&

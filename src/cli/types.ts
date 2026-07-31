@@ -23,6 +23,7 @@ import type {
   ContainerRecoveryResult,
 } from "../execution/docker/container-reconciliation-runtime.js";
 import type { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
+import type { ModelQualificationGate } from "../model/model-qualification-gate.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -61,6 +62,9 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly events: readonly DecodedRunEvent[];
   }) => Promise<ContainerRecoveryResult>;
   readonly observeSessionWriter?: (writer: SessionWriter) => void;
+  readonly modelQualificationGate?: ModelQualificationGate;
+  /** Host capability for strict Goal/Plan replay and short-lived v2 writers. */
+  readonly supportsPhase16TaskState?: boolean;
   readonly tuiHost?: TuiHost;
   readonly version: string;
 }

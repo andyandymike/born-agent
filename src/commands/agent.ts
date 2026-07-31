@@ -15,11 +15,18 @@ import {
   AGENT_SYSTEM_INSTRUCTIONS,
   READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
 } from "../agent/system-instructions.js";
+import {
+  agentModeSchema,
+  agentModeSourceSchema,
+  resolveAgentMode,
+} from "../agent/agent-mode.js";
+import { systemInstructionsForAgentMode } from "../agent/mode-system-instructions.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import {
   EventPersistenceError,
   EventPublisher,
 } from "../events/event-publisher.js";
+import type { RunEvent } from "../events/run-event.js";
 import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
 import {
   BackendPreflightError,
@@ -29,6 +36,7 @@ import type {
   ModelBackend,
 } from "../model/model-backend.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
   FatalToolExecutionError,
@@ -79,6 +87,40 @@ import {
   persistDockerExecutionImageIdentity,
   type DockerArtifactExecutionConfig,
 } from "../execution/docker/acquisition/docker-image-identity.js";
+import { TaskStateMachine } from "../coordination/task-state-machine.js";
+import { RunStartPlanner } from "../coordination/run-start-planner.js";
+import {
+  GoalChangeLedgerError,
+  assertGoalChangePlanPreflight,
+  assertGoalChangeWorkspaceMatches,
+  goalChangeLedgerSha256,
+  projectGoalChangeLedger,
+} from "../coordination/goal-change-ledger.js";
+import {
+  GoalExecutionBaselineError,
+  captureGoalExecutionBaseline,
+} from "../coordination/goal-execution-baseline.js";
+import type { GoalExecutionBaselineCapturedData } from "../coordination/goal-change-event-schema.js";
+import type { Phase16RunBinding } from "../events/phase16-run-event-extension.js";
+import {
+  BundledFakeModelQualificationGate,
+  ModelQualificationError,
+} from "../model/model-qualification-gate.js";
+import { DurableAgentPlanStore } from "../plans/agent-plan-store.js";
+import { createUpdatePlanTool } from "../plans/update-plan-tool.js";
+import {
+  projectTaskContext,
+  taskContextSourceEventIds,
+} from "../coordination/task-context-projection.js";
+import {
+  VerifiedGoalChangeSeed,
+  goalChangeAttributionScope,
+} from "../coordination/goal-change-seed.js";
+import { CollaborativeCompletionPolicy } from "../completion/collaborative-completion-policy.js";
+import { VerifiedCompletionPolicy } from "../completion/completion-policy.js";
+import { OutcomeReportBuilder } from "../coordination/outcome-report.js";
+import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
+import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
@@ -93,10 +135,20 @@ export interface ResumedAgentExecution {
   readonly writer: SessionWriter;
 }
 
-async function closeResumedWriter(
-  execution: ResumedAgentExecution | undefined,
+export interface FreshTaskExecution {
+  readonly modelTask: string;
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly writer: SessionWriter;
+}
+
+async function closeInputWriter(
+  resumedExecution: ResumedAgentExecution | undefined,
+  freshTaskExecution: FreshTaskExecution | undefined,
 ): Promise<void> {
-  await execution?.writer.close().catch(() => undefined);
+  await (resumedExecution?.writer ?? freshTaskExecution?.writer)
+    ?.close()
+    .catch(() => undefined);
 }
 
 function sameArtifactExecution(
@@ -121,6 +173,7 @@ export async function executeAgent(
   runtime: CliRuntime,
   io: CliIO,
   resumedExecution?: ResumedAgentExecution,
+  freshTaskExecution?: FreshTaskExecution,
 ): Promise<AgentExitCode> {
   // PHASE4: 命令边界负责配置、真实资源装配和关闭；循环策略全部下沉到 runAgentLoop。
   const renderer = new ConsoleEventRenderer(io, options.verbose);
@@ -151,14 +204,69 @@ export async function executeAgent(
   } catch (error) {
     if (error instanceof RuntimePolicyError) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      await closeResumedWriter(resumedExecution);
+      await closeInputWriter(resumedExecution, freshTaskExecution);
       return error.exitCode;
     }
     renderer.renderDiagnostic("runtime policy internal error");
-    await closeResumedWriter(resumedExecution);
+    await closeInputWriter(resumedExecution, freshTaskExecution);
     return 1;
   }
-  let resolvedOptions = options;
+  const selectedAgentMode = (() => {
+    try {
+      if (options.modeSource !== undefined) {
+        return {
+          mode: agentModeSchema.parse(options.mode),
+          source: agentModeSourceSchema.parse(options.modeSource),
+        };
+      }
+      return resolveAgentMode({
+        ...(options.mode === undefined ? {} : { explicitMode: options.mode }),
+        surface: options.inputSurface ?? "cli",
+      });
+    } catch {
+      return undefined;
+    }
+  })();
+  if (selectedAgentMode === undefined) {
+    renderer.renderDiagnostic("usage/config error: agent mode must be plan or build");
+    await closeInputWriter(resumedExecution, freshTaskExecution);
+    return 2;
+  }
+  // PHASE16: the legacy CLI default remains the pre-Phase16 Build behavior.
+  // Phase16 authority is entered only through an explicit Plan/Build surface;
+  // the continuous TUI passes its visible default as an explicit host choice.
+  const phase16Requested = options.mode !== undefined;
+  const modeTaskProfile =
+    selectedAgentMode.mode === "plan" ? "read-only" : "coding";
+  if (
+    options.mode !== undefined &&
+    options.taskProfile !== undefined &&
+    options.taskProfile !== modeTaskProfile
+  ) {
+    renderer.renderDiagnostic(
+      `usage/config error: ${selectedAgentMode.mode} mode requires task profile ${modeTaskProfile}`,
+    );
+    await closeInputWriter(resumedExecution, freshTaskExecution);
+    return 2;
+  }
+  if (
+    phase16Requested &&
+    selectedAgentMode.mode === "plan" &&
+    ((options.mcpServerIds?.length ?? 0) > 0 ||
+      options.executor !== undefined ||
+      options.dockerImage !== undefined ||
+      options.dockerArtifactExecution !== undefined)
+  ) {
+    renderer.renderDiagnostic(
+      "usage/config error: Plan mode does not assemble MCP, command, or Docker execution",
+    );
+    await closeInputWriter(resumedExecution, freshTaskExecution);
+    return 2;
+  }
+  let resolvedOptions: AgentCommandOptions = {
+    ...options,
+    ...(phase16Requested ? { taskProfile: modeTaskProfile } : {}),
+  };
   const requestedExecutor = options.executor ?? runtime.env.BORN_EXECUTOR;
   if (requestedExecutor === "docker") {
     const persistedArtifact = options.dockerArtifactExecution;
@@ -171,7 +279,7 @@ export async function executeAgent(
         renderer.renderDiagnostic(
           "docker_acquisition_unavailable: runtime has no Docker acquisition port",
         );
-        await closeResumedWriter(resumedExecution);
+        await closeInputWriter(resumedExecution, freshTaskExecution);
         return 3;
       }
       try {
@@ -210,11 +318,11 @@ export async function executeAgent(
       } catch (error) {
         if (error instanceof DockerAcquisitionError) {
           renderer.renderDiagnostic(`${error.code}: ${error.message}`);
-          await closeResumedWriter(resumedExecution);
+          await closeInputWriter(resumedExecution, freshTaskExecution);
           return error.exitCode;
         }
         renderer.renderDiagnostic("docker_acquisition_internal: Docker acquisition failed internally");
-        await closeResumedWriter(resumedExecution);
+        await closeInputWriter(resumedExecution, freshTaskExecution);
         return 1;
       }
     }
@@ -234,7 +342,7 @@ export async function executeAgent(
   );
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
-    await closeResumedWriter(resumedExecution);
+    await closeInputWriter(resumedExecution, freshTaskExecution);
     return 2;
   }
   let config = configResult.value;
@@ -250,14 +358,200 @@ export async function executeAgent(
       ),
     });
   }
+  const modelEvidence = runtime.agentModelEvidence(config.provider);
+  if (
+    !phase16Requested &&
+    config.taskProfile === "coding" &&
+    modelEvidence === null
+  ) {
+    renderer.renderDiagnostic(
+      "usage/config error: restart with --task-profile read-only for local chat; coding profile requires verified model evidence",
+    );
+    await closeInputWriter(resumedExecution, freshTaskExecution);
+    return 2;
+  }
+  const sessionId =
+    resumedExecution?.sessionId ??
+    freshTaskExecution?.sessionId ??
+    runtime.randomUUID();
+  const runId =
+    resumedExecution?.runId ?? freshTaskExecution?.runId ?? runtime.randomUUID();
+  let writer: SessionWriter;
+  try {
+    writer =
+      resumedExecution?.writer ??
+      freshTaskExecution?.writer ??
+      (await runtime.createSessionWriter(runtime.cwd, sessionId));
+    runtime.observeSessionWriter?.(writer);
+  } catch {
+    renderer.renderStorageError();
+    return 1;
+  }
+
+  let phase16Binding: Phase16RunBinding | undefined;
+  let pendingGoalBaseline:
+    | {
+        readonly data: GoalExecutionBaselineCapturedData;
+        readonly eventId: string;
+      }
+    | undefined;
+  let phase16Enabled =
+    phase16Requested &&
+    writer.appendTaskEvent !== undefined &&
+    writer.appendPhase16RunStarted !== undefined &&
+    writer.readDecodedEvents !== undefined;
+  if (phase16Requested && !phase16Enabled && options.mode !== undefined) {
+    renderer.renderDiagnostic(
+      "usage/config error: this session writer does not support Phase 16 mode",
+    );
+    await writer.close().catch(() => undefined);
+    return 2;
+  }
+  if (phase16Enabled) {
+    try {
+      let taskState;
+      const existingEvents = writer.readDecodedEvents!();
+      if (existingEvents.length === 0) {
+        const goalId = runtime.randomUUID();
+        await writer.appendTaskEvent!("goal.created", {
+          goal_id: goalId,
+          objective: config.task,
+          origin: {
+            input_surface: options.inputSurface ?? "cli",
+            kind: "user",
+          },
+          parent_goal_id: null,
+          replaces_active_goal: null,
+          revision: 1,
+        });
+        taskState = TaskStateMachine.project(writer.readDecodedEvents!());
+      } else {
+        taskState = TaskStateMachine.project(existingEvents);
+        if (taskState.trackingMode !== "phase16") {
+          if (options.mode !== undefined) {
+            throw new ModelQualificationError(
+              "model_unqualified",
+              "legacy sessions require an explicit Goal before entering Plan/Build mode",
+            );
+          }
+          phase16Enabled = false;
+        }
+      }
+      if (phase16Enabled) {
+        const qualificationGate =
+          runtime.modelQualificationGate ??
+          new BundledFakeModelQualificationGate(
+            modelEvidence?.backend === "fake",
+          );
+        const qualification = await qualificationGate.requireQualified({
+          ...(policyRequest.endpoint === undefined
+            ? {}
+            : { endpoint: policyRequest.endpoint }),
+          mode: selectedAgentMode.mode,
+          model: config.model,
+          policyHash: effectivePolicy.evidence.profileSha256,
+          policyProfileId: effectivePolicy.entry.profile.id,
+          provider: config.provider,
+          source: policyRequest.source,
+        });
+        if (resumedExecution !== undefined) {
+          const sourceStart = existingEvents.find(
+            (event) =>
+              event.scope === "run" &&
+              event.runId === resumedExecution.sourceRunId &&
+              event.type === "run.started",
+          );
+          const sourceData = sourceStart?.data as
+            | Readonly<Record<string, unknown>>
+            | undefined;
+          const previousEvidence = sourceData?.model_qualification_sha256;
+          if (
+            typeof previousEvidence === "string" &&
+            previousEvidence !== qualification.evidenceSha256
+          ) {
+            throw new ModelQualificationError(
+              "model_unqualified",
+              "resume qualification evidence does not match the source run",
+            );
+          }
+        }
+        const activeGoal = taskState.goals.find(
+          (goal) => goal.content.goalId === taskState.activeGoalId,
+        );
+        let goalChangeLedgerHash: string | null = null;
+        if (selectedAgentMode.mode === "build" && activeGoal !== undefined) {
+          const existingLedger = projectGoalChangeLedger(
+            writer.readDecodedEvents!(),
+            activeGoal.content.goalId,
+            activeGoal.content.revision,
+          );
+          if (existingLedger === null) {
+            const eventId = runtime.randomUUID();
+            const data = await captureGoalExecutionBaseline({
+              goalId: activeGoal.content.goalId,
+              goalRevision: activeGoal.content.revision,
+              workspace: runtime.cwd,
+            });
+            pendingGoalBaseline = { data, eventId };
+            goalChangeLedgerHash = goalChangeLedgerSha256({
+              baseline: { data, eventId, runId },
+              goalId: activeGoal.content.goalId,
+              goalRevision: activeGoal.content.revision,
+              records: [],
+            });
+          } else {
+            await assertGoalChangeWorkspaceMatches(existingLedger, runtime.cwd);
+            goalChangeLedgerHash = existingLedger.ledgerSha256;
+          }
+        }
+        const decision = new RunStartPlanner().plan({
+          ...(options.continueApprovedPlan === undefined
+            ? {}
+            : { continueApprovedPlan: options.continueApprovedPlan }),
+          goalChangeLedgerSha256: goalChangeLedgerHash,
+          mode: selectedAgentMode,
+          modelQualificationSha256: qualification.evidenceSha256,
+          taskState,
+        });
+        if (decision.status === "denied") {
+          renderer.renderDiagnostic(
+            `usage/config error: ${decision.code}: ${decision.message}`,
+          );
+          await writer.close();
+          return decision.exitCode;
+        }
+        phase16Binding = decision.binding;
+      }
+    } catch (error) {
+      renderer.renderDiagnostic(
+        error instanceof ModelQualificationError
+          ? `usage/config error: ${error.code}: ${error.message}`
+          : error instanceof GoalExecutionBaselineError ||
+              error instanceof GoalChangeLedgerError
+            ? `${error.code}: ${error.message}`
+          : "task state or qualification preflight failed",
+      );
+      await writer.close().catch(() => undefined);
+      return error instanceof ModelQualificationError
+        ? error.exitCode
+        : error instanceof GoalExecutionBaselineError &&
+            error.code === "goal_baseline_too_large"
+          ? 7
+          : 1;
+    }
+  }
+
   let backend: ModelBackend;
   try {
-    // PHASE8: factory preflight freezes one provider/model and proves required
-    // tools, complete usage and cancellation before a session or request exists.
+    // PHASE16: qualification and exact task-state planning have already
+    // succeeded, so backend construction cannot read a credential for a
+    // missing, stale, corrupt, or mode-incompatible record.
     backend =
       resumedExecution?.backend ??
       runtime.createModelBackend({
-        ...(policyRequest.endpoint === undefined ? {} : { endpoint: policyRequest.endpoint }),
+        ...(policyRequest.endpoint === undefined
+          ? {}
+          : { endpoint: policyRequest.endpoint }),
         model: config.model,
         provider: config.provider,
         requirement: {
@@ -280,7 +574,7 @@ export async function executeAgent(
   } catch (error) {
     if (error instanceof BackendPreflightError) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      await closeResumedWriter(resumedExecution);
+      await writer.close().catch(() => undefined);
       return error.exitCode;
     }
     if (
@@ -289,11 +583,11 @@ export async function executeAgent(
       (error.exitCode === 2 || error.exitCode === 4)
     ) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      await closeResumedWriter(resumedExecution);
+      await writer.close().catch(() => undefined);
       return error.exitCode;
     }
     renderer.renderDiagnostic("internal protocol error");
-    await closeResumedWriter(resumedExecution);
+    await writer.close().catch(() => undefined);
     return 1;
   }
   const secrets = credentialSecretsForPolicy(
@@ -301,14 +595,6 @@ export async function executeAgent(
     config.provider,
     runtime.env,
   );
-  const modelEvidence = runtime.agentModelEvidence(config.provider);
-  if (config.taskProfile === "coding" && modelEvidence === null) {
-    renderer.renderDiagnostic(
-      "usage/config error: coding profile requires a deterministic fake backend or literal-loopback Ollama",
-    );
-    await closeResumedWriter(resumedExecution);
-    return 2;
-  }
   const contextRuntimeResult = resolveAgentContextRuntime(
     config,
     backend.contextCapacity,
@@ -317,15 +603,16 @@ export async function executeAgent(
     renderer.renderDiagnostic(
       `usage/config error: ${contextRuntimeResult.error}`,
     );
-    await closeResumedWriter(resumedExecution);
+    await writer.close().catch(() => undefined);
     return 2;
   }
-  const sessionId = resumedExecution?.sessionId ?? runtime.randomUUID();
-  const runId = resumedExecution?.runId ?? runtime.randomUUID();
   let workspaceResumeFingerprint = resumedExecution?.fingerprint;
   if (workspaceResumeFingerprint === undefined) {
     try {
       workspaceResumeFingerprint = await buildWorkspaceResumeFingerprint({
+        ...(phase16Binding === undefined
+          ? {}
+          : { agentMode: selectedAgentMode.mode }),
         backend,
         config,
         platform: runtime.platform,
@@ -337,18 +624,30 @@ export async function executeAgent(
       workspaceResumeFingerprint = undefined;
     }
   }
-  let writer: SessionWriter;
-  try {
-    writer =
-      resumedExecution?.writer ??
-      (await runtime.createSessionWriter(runtime.cwd, sessionId));
-    runtime.observeSessionWriter?.(writer);
-  } catch {
-    renderer.renderStorageError();
-    return 1;
-  }
 
   const publisher = new EventPublisher({
+    ...(phase16Binding?.agent_mode !== "build" ||
+    writer.readDecodedEvents === undefined
+      ? {}
+      : {
+          completionAttribution: () => {
+            const ledger = projectGoalChangeLedger(
+              writer.readDecodedEvents!(),
+              phase16Binding.goal_id,
+              phase16Binding.goal_revision,
+            );
+            if (ledger === null) {
+              throw new GoalChangeLedgerError(
+                "goal_change_baseline_invalid",
+                "Build completion requires its durable Goal execution baseline",
+              );
+            }
+            return {
+              changedPaths: ledger.netChangedPaths,
+              scope: goalChangeAttributionScope(ledger),
+            };
+          },
+        }),
     // PHASE4: 一个 agent run 仍使用一个 session/run id，所有 step 和工具事件共享同一审计流。
     randomUUID: runtime.randomUUID,
     renderer,
@@ -367,8 +666,10 @@ export async function executeAgent(
 
   try {
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
-    await publisher.publish({
-      data: {
+    const runStartedData: Extract<
+      RunEvent,
+      { type: "run.started" }
+    >["data"] = {
         command: "agent",
         command_approval: config.commandApproval,
         command_timeout_ms: config.commandTimeoutMs,
@@ -449,7 +750,17 @@ export async function executeAgent(
         request_timeout_ms: config.requestTimeoutMs,
         task_profile: config.taskProfile,
         tools:
-          config.taskProfile === "read-only"
+          phase16Binding?.agent_mode === "plan"
+            ? [
+                "list_files",
+                "read_file",
+                ...(writer.appendArtifactEvent === undefined
+                  ? []
+                  : ["read_artifact"]),
+                "search",
+                "update_plan",
+              ]
+            : config.taskProfile === "read-only"
             ? [
                 "list_files",
                 "read_file",
@@ -468,6 +779,7 @@ export async function executeAgent(
                   : ["read_artifact"]),
                 "run_command",
                 "search",
+                ...(phase16Binding === undefined ? [] : ["update_plan"]),
               ],
         tools_enabled: true,
         workspace: runtime.cwd,
@@ -480,9 +792,15 @@ export async function executeAgent(
               workspace_resume_fingerprint:
                 persistWorkspaceResumeFingerprint(workspaceResumeFingerprint),
             }),
-      },
-      type: "run.started",
-    });
+      };
+    if (phase16Binding === undefined) {
+      await publisher.publish({ data: runStartedData, type: "run.started" });
+    } else {
+      await publisher.publishPhase16RunStarted(
+        runStartedData,
+        phase16Binding,
+      );
+    }
     await publisher.publish({
       data: {
         adapter: backend.identity.adapter,
@@ -501,6 +819,13 @@ export async function executeAgent(
       },
       type: "backend.selected",
     });
+    if (pendingGoalBaseline !== undefined) {
+      await publisher.publishGoalChangeEvent(
+        "goal.execution.baseline.captured",
+        pendingGoalBaseline.data,
+        pendingGoalBaseline.eventId,
+      );
+    }
     if (writer.appendRunEvent === undefined) {
       throw new TypeError("agent session writer does not support Phase 10 events");
     }
@@ -515,6 +840,16 @@ export async function executeAgent(
       );
     }
     const decodedEvents = () => writer.readDecodedEvents?.() ?? publisher.events;
+    const runInstructions =
+      phase16Binding === undefined
+        ? config.taskProfile === "read-only"
+          ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
+          : AGENT_SYSTEM_INSTRUCTIONS
+        : systemInstructionsForAgentMode(phase16Binding.agent_mode);
+    const phase16TaskState =
+      phase16Binding === undefined || writer.readDecodedEvents === undefined
+        ? undefined
+        : () => TaskStateMachine.project(writer.readDecodedEvents!());
     const artifactRuntime =
       writer.appendArtifactEvent === undefined
         ? undefined
@@ -526,7 +861,7 @@ export async function executeAgent(
             eventAppender: {
               appendArtifactEvent: async (eventRunId, event) => {
                 try {
-                  await writer.appendArtifactEvent!(eventRunId, event);
+                  return await writer.appendArtifactEvent!(eventRunId, event);
                 } catch (error) {
                   throw new EventPersistenceError(error);
                 }
@@ -537,6 +872,26 @@ export async function executeAgent(
             sessionId,
             workspace: runtime.cwd,
           });
+    const goalChangeSeed =
+      phase16Binding?.agent_mode !== "build" || artifactRuntime === undefined
+        ? undefined
+        : await (async () => {
+            const ledger = projectGoalChangeLedger(
+              writer.readDecodedEvents!(),
+              phase16Binding.goal_id,
+              phase16Binding.goal_revision,
+            );
+            if (ledger === null) {
+              throw new GoalChangeLedgerError(
+                "goal_change_baseline_invalid",
+                "Build runtime requires its durable Goal execution baseline",
+              );
+            }
+            return VerifiedGoalChangeSeed.hydrateAndVerify({
+              artifactStore: artifactRuntime.store,
+              projection: ledger,
+            });
+          })();
 
     let rulesLoader: RootAgentsLoader | undefined;
     let repositoryRules;
@@ -682,10 +1037,45 @@ export async function executeAgent(
         ...(repositoryRulesEventId === undefined
           ? {}
           : { repositoryRulesEventId }),
-        systemInstructions:
-          config.taskProfile === "read-only"
-            ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
-            : AGENT_SYSTEM_INSTRUCTIONS,
+        systemInstructions: runInstructions,
+        ...(phase16TaskState === undefined || phase16Binding === undefined
+          ? {}
+          : {
+              taskContext: () => {
+                const taskState = phase16TaskState();
+                const goalChanges = projectGoalChangeLedger(
+                  writer.readDecodedEvents!(),
+                  phase16Binding.goal_id,
+                  phase16Binding.goal_revision,
+                );
+                return {
+                  projection: projectTaskContext({
+                    agentMode: phase16Binding.agent_mode,
+                    ...(goalChanges === null
+                      ? {}
+                      : {
+                          goalChanges: {
+                            changedPaths: goalChanges.netChangedPaths,
+                            ledgerSha256: goalChanges.ledgerSha256,
+                          },
+                        }),
+                    taskState,
+                  }),
+                  recency: taskState.lastSessionSeq,
+                  sourceEventIds: Object.freeze(
+                    [
+                      ...taskContextSourceEventIds(taskState),
+                      ...(goalChanges === null
+                        ? []
+                        : [
+                            goalChanges.baselineEventId,
+                            ...goalChanges.records.map((record) => record.eventId),
+                          ]),
+                    ].sort((left, right) => left.localeCompare(right)),
+                  ),
+                };
+              },
+            }),
       }),
     });
     let additionalTools: readonly RegisteredTool[] = [];
@@ -738,6 +1128,7 @@ export async function executeAgent(
                 "read_file",
                 "run_command",
                 "search",
+                ...(phase16Binding === undefined ? [] : ["update_plan"]),
               ],
         signal: userController.signal,
         workspaceRealPath: loadedMcp.workspaceRealPath,
@@ -763,6 +1154,33 @@ export async function executeAgent(
     if (config.executor === "docker" && sandboxEvents === undefined) {
       throw new TypeError("Docker executor requires durable Phase 13 event storage");
     }
+    const updatePlanTool =
+      phase16Binding === undefined
+        ? undefined
+        : (() => {
+            if (!(writer instanceof V2SessionWriter) || phase16TaskState === undefined) {
+              throw new TypeError(
+                "Phase 16 update_plan requires the durable V2 session writer",
+              );
+            }
+            const binding = phase16Binding;
+            return createUpdatePlanTool({
+              context: (toolContext) => ({
+                activeGoal: {
+                  goalId: binding.goal_id,
+                  revision: binding.goal_revision,
+                },
+                agentMode: binding.agent_mode,
+                callId: toolContext.callId,
+                runId,
+                sessionId,
+                step: toolContext.step,
+                taskStateBeforeCall: phase16TaskState(),
+                writer,
+              }),
+              store: new DurableAgentPlanStore(runtime.randomUUID),
+            });
+          })();
     const tools = await runtime.createAgentToolRegistry({
       ...(additionalTools.length === 0 ? {} : { additionalTools }),
       approvalMode: config.editApproval,
@@ -776,6 +1194,66 @@ export async function executeAgent(
         : { dockerSandbox: config.dockerSandbox }),
       executorKind: config.executor,
       maxCommandOutputBytes: config.maxCommandOutputBytes,
+      ...(phase16Binding?.agent_mode !== "build" ||
+        artifactRuntime === undefined ||
+        goalChangeSeed === undefined ||
+        phase16TaskState === undefined
+        ? {}
+        : {
+            goalChange: {
+              attributionScope: () => {
+                const ledger = projectGoalChangeLedger(
+                  writer.readDecodedEvents!(),
+                  phase16Binding.goal_id,
+                  phase16Binding.goal_revision,
+                );
+                if (ledger === null) {
+                  throw new GoalChangeLedgerError(
+                    "goal_change_baseline_invalid",
+                    "Build completion requires its durable Goal execution baseline",
+                  );
+                }
+                return goalChangeAttributionScope(ledger);
+              },
+              beforeCapture: (plan) => {
+                const ledger = projectGoalChangeLedger(
+                  writer.readDecodedEvents!(),
+                  phase16Binding.goal_id,
+                  phase16Binding.goal_revision,
+                );
+                if (ledger === null) {
+                  throw new GoalChangeLedgerError(
+                    "goal_change_baseline_invalid",
+                    "Build patch requires its durable Goal execution baseline",
+                  );
+                }
+                assertGoalChangePlanPreflight(ledger, plan, runId);
+              },
+              completionPolicy: new CollaborativeCompletionPolicy({
+                base: new VerifiedCompletionPolicy(),
+                goalChanges: async () => {
+                  const ledger = projectGoalChangeLedger(
+                    writer.readDecodedEvents!(),
+                    phase16Binding.goal_id,
+                    phase16Binding.goal_revision,
+                  );
+                  if (ledger === null) {
+                    throw new GoalChangeLedgerError(
+                      "goal_change_baseline_invalid",
+                      "Build completion requires its durable Goal execution baseline",
+                    );
+                  }
+                  await assertGoalChangeWorkspaceMatches(ledger, runtime.cwd);
+                  return ledger;
+                },
+                runBinding: phase16Binding,
+                taskState: phase16TaskState,
+              }),
+              goalId: phase16Binding.goal_id,
+              goalRevision: phase16Binding.goal_revision,
+              seed: goalChangeSeed,
+            },
+          }),
       modelEvidence:
         modelEvidence ?? {
           backend: "fake",
@@ -791,6 +1269,7 @@ export async function executeAgent(
       ...(sandboxEvents === undefined ? {} : { sandboxEvents }),
       secrets,
       taskProfile: config.taskProfile,
+      ...(updatePlanTool === undefined ? {} : { updatePlanTool }),
       sessionId,
       timestamp: runtime.timestamp,
       workspace: runtime.cwd,
@@ -804,16 +1283,78 @@ export async function executeAgent(
         : { createCheckpointStore: runtime.createCheckpointStore },
     );
     const terminal = await runAgentLoop(
-      resumedExecution?.modelTask ?? config.task,
+      resumedExecution?.modelTask ?? freshTaskExecution?.modelTask ?? config.task,
       config,
       {
+        ...(phase16Binding === undefined
+          ? {}
+          : { agentMode: phase16Binding.agent_mode }),
         budget,
+        ...(phase16Binding?.agent_mode !== "build" ||
+        phase16TaskState === undefined ||
+        writer.appendTaskEvent === undefined
+          ? {}
+          : {
+              beforeVerifiedRunCompleted: async (accepted) => {
+                const evaluated = [...writer.readDecodedEvents!()]
+                  .reverse()
+                  .find(
+                    (event) =>
+                      event.scope === "run" &&
+                      event.runId === runId &&
+                      event.type === "completion.evaluated" &&
+                      event.data.effect === "accept" &&
+                      event.data.call_id === accepted.callId,
+                  );
+                if (
+                  evaluated === undefined ||
+                  evaluated.scope !== "run" ||
+                  evaluated.type !== "completion.evaluated"
+                ) {
+                  throw new Error(
+                    "accepted completion has no exact durable evaluation event",
+                  );
+                }
+                const state = phase16TaskState();
+                const goal = state.goals.find(
+                  (candidate) =>
+                    candidate.content.goalId === phase16Binding.goal_id &&
+                    candidate.content.revision === phase16Binding.goal_revision,
+                );
+                if (goal?.status !== "active") {
+                  throw new Error("accepted completion Goal is no longer active");
+                }
+                try {
+                  if (state.currentApprovedPlan !== null) {
+                    const plan = state.currentApprovedPlan;
+                    await writer.appendTaskEvent!("plan.completed", {
+                      completion_evaluated_event_id: evaluated.eventId,
+                      finish_task_call_id: accepted.callId,
+                      goal_id: plan.goalId,
+                      goal_revision: plan.goalRevision,
+                      origin: { kind: "host_completion" },
+                      plan_id: plan.planId,
+                      plan_sha256: plan.planSha256,
+                      revision: plan.revision,
+                    });
+                  }
+                  await writer.appendTaskEvent!("goal.status.changed", {
+                    completion_evaluated_event_id: evaluated.eventId,
+                    finish_task_call_id: accepted.callId,
+                    from: "active",
+                    goal_id: phase16Binding.goal_id,
+                    origin: { kind: "host_completion" },
+                    revision: phase16Binding.goal_revision,
+                    to: "completed",
+                  });
+                } catch (error) {
+                  throw new EventPersistenceError(error);
+                }
+              },
+            }),
         clock: runtime,
         context,
-        instructions:
-          config.taskProfile === "read-only"
-            ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
-            : AGENT_SYSTEM_INSTRUCTIONS,
+        instructions: runInstructions,
         model: backend,
         ...(resumedExecution?.inheritedCall !== null &&
         resumedExecution?.inheritedCall !== undefined
@@ -835,11 +1376,17 @@ export async function executeAgent(
           ? {}
           : { persistTurnBoundary: turnBoundaryRecorder }),
         publisher,
-        renderCompletionReport: (report, terminal) =>
-          terminal === "completed"
-            ? io.stdout.write(report)
-            : io.stderr.write(report),
+        renderCompletionReport: (report, terminal) => {
+          // PHASE16: the Goal-level OutcomeReport is the only product report
+          // for tracked runs. Legacy runs retain the Phase7 RunReport surface.
+          if (phase16Binding === undefined) {
+            (terminal === "completed" ? io.stdout : io.stderr).write(report);
+          }
+        },
         secrets,
+        ...(phase16TaskState === undefined
+          ? {}
+          : { taskState: phase16TaskState }),
         tools,
       },
       userController.signal,
@@ -1008,6 +1555,19 @@ export async function executeAgent(
         renderer.renderDiagnostic("MCP process cleanup could not be verified");
         exitCode = 1;
       }
+    }
+  }
+
+  if (phase16Binding !== undefined && writer.readDecodedEvents !== undefined) {
+    try {
+      const outcome = new OutcomeReportBuilder().build(
+        reconstructMultiRunSession(writer.readDecodedEvents()),
+      );
+      const rendered = renderOutcomeReport(outcome, config.reportFormat);
+      (exitCode === 0 ? io.stdout : io.stderr).write(rendered);
+    } catch {
+      renderer.renderDiagnostic("Phase 16 OutcomeReport projection failed");
+      exitCode = 1;
     }
   }
 
