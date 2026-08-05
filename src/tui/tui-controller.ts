@@ -28,6 +28,7 @@ import {
   setCoreDiagnostic,
   setDraftInput,
   setPlanDecisionFocus,
+  setSessionBusy,
   type TuiEphemeralState,
   type TuiPlanDecisionDialog,
 } from "./tui-ephemeral-state.js";
@@ -63,6 +64,11 @@ export interface TuiCorePort {
     selectedMode: "build" | "plan",
     modeSource: "explicit_tui" | "tui_default",
   ): Promise<TuiCoreRunResult>;
+  watchSession?(
+    sessionId: string,
+    onChange: (kind: "lock" | "session") => void,
+    onError: (error: Error) => void,
+  ): Promise<() => void>;
 }
 
 export interface TuiCoreRunResult {
@@ -119,10 +125,17 @@ export class TuiController {
   private exitWhenIdle = false;
   private activeCoreRun: Promise<TuiCoreRunResult> | null = null;
   private coordinator: RunCoordinator | null = null;
+  private externalRefreshInFlight = false;
+  private externalRefreshPending = false;
+  private externalRefreshDrainTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleOperationInFlight = false;
   private readonly eventSnapshot: TuiPersistedEvent[] = [];
   private pendingRunStarted:
     | ((started: RunCoordinatorRunStarted) => void)
     | null = null;
+  private sessionWatchGeneration = 0;
+  private sessionWatchStop: (() => void) | null = null;
+  private watchedSessionId: string | null = null;
   private readonly phase16Projector = new Phase16TuiProjector();
   private readonly exitPromise: Promise<AppExitCode>;
   private resolveExit!: (code: AppExitCode) => void;
@@ -160,6 +173,7 @@ export class TuiController {
     this.eventSnapshot.length = 0;
     this.options.source.resetWhileIdle({ snapshot });
     this.options.renderer.start(this.viewState, this.ephemeralState);
+    this.ensureSessionWatch(this.viewState.session.id);
   }
 
   public waitForExit(): Promise<AppExitCode> {
@@ -387,6 +401,7 @@ export class TuiController {
     if (this.viewState.session.fatalReason !== null) {
       void this.failFatal();
     } else {
+      this.ensureSessionWatch(this.viewState.session.id);
       this.scheduleRender();
     }
   }
@@ -398,6 +413,14 @@ export class TuiController {
   public stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.sessionWatchGeneration += 1;
+    if (this.externalRefreshDrainTimer !== null) {
+      clearTimeout(this.externalRefreshDrainTimer);
+      this.externalRefreshDrainTimer = null;
+    }
+    this.sessionWatchStop?.();
+    this.sessionWatchStop = null;
+    this.watchedSessionId = null;
     this.options.source.close();
     this.options.renderer.stop();
   }
@@ -419,6 +442,14 @@ export class TuiController {
   private async decidePlanDecision(): Promise<void> {
     const dialog = this.ephemeralState.planDecisionDialog;
     if (dialog === null) return;
+    if (this.ephemeralState.sessionBusy) {
+      this.ephemeralState = setCoreDiagnostic(
+        closePlanDecisionDialog(this.ephemeralState),
+        "Session busy — waiting for the external writer to release its lock.",
+      );
+      this.scheduleRender();
+      return;
+    }
     const confirmed = this.ephemeralState.planDecisionFocus === "confirm";
     this.ephemeralState = closePlanDecisionDialog(this.ephemeralState);
     if (!confirmed) {
@@ -487,9 +518,21 @@ export class TuiController {
       return;
     }
     if (text === "/refresh") {
-      const result = await this.coordinator?.dispatch({
-        type: "refresh_session",
-      });
+      if (this.idleOperationInFlight) {
+        this.showCommandDiagnostic(
+          "Session refresh already in progress — input kept locally.",
+        );
+        return;
+      }
+      this.idleOperationInFlight = true;
+      let result: RunCoordinatorDispatchResult | undefined;
+      try {
+        result = await this.coordinator?.dispatch({
+          type: "refresh_session",
+        });
+      } finally {
+        this.idleOperationInFlight = false;
+      }
       this.renderCoordinatorResult(result);
       return;
     }
@@ -512,6 +555,18 @@ export class TuiController {
     const session = SESSION_COMMAND.exec(text);
     if (session?.[1] !== undefined) {
       await this.selectSession(session[1]);
+      return;
+    }
+    if (
+      this.ephemeralState.sessionBusy ||
+      this.externalRefreshInFlight ||
+      this.idleOperationInFlight
+    ) {
+      this.showCommandDiagnostic(
+        this.ephemeralState.sessionBusy
+          ? "Session busy — input kept locally until a complete durable snapshot is available."
+          : "Session refresh in progress — input kept locally until the durable snapshot is current.",
+      );
       return;
     }
     const resume = RESUME_COMMAND.exec(text);
@@ -683,7 +738,10 @@ export class TuiController {
   private activeGoal(): GoalProjection | null {
     const { activeGoalId, goals } = this.viewState.taskState;
     return (
-      goals.find((goal) => goal.content.goalId === activeGoalId) ?? null
+      goals.find(
+        (goal) =>
+          goal.content.goalId === activeGoalId && goal.status === "active",
+      ) ?? null
     );
   }
 
@@ -714,9 +772,14 @@ export class TuiController {
       );
       return;
     }
-    if (this.viewState.session.actionBlocked) {
+    if (
+      this.viewState.session.actionBlocked ||
+      this.ephemeralState.sessionBusy
+    ) {
       this.showCommandDiagnostic(
-        "Plan decisions are disabled until unresolved session effects are reconciled.",
+        this.ephemeralState.sessionBusy
+          ? "Plan decisions are disabled while an external session writer is active."
+          : "Plan decisions are disabled until unresolved session effects are reconciled.",
       );
       return;
     }
@@ -770,7 +833,18 @@ export class TuiController {
     intent: Phase16StartIntent,
     draftOnFailure?: string,
   ): Promise<boolean> {
-    if (this.coordinator === null) return false;
+    if (this.coordinator === null || this.idleOperationInFlight) {
+      if (draftOnFailure !== undefined) {
+        this.ephemeralState = setDraftInput(
+          this.ephemeralState,
+          draftOnFailure,
+        );
+      }
+      this.showCommandDiagnostic(
+        "Session refresh in progress — input kept locally.",
+      );
+      return false;
+    }
     const baseline = this.currentSnapshot();
     this.ephemeralState = setCoreDiagnostic(
       setDraftInput(this.ephemeralState, ""),
@@ -804,10 +878,21 @@ export class TuiController {
   private async dispatchMutation(
     intent: Phase16MutationIntent,
   ): Promise<boolean> {
-    if (this.coordinator === null) return false;
+    if (this.coordinator === null || this.idleOperationInFlight) {
+      this.showCommandDiagnostic(
+        "Session refresh in progress — mutation was not submitted.",
+      );
+      return false;
+    }
     const draft = this.ephemeralState.draftInput;
     this.ephemeralState = setDraftInput(this.ephemeralState, "");
-    const result = await this.coordinator.dispatch(intent);
+    this.idleOperationInFlight = true;
+    let result: RunCoordinatorDispatchResult;
+    try {
+      result = await this.coordinator.dispatch(intent);
+    } finally {
+      this.idleOperationInFlight = false;
+    }
     const succeeded = result.status === "mutated";
     if (!succeeded) {
       this.ephemeralState = setDraftInput(this.ephemeralState, draft);
@@ -834,10 +919,16 @@ export class TuiController {
         );
         break;
       case "failed":
-        this.ephemeralState = setCoreDiagnostic(
-          this.ephemeralState,
-          `${result.code}: ${result.message}`,
-        );
+        this.ephemeralState =
+          result.code === "session_busy"
+            ? setCoreDiagnostic(
+                setSessionBusy(this.ephemeralState, true),
+                "Session busy — keeping the last complete snapshot until the external writer releases its lock.",
+              )
+            : setCoreDiagnostic(
+                this.ephemeralState,
+                `${result.code}: ${result.message}`,
+              );
         break;
       case "fatal":
         this.ephemeralState = setCoreDiagnostic(
@@ -852,14 +943,34 @@ export class TuiController {
       case "cancel_requested":
         break;
       case "mode_selected":
+        // Mode selection is entirely ephemeral. It must not claim that an
+        // external writer lock has disappeared.
+        break;
       case "mutated":
       case "refreshed":
       case "run_finished":
       case "selected":
-        this.ephemeralState = setCoreDiagnostic(this.ephemeralState, null);
+        this.ephemeralState = setCoreDiagnostic(
+          setSessionBusy(this.ephemeralState, false),
+          null,
+        );
         break;
     }
+    if (
+      result.status !== "fatal" &&
+      this.exitWhenIdle &&
+      this.coordinator?.state.kind === "idle"
+    ) {
+      this.exitWhenIdle = false;
+      this.finishApp(0);
+    }
     this.scheduleRender();
+    if (
+      result.status !== "fatal" &&
+      !(result.status === "failed" && result.code === "session_busy")
+    ) {
+      this.scheduleExternalRefreshDrain();
+    }
   }
 
   private applySnapshot(snapshot: readonly TuiPersistedEvent[]): void {
@@ -867,6 +978,7 @@ export class TuiController {
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
     this.options.source.resetWhileIdle({ snapshot });
+    this.ensureSessionWatch(this.viewState.session.id);
   }
 
   private createCoordinator(snapshot: RunCoordinatorSnapshot): RunCoordinator {
@@ -888,7 +1000,9 @@ export class TuiController {
             throw new RunCoordinatorPortError(
               diagnostic.includes("stale_snapshot")
                 ? "stale_snapshot"
-                : "precondition_failed",
+                : diagnostic.includes("active_session_lock")
+                  ? "session_busy"
+                  : "precondition_failed",
               diagnostic,
               this.currentSnapshot(),
             );
@@ -896,10 +1010,26 @@ export class TuiController {
           return this.currentSnapshot();
         },
         refresh: async (sessionId) => {
-          const events =
-            sessionId === null
-              ? []
-              : await this.options.core.loadSession(sessionId);
+          let events: readonly TuiPersistedEvent[];
+          try {
+            events =
+              sessionId === null
+                ? []
+                : await this.options.core.loadSession(sessionId);
+          } catch (error) {
+            if (
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              error.code === "active_session_writer"
+            ) {
+              throw new RunCoordinatorPortError(
+                "session_busy",
+                "the selected session has an active external writer",
+              );
+            }
+            throw error;
+          }
           this.applySnapshot(events);
           return this.currentSnapshot();
         },
@@ -959,8 +1089,133 @@ export class TuiController {
   }
 
   private async selectSession(sessionId: string): Promise<void> {
-    const result = await this.coordinator?.dispatch({ sessionId, type: "select_session" });
+    if (this.idleOperationInFlight) {
+      this.showCommandDiagnostic("A session refresh is already in progress.");
+      return;
+    }
+    this.idleOperationInFlight = true;
+    let result: RunCoordinatorDispatchResult | undefined;
+    try {
+      result = await this.coordinator?.dispatch({
+        sessionId,
+        type: "select_session",
+      });
+    } finally {
+      this.idleOperationInFlight = false;
+    }
     this.renderCoordinatorResult(result);
+  }
+
+  private ensureSessionWatch(sessionId: string | null): void {
+    const watchSession = this.options.core.watchSession;
+    if (
+      watchSession === undefined ||
+      this.stopped ||
+      sessionId === this.watchedSessionId
+    ) {
+      return;
+    }
+    this.sessionWatchGeneration += 1;
+    const generation = this.sessionWatchGeneration;
+    this.sessionWatchStop?.();
+    this.sessionWatchStop = null;
+    this.watchedSessionId = sessionId;
+    this.externalRefreshPending = false;
+    if (sessionId === null) return;
+
+    void watchSession(
+      sessionId,
+      (kind) => {
+        if (
+          this.stopped ||
+          generation !== this.sessionWatchGeneration ||
+          this.watchedSessionId !== sessionId
+        ) {
+          return;
+        }
+        // PHASE16: SessionCatalog uses the same sibling lock for a strict read. Ignore
+        // ordinary lock churn so a refresh cannot invalidate itself; once an
+        // actual external writer has been observed, its lock removal becomes
+        // the wakeup that retries the blocked snapshot read.
+        if (kind === "lock" && !this.ephemeralState.sessionBusy) return;
+        this.externalRefreshPending = true;
+        this.scheduleExternalRefreshDrain();
+      },
+      (error) => {
+        if (
+          this.stopped ||
+          generation !== this.sessionWatchGeneration ||
+          this.watchedSessionId !== sessionId
+        ) {
+          return;
+        }
+        this.sessionWatchStop = null;
+        this.ephemeralState = setCoreDiagnostic(
+          this.ephemeralState,
+          `Session watch unavailable; use /refresh (${error.message}).`,
+        );
+        this.scheduleRender();
+      },
+    )
+      .then((stop) => {
+        if (
+          this.stopped ||
+          generation !== this.sessionWatchGeneration ||
+          this.watchedSessionId !== sessionId
+        ) {
+          stop();
+          return;
+        }
+        this.sessionWatchStop = stop;
+      })
+      .catch((error: unknown) => {
+        if (
+          this.stopped ||
+          generation !== this.sessionWatchGeneration ||
+          this.watchedSessionId !== sessionId
+        ) {
+          return;
+        }
+        this.ephemeralState = setCoreDiagnostic(
+          this.ephemeralState,
+          `Session watch unavailable; use /refresh (${error instanceof Error ? error.message : "unknown error"}).`,
+        );
+        this.scheduleRender();
+      });
+  }
+
+  private async drainExternalRefresh(): Promise<void> {
+    if (
+      this.stopped ||
+      !this.externalRefreshPending ||
+      this.externalRefreshInFlight ||
+      this.idleOperationInFlight ||
+      this.coordinator?.state.kind !== "idle" ||
+      this.activeCoreRun !== null ||
+      this.viewState.session.id === null
+    ) {
+      return;
+    }
+    this.externalRefreshPending = false;
+    this.externalRefreshInFlight = true;
+    this.idleOperationInFlight = true;
+    try {
+      const result = await this.coordinator.dispatch({ type: "refresh_session" });
+      this.renderCoordinatorResult(result);
+    } finally {
+      this.externalRefreshInFlight = false;
+      this.idleOperationInFlight = false;
+    }
+    if (this.externalRefreshPending) this.scheduleExternalRefreshDrain();
+  }
+
+  private scheduleExternalRefreshDrain(): void {
+    if (this.stopped || this.externalRefreshDrainTimer !== null) return;
+    this.externalRefreshDrainTimer = setTimeout(() => {
+      this.externalRefreshDrainTimer = null;
+      void this.drainExternalRefresh();
+    }, 0);
+    this.externalRefreshDrainTimer.unref?.();
   }
 
   private async startCoreRun(

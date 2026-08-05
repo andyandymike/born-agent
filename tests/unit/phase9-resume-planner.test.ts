@@ -515,6 +515,12 @@ describe("Phase 9 resume planner", () => {
     const blocked = new ResumePlanner({ createRunId }).plan(
       input({ sourceRunState: "completed" }),
     );
+    const approvedPlanContinuation = new ResumePlanner({ createRunId }).plan(
+      input({
+        approvedPlanContinuation: true,
+        sourceRunState: "completed",
+      }),
+    );
     const ready = new ResumePlanner({ createRunId }).plan(
       input({ message: "new turn", sourceRunState: "completed" }),
     );
@@ -522,7 +528,292 @@ describe("Phase 9 resume planner", () => {
       reasons: ["completed_run_requires_message"],
       status: "blocked",
     });
+    expect(approvedPlanContinuation).toMatchObject({
+      mode: "exact",
+      status: "ready",
+    });
     expect(ready).toMatchObject({ mode: "exact", status: "ready" });
+  });
+
+  it("treats a durable tool result after a pending canonical boundary as closed", async () => {
+    const canonicalBackend: ModelBackend = {
+      capabilities: exactModelBackend.capabilities,
+      identity,
+      resume: {
+        capability: "canonical_only",
+        supportsCanonicalDegradedResume: true,
+      },
+      async *runTurn() {
+        yield* [];
+      },
+    };
+    const events = decodeStoredEvents([
+      {
+        data: {
+          command: "chat",
+          input: { role: "user", text: "canonical tool result" },
+          model: identity.model,
+          provider: identity.provider,
+          timeout_ms: 1_000,
+          tools: ["read_file"],
+          tools_enabled: true,
+          workspace: "C:\\fixture",
+        },
+        event_id: "52000000-0000-4000-8000-000000000001",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 1,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 1,
+        timestamp: "2026-07-17T00:00:00.000Z",
+        type: "run.started",
+      },
+      {
+        data: {
+          adapter: identity.adapter,
+          adapter_version: identity.adapterVersion,
+          capabilities: canonicalBackend.capabilities,
+          config_fingerprint: identity.configFingerprint,
+          model: identity.model,
+          provider: identity.provider,
+          resume_capability: "canonical_only",
+        },
+        event_id: "52000000-0000-4000-8000-000000000002",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 2,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 2,
+        timestamp: "2026-07-17T00:00:01.000Z",
+        type: "backend.selected",
+      },
+      {
+        data: {
+          input_kind: "user_task",
+          max_steps: 8,
+          remaining_duration_ms: 1_000,
+          remaining_tokens: 1_000,
+          remaining_tool_output_bytes: 1_000,
+          step: 1,
+        },
+        event_id: "52000000-0000-4000-8000-000000000003",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 3,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 3,
+        timestamp: "2026-07-17T00:00:02.000Z",
+        type: "agent.step.started",
+      },
+      {
+        data: {
+          duration_ms: 1,
+          outcome: "tool_call",
+          step: 1,
+          text_chars: 0,
+          tool_call_id: "call-read",
+        },
+        event_id: "52000000-0000-4000-8000-000000000004",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 4,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 4,
+        timestamp: "2026-07-17T00:00:03.000Z",
+        type: "agent.step.completed",
+      },
+      {
+        data: {
+          arguments_json: '{"path":"README.md"}',
+          call_id: "call-read",
+          provider_response_id: "response-read",
+          step: 1,
+          tool_name: "read_file",
+        },
+        event_id: "52000000-0000-4000-8000-000000000005",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 5,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 5,
+        timestamp: "2026-07-17T00:00:04.000Z",
+        type: "tool.call.requested",
+      },
+      {
+        data: {
+          pending_call: true,
+          transcript_sha256: "b".repeat(64),
+          turn: 1,
+        },
+        event_id: "52000000-0000-4000-8000-000000000006",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 6,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 6,
+        timestamp: "2026-07-17T00:00:05.000Z",
+        type: "backend.canonical_boundary.created",
+      },
+      {
+        data: {
+          call_id: "call-read",
+          duration_ms: 1,
+          output: '{"ok":true}',
+          status: "success",
+          step: 1,
+          tool_name: "read_file",
+          truncated: false,
+        },
+        event_id: "52000000-0000-4000-8000-000000000007",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 7,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 7,
+        timestamp: "2026-07-17T00:00:06.000Z",
+        type: "tool.call.completed",
+      },
+    ]).filter((event) => event.scope === "run");
+
+    const built = await new BackendResumeProjectionBuilder(
+      {} as CheckpointStore,
+    ).build({ backend: canonicalBackend, events });
+
+    expect(built.projection).toMatchObject({
+      canonicalBoundaryClosed: true,
+      capability: "canonical_only",
+    });
+  });
+
+  it("uses a durable cancellation as a closed canonical turn but keeps the crash prefix open", async () => {
+    const canonicalBackend: ModelBackend = {
+      capabilities: exactModelBackend.capabilities,
+      identity,
+      resume: {
+        capability: "canonical_only",
+        supportsCanonicalDegradedResume: true,
+      },
+      async *runTurn() {
+        yield* [];
+      },
+    };
+    const prefix = [
+      {
+        data: {
+          command: "chat",
+          input: { role: "user", text: "cancel a partial turn" },
+          model: identity.model,
+          provider: identity.provider,
+          timeout_ms: 1_000,
+          tools: [],
+          tools_enabled: false,
+          workspace: "C:\\fixture",
+        },
+        event_id: "53000000-0000-4000-8000-000000000001",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 1,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 1,
+        timestamp: "2026-07-17T00:00:00.000Z",
+        type: "run.started",
+      },
+      {
+        data: {
+          adapter: identity.adapter,
+          adapter_version: identity.adapterVersion,
+          capabilities: canonicalBackend.capabilities,
+          config_fingerprint: identity.configFingerprint,
+          model: identity.model,
+          provider: identity.provider,
+          resume_capability: "canonical_only",
+        },
+        event_id: "53000000-0000-4000-8000-000000000002",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 2,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 2,
+        timestamp: "2026-07-17T00:00:01.000Z",
+        type: "backend.selected",
+      },
+      {
+        data: {
+          input_kind: "user_task",
+          max_steps: 8,
+          remaining_duration_ms: 1_000,
+          remaining_tokens: 1_000,
+          remaining_tool_output_bytes: 1_000,
+          step: 1,
+        },
+        event_id: "53000000-0000-4000-8000-000000000003",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 3,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 3,
+        timestamp: "2026-07-17T00:00:02.000Z",
+        type: "agent.step.started",
+      },
+      {
+        data: { delta: "partial", visibility: "user" },
+        event_id: "53000000-0000-4000-8000-000000000004",
+        run_id: SOURCE_RUN_ID,
+        run_seq: 4,
+        schema_version: 2,
+        scope: "run",
+        session_id: SESSION_ID,
+        session_seq: 4,
+        timestamp: "2026-07-17T00:00:03.000Z",
+        type: "text.delta",
+      },
+    ];
+    const cancelled = {
+      data: {
+        duration_ms: 4,
+        output_chars: 7,
+        reason: "user",
+        steps: 1,
+        tool_calls: 0,
+      },
+      event_id: "53000000-0000-4000-8000-000000000005",
+      run_id: SOURCE_RUN_ID,
+      run_seq: 5,
+      schema_version: 2,
+      scope: "run",
+      session_id: SESSION_ID,
+      session_seq: 5,
+      timestamp: "2026-07-17T00:00:04.000Z",
+      type: "run.cancelled",
+    };
+    const builder = new BackendResumeProjectionBuilder({} as CheckpointStore);
+    const crashPrefix = decodeStoredEvents(prefix).filter(
+      (event) => event.scope === "run",
+    );
+    const durableCancellation = decodeStoredEvents([...prefix, cancelled]).filter(
+      (event) => event.scope === "run",
+    );
+
+    await expect(
+      builder.build({ backend: canonicalBackend, events: crashPrefix }),
+    ).resolves.toMatchObject({
+      projection: { canonicalBoundaryClosed: false },
+    });
+    await expect(
+      builder.build({ backend: canonicalBackend, events: durableCancellation }),
+    ).resolves.toMatchObject({
+      projection: { canonicalBoundaryClosed: true },
+    });
   });
 
   it("rejects canonical-only mid-turn state and accepts a closed boundary with a flag", () => {

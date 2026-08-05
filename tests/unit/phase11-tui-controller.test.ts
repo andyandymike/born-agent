@@ -50,8 +50,11 @@ async function flush(): Promise<void> {
 }
 
 function fixture(input: {
+  readonly initialSnapshot?: readonly TuiPersistedEvent[];
+  readonly loadSession?: TuiCorePort["loadSession"];
   readonly rendererUpdate?: () => void;
   readonly startTask?: () => Promise<TuiCoreRunResult>;
+  readonly watchSession?: NonNullable<TuiCorePort["watchSession"]>;
 } = {}) {
   const approvalDecisions: unknown[] = [];
   const cancelActiveRun = vi.fn();
@@ -61,9 +64,12 @@ function fixture(input: {
   );
   const core: TuiCorePort = {
     cancelActiveRun,
-    loadSession: async () => [],
+    loadSession: input.loadSession ?? (async () => []),
     resumeSession: async () => ({ diagnostic: null, exitCode: 0 }),
     startTask,
+    ...(input.watchSession === undefined
+      ? {}
+      : { watchSession: input.watchSession }),
   };
   const renderer: PiTuiRenderer = {
     start: vi.fn(),
@@ -90,7 +96,7 @@ function fixture(input: {
     source,
   });
   controllerRef.current = controller;
-  controller.start();
+  controller.start(input.initialSnapshot ?? []);
   return {
     approvalDecisions,
     cancelActiveRun,
@@ -195,6 +201,85 @@ describe("Phase 11 TUI controller", () => {
     expect(test.cancelActiveRun).not.toHaveBeenCalled();
     test.controller.handleRawInput("\u0003");
     await expect(test.controller.waitForExit()).resolves.toBe(0);
+  });
+
+  it("refreshes an idle selected session after an external file notice", async () => {
+    let onChange: ((kind: "lock" | "session") => void) | null = null;
+    const stopWatch = vi.fn();
+    const loadSession = vi.fn(async () => [
+      started(),
+      event("run.cancelled", {}, 2),
+    ]);
+    const test = fixture({
+      initialSnapshot: [started()],
+      loadSession,
+      watchSession: async (_sessionId, change) => {
+        onChange = change;
+        return stopWatch;
+      },
+    });
+    await vi.waitFor(() => expect(onChange).not.toBeNull());
+
+    (onChange as ((kind: "lock" | "session") => void) | null)?.("session");
+
+    await vi.waitFor(() => {
+      expect(test.controller.view.session.lastSessionSeq).toBe(2);
+    });
+    expect(loadSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(test.controller.view.run?.status).toBe("cancelled");
+    expect(test.controller.ephemeral.sessionBusy).toBe(false);
+
+    test.controller.stop();
+    expect(stopWatch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the last complete snapshot and blocks actions while an external writer is active", async () => {
+    let onChange: ((kind: "lock" | "session") => void) | null = null;
+    let readAttempt = 0;
+    const loadSession = vi.fn(async () => {
+      readAttempt += 1;
+      if (readAttempt === 1) {
+        throw Object.assign(new Error("writer active"), {
+          code: "active_session_writer",
+        });
+      }
+      return [started(), event("run.cancelled", {}, 2)];
+    });
+    const test = fixture({
+      initialSnapshot: [started()],
+      loadSession,
+      watchSession: async (_sessionId, change) => {
+        onChange = change;
+        return () => undefined;
+      },
+    });
+    await vi.waitFor(() => expect(onChange).not.toBeNull());
+
+    (onChange as ((kind: "lock" | "session") => void) | null)?.("session");
+    await vi.waitFor(() => {
+      expect(test.controller.ephemeral.sessionBusy).toBe(true);
+    });
+    expect(test.controller.view.session.lastSessionSeq).toBe(1);
+
+    test.controller.handleRawInput("/mode build");
+    test.controller.handleRawInput("\r");
+    await flush();
+    expect(test.controller.ephemeral.selectedAgentMode).toBe("build");
+    expect(test.controller.ephemeral.sessionBusy).toBe(true);
+
+    test.controller.handleRawInput("draft while busy");
+    test.controller.handleRawInput("\r");
+    await flush();
+    expect(test.startTask).not.toHaveBeenCalled();
+    expect(test.controller.ephemeral.draftInput).toBe("draft while busy");
+
+    (onChange as ((kind: "lock" | "session") => void) | null)?.("lock");
+    await vi.waitFor(() => {
+      expect(test.controller.ephemeral.sessionBusy).toBe(false);
+      expect(test.controller.view.session.lastSessionSeq).toBe(2);
+    });
+    expect(test.controller.ephemeral.draftInput).toBe("draft while busy");
+    test.controller.stop();
   });
 
   it("keeps approval Enter on deny until focus explicitly moves", async () => {

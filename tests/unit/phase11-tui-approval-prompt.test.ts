@@ -103,4 +103,33 @@ describe("Phase 11 TUI approval prompt bridge", () => {
     abort.abort();
     await expect(pending).resolves.toBe("cancelled");
   });
+
+  it("accepts one exact durable decision before the core prompt registers", async () => {
+    const prompt = new TuiApprovalPrompt(approvalView);
+    await prompt.decideApproval({
+      actionSha256: HASH,
+      decision: "approved",
+      requestId: REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+    });
+    expect(prompt.hasPendingRequest).toBe(true);
+
+    await expect(
+      prompt.request(
+        {
+          actionKind: "run_command",
+          actionSha256: HASH,
+          args: ["test"],
+          cwd: ".",
+          executable: "pnpm",
+          purpose: "verify",
+          reviewLines: [],
+          riskWarning: "fixture",
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toBe("approved");
+    expect(prompt.hasPendingRequest).toBe(false);
+  });
 });

@@ -724,7 +724,16 @@ export class OutcomeReportBuilder {
     try {
       const task = session.taskState;
       const goal = lastGoal(task);
-      const run = session.lastRun;
+      const latestRun = session.lastRun;
+      // PHASE16: a newly-created idle Goal cannot inherit outcome facts from
+      // the previous Goal or from an untracked legacy run.
+      const run =
+        goal === null
+          ? latestRun
+          : latestRun?.started.data.goal_id === goal.content.goalId &&
+              latestRun.started.data.goal_revision === goal.content.revision
+            ? latestRun
+            : null;
       const ledger =
         goal === null
           ? null

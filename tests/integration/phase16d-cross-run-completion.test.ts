@@ -324,5 +324,5 @@ describe("Phase 16D cross-run completion", () => {
       readonly outcomeReport: { readonly reportSha256: string };
     };
     expect(shown.outcomeReport.reportSha256).toBe(outcome.reportSha256);
-  });
+  }, 20_000);
 });

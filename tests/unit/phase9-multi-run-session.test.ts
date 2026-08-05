@@ -5,6 +5,13 @@ import {
   reconstructMultiRunSession,
   SessionProjectionError,
 } from "../../src/sessions/reconstruct-multi-run-session.js";
+import {
+  backendSelectedData,
+  chatStartData,
+  GOAL,
+  Phase16EventBuilder,
+  userOrigin,
+} from "./phase16a-test-fixtures.js";
 
 const SESSION = "00000000-0000-4000-8000-000000009601";
 const RUN_1 = "00000000-0000-4000-8000-000000009611";
@@ -171,6 +178,42 @@ function failed(sequence: number): unknown {
 }
 
 describe("Phase 9 multi-run session reconstruction", () => {
+  it("accepts only the bounded Build crash prefix before its Goal baseline", () => {
+    const prefix = new Phase16EventBuilder();
+    prefix.session("goal.created", {
+      goal_id: GOAL,
+      objective: "Recover a run-start crash",
+      origin: userOrigin,
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+    prefix.run(
+      "run.started",
+      chatStartData({
+        agent_mode: "build",
+        agent_mode_source: "explicit_cli",
+        goal_change_ledger_sha256: "c".repeat(64),
+        goal_id: GOAL,
+        goal_revision: 1,
+        model_qualification_sha256: "d".repeat(64),
+        plan_id: null,
+        plan_revision: null,
+        plan_sha256: null,
+      }),
+    );
+    prefix.run("backend.selected", backendSelectedData());
+
+    expect(reconstructMultiRunSession(prefix.decode()).lastRun).toMatchObject({
+      status: "interrupted",
+    });
+
+    prefix.run("text.delta", { delta: "must not bypass the baseline" });
+    expect(() => reconstructMultiRunSession(prefix.decode())).toThrow(
+      "has no durable Goal execution baseline",
+    );
+  });
+
   it("projects an unterminated old run as interrupted and keeps the new terminal factual", () => {
     const events = decodeStoredEvents([
       v1Start(),

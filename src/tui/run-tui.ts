@@ -21,6 +21,7 @@ import { ApprovalController } from "./approval-controller.js";
 import { PersistedEventSource } from "./persisted-event-source.js";
 import { TuiAbortBridge } from "./tui-abort-bridge.js";
 import { TuiApprovalPrompt } from "./tui-approval-prompt.js";
+import { SessionFileWatcher } from "./session-file-watcher.js";
 import {
   TuiController,
   type TuiCorePort,
@@ -482,7 +483,10 @@ export async function executeTui(
   const controllerRef: { current?: TuiController } = {};
   const source = new PersistedEventSource({
     onEvent: (event) => controllerRef.current?.acceptPersistedEvent(event),
-    onFatal: () => controllerRef.current?.handleSourceFatal(),
+    onFatal: (error) => {
+      io.stderr.write(`tui_event_source_fatal: ${error.code}: ${error.message}\n`);
+      controllerRef.current?.handleSourceFatal();
+    },
   });
   const approvalPrompt = new TuiApprovalPrompt(() => {
     if (controllerRef.current === undefined) {
@@ -500,6 +504,7 @@ export async function executeTui(
     onCancel: abortBridge.onCancel,
   };
   const catalog = new SessionCatalog(runtime.cwd);
+  const sessionFileWatcher = new SessionFileWatcher(runtime.cwd);
   const continuousPhase16 = runtime.supportsPhase16TaskState === true;
   const core: TuiCorePort = {
     cancelActiveRun: () => abortBridge.cancelActiveRun(),
@@ -533,6 +538,8 @@ export async function executeTui(
       captureCoreRun((coreIo) =>
         executeAgent(agentOptions(options, task), tuiRuntime, coreIo),
       ),
+    watchSession: (sessionId, onChange, onError) =>
+      sessionFileWatcher.watch(sessionId, { onChange, onError }),
     ...(continuousPhase16
       ? {
           startIntent: (

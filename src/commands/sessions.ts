@@ -1111,6 +1111,9 @@ export async function executeSessionsResume(
     ).build({ backend: selected.backend, events: lastRun.events });
     const plan = planner.plan({
       allowDegradedResume: options.allowDegradedResume,
+      ...(continueApprovedPlan === undefined
+        ? {}
+        : { approvedPlanContinuation: true }),
       backend: backendResume.projection,
       currentFingerprint,
       expectedFingerprint,

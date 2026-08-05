@@ -32,6 +32,7 @@ export interface TuiEphemeralState {
   readonly scrollOffset: number;
   readonly selectedAgentMode: "build" | "plan";
   readonly selectedAgentModeSource: "explicit_tui" | "tui_default";
+  readonly sessionBusy: boolean;
 }
 
 export function createInitialTuiEphemeralState(): TuiEphemeralState {
@@ -49,6 +50,7 @@ export function createInitialTuiEphemeralState(): TuiEphemeralState {
     scrollOffset: 0,
     selectedAgentMode: "plan",
     selectedAgentModeSource: "tui_default",
+    sessionBusy: false,
   };
 }
 
@@ -86,6 +88,13 @@ export function setCoreDiagnostic(
   coreDiagnostic: string | null,
 ): TuiEphemeralState {
   return { ...state, coreDiagnostic };
+}
+
+export function setSessionBusy(
+  state: TuiEphemeralState,
+  sessionBusy: boolean,
+): TuiEphemeralState {
+  return { ...state, sessionBusy };
 }
 
 export function openApprovalDialog(

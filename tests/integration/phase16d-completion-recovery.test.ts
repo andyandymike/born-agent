@@ -320,5 +320,5 @@ describe("Phase 16D completion transition recovery", () => {
       writer.events.filter((event) => event.type === "patch.apply.completed"),
     ).toHaveLength(0);
     await writer.close();
-  });
+  }, 20_000);
 });

@@ -71,6 +71,22 @@ function started(
 }
 
 describe("Phase 11 durable TUI reducer", () => {
+  it("accepts Phase 16 Goal baseline and change facts as known no-op UI events", () => {
+    const state = replayPersistedEvents(
+      [
+        started(),
+        persisted("goal.execution.baseline.captured", {}, 2),
+        persisted("goal.change.recorded", {}, 3),
+      ],
+      createInitialTuiViewState(),
+    );
+
+    expect(state.session).toMatchObject({
+      fatalReason: null,
+      lastSessionSeq: 3,
+    });
+  });
+
   it("keeps coding draft separate until accepted finish_task and terminal evidence", () => {
     const trace = [
       started(),

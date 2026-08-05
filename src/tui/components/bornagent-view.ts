@@ -116,7 +116,8 @@ export class BornAgentViewComponent implements Component {
       run === null
         ? "idle"
         : `${run.status}:policy=${run.policyProfile ?? "legacy-unrecorded"}/${run.policyMode ?? "legacy_unrecorded"}:${run.provider}/${run.model}:${run.taskProfile}:${run.executionEnvironment ?? "local; isolation=none"}`;
-    const blocked = session.actionBlocked ? " blocked" : "";
+    const blocked =
+      session.actionBlocked || this.#ephemeral.sessionBusy ? " blocked" : "";
     const compacting = context.compacting ? " compacting" : "";
     return (
       `STATUS | session=${session.id ?? "none"} | run=${runLabel}` +
@@ -195,7 +196,7 @@ export class BornAgentViewComponent implements Component {
     if (
       approval === null ||
       approval.expiresState.status !== "active" ||
-      this.#view.session.actionBlocked
+      (this.#view.session.actionBlocked || this.#ephemeral.sessionBusy)
     ) {
       return [
         this.#line("APPROVAL | no active request", width),
@@ -228,7 +229,8 @@ export class BornAgentViewComponent implements Component {
         : dialog.action.toUpperCase();
     const stale =
       this.#view.session.id !== dialog.sessionId ||
-      this.#view.session.lastSessionSeq !== dialog.expectedSessionSeq;
+      this.#view.session.lastSessionSeq !== dialog.expectedSessionSeq ||
+      this.#ephemeral.sessionBusy;
     const confirmFocused =
       this.#ephemeral.planDecisionFocus === "confirm";
     return [
@@ -275,7 +277,10 @@ export class BornAgentViewComponent implements Component {
   }
 
   #renderInput(width: number): string[] {
-    const blocked = this.#view.session.actionBlocked ? " | blocked" : "";
+    const blocked =
+      this.#view.session.actionBlocked || this.#ephemeral.sessionBusy
+        ? " | blocked"
+        : "";
     return [
       this.#line(`INPUT${blocked}`, width),
       this.#line(`> ${this.#ephemeral.draftInput}`, width),

@@ -21,6 +21,8 @@ import { createMemoryIO, createRuntime } from "../helpers.js";
 
 const workspaces: string[] = [];
 const execFileAsync = promisify(execFile);
+const CRASH_SESSION_ID = "16000000-0000-4000-8000-000000016601";
+const CRASH_GOAL_ID = "16000000-0000-4000-8000-000000016602";
 
 afterEach(async () => {
   await Promise.all(
@@ -244,6 +246,78 @@ class InvalidRetryRenderer implements PiTuiRenderer {
 }
 
 describe("Phase 16F continuous TUI", () => {
+  it("reopens a Goal-committed/run-not-started crash prefix without duplicating the Goal", async () => {
+    const cwd = await workspace();
+    const writer = await V2SessionWriter.createNew(cwd, CRASH_SESSION_ID);
+    await writer.appendTaskEvent("goal.created", {
+      goal_id: CRASH_GOAL_ID,
+      objective: "Resume after the Goal commit window",
+      origin: { input_surface: "tui", kind: "user" },
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+    await writer.close();
+
+    const backend = new FakeStreamingChatClient(
+      fixedStream(["The recovered Goal needs one bounded clarification."]),
+      { model: "qwen3:1.7b", provider: "ollama" },
+    );
+    let renderer: TerminalExitRenderer | undefined;
+    const memory = createMemoryIO();
+    const exitCode = await runCli(
+      [
+        "tui",
+        "--resume",
+        CRASH_SESSION_ID,
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+      ],
+      memory.io,
+      createRuntime({
+        createAgentToolRegistry: async (options) =>
+          createPlanToolRegistry(
+            options.workspace,
+            options.updatePlanTool!,
+            options.secrets ?? [],
+            options.artifactRuntime,
+          ),
+        createModelBackend: () => backend,
+        createSessionWriter: V2SessionWriter.create,
+        cwd,
+        env: {},
+        supportsPhase16TaskState: true,
+        tuiHost: {
+          createRenderer: (options) => {
+            renderer = new TerminalExitRenderer(options.onInput);
+            return renderer;
+          },
+          stdinIsTTY: true,
+          stdoutIsTTY: true,
+        },
+      }),
+    );
+
+    expect(exitCode, memory.readStderr()).toBe(0);
+    const events = await readStoredSession(
+      join(cwd, ".bornagent", "sessions", `${CRASH_SESSION_ID}.jsonl`),
+    );
+    expect(events.filter((event) => event.type === "goal.created")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "run.started")).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ goal_id: CRASH_GOAL_ID }),
+      }),
+    ]);
+    expect(backend.calls).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      data: { reason: "clarification_required" },
+      type: "run.incomplete",
+    });
+    expect(renderer?.stop).toHaveBeenCalledOnce();
+  });
+
   it("starts a default-Plan run with durable tui provenance and returns to idle", async () => {
     const cwd = await workspace();
     const backend = new FakeStreamingChatClient(

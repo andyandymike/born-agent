@@ -9,6 +9,7 @@ import {
 
 export interface ResumePlannerInput {
   readonly allowDegradedResume: boolean;
+  readonly approvedPlanContinuation?: boolean;
   readonly backend: BackendResumeProjection;
   readonly currentFingerprint: WorkspaceResumeFingerprint;
   readonly expectedFingerprint: WorkspaceResumeFingerprint;
@@ -228,6 +229,7 @@ export class ResumePlanner {
     const blocks: PlanningBlock[] = [];
     if (
       input.sourceRunState === "completed" &&
+      input.approvedPlanContinuation !== true &&
       (input.message === undefined || input.message.trim().length === 0)
     ) {
       addBlock(

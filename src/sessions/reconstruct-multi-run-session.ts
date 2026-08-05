@@ -272,6 +272,14 @@ function validateRunDomainSemantics(
               binding.data.goal_revision,
             );
             if (ledger === null) {
+              const isPreBaselineCrashPrefix =
+                terminal === undefined &&
+                events.every(
+                  (event) =>
+                    event.type === "run.started" ||
+                    event.type === "backend.selected",
+                );
+              if (isPreBaselineCrashPrefix) return undefined;
               throw new SessionProjectionError(
                 `run ${runId} has no durable Goal execution baseline`,
               );

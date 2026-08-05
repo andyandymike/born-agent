@@ -301,6 +301,15 @@ function canonicalBoundaryIsClosed(
     if (event.type === "tool.call.completed") {
       pendingCalls.delete(event.data.call_id);
     }
+    if (event.type === "run.cancelled") {
+      // PHASE16: A durable user cancellation rejects the unfinished model proposal and
+      // therefore closes its canonical assistant turn. Already-requested tool
+      // calls remain pending until their own durable observations resolve; a
+      // tool proposal that never reached tool.call.requested has no effect to
+      // inherit.
+      modelTurnOpen = false;
+      awaitingToolRequest = null;
+    }
   }
   return (
     !modelTurnOpen &&
@@ -494,11 +503,12 @@ export class BackendResumeProjectionBuilder {
         );
       }
       const latestBoundary = canonicalEvents.at(-1);
+      const cancelledAtTerminal = input.events.at(-1)?.type === "run.cancelled";
       return Object.freeze({
         continuation: null,
         projection: baseProjection(
           input.backend,
-          latestBoundary?.data.pending_call === false &&
+          (latestBoundary !== undefined || cancelledAtTerminal) &&
             canonicalBoundaryIsClosed(input.events),
           null,
         ),

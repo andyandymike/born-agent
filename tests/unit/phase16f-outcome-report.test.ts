@@ -8,7 +8,10 @@ import { renderOutcomeReport } from "../../src/coordination/outcome-report-rende
 import { reconstructMultiRunSession } from "../../src/sessions/reconstruct-multi-run-session.js";
 import {
   GOAL,
+  GOAL_2,
   Phase16EventBuilder,
+  backendSelectedData,
+  chatStartData,
   planContent,
   planIdentity,
   userOrigin,
@@ -120,5 +123,88 @@ describe("Phase 16F OutcomeReport", () => {
       },
     });
     expect(report.outcome).toBe("idle");
+  });
+
+  it("does not attribute the previous Goal run to a newly-created idle Goal", () => {
+    const builder = new Phase16EventBuilder();
+    builder.session("goal.created", {
+      goal_id: GOAL,
+      objective: "Old Goal",
+      origin: userOrigin,
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+    builder.run(
+      "run.started",
+      chatStartData({
+        agent_mode: "plan",
+        agent_mode_source: "explicit_cli",
+        goal_change_ledger_sha256: null,
+        goal_id: GOAL,
+        goal_revision: 1,
+        model_qualification_sha256: "e".repeat(64),
+        plan_id: null,
+        plan_revision: null,
+        plan_sha256: null,
+      }),
+    );
+    builder.run("backend.selected", backendSelectedData());
+    builder.run("run.cancelled", { duration_ms: 1, reason: "user" });
+    builder.session("goal.status.changed", {
+      from: "active",
+      goal_id: GOAL,
+      origin: userOrigin,
+      reason: "Move to a distinct task",
+      revision: 1,
+      to: "abandoned",
+    });
+    builder.session("goal.created", {
+      goal_id: GOAL_2,
+      objective: "New idle Goal",
+      origin: userOrigin,
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+
+    const report = new OutcomeReportBuilder().build(
+      reconstructMultiRunSession(builder.decode()),
+    );
+    expect(report).toMatchObject({
+      goal: { id: GOAL_2, status: "active" },
+      outcome: "idle",
+      run: null,
+    });
+  });
+
+  it("does not attribute an untracked legacy run to a newly-tracked Goal", () => {
+    const builder = new Phase16EventBuilder();
+    builder.run("run.started", chatStartData());
+    builder.run("backend.selected", backendSelectedData());
+    builder.run("run.cancelled", {
+      duration_ms: 1,
+      output_chars: 0,
+      reason: "user",
+      steps: 1,
+      tool_calls: 0,
+    });
+    builder.session("goal.created", {
+      goal_id: GOAL,
+      objective: "Track work after a legacy run",
+      origin: userOrigin,
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+
+    const report = new OutcomeReportBuilder().build(
+      reconstructMultiRunSession(builder.decode()),
+    );
+    expect(report).toMatchObject({
+      goal: { id: GOAL, status: "active" },
+      outcome: "idle",
+      run: null,
+    });
   });
 });

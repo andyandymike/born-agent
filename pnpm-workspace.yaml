@@ -1,6 +1,7 @@
 allowBuilds:
   '@google/genai': false
   esbuild: true
+  node-pty: true
   protobufjs: false
 cacheDir: .cache/pnpm-cache
 engineStrict: true

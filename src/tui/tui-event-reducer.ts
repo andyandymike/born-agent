@@ -89,6 +89,8 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "completion.evaluated",
   "completion.evidence",
   "goal.created",
+  "goal.change.recorded",
+  "goal.execution.baseline.captured",
   "goal.revised",
   "goal.status.changed",
   "context.compaction.failed",
