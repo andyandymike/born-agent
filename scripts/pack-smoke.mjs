@@ -103,6 +103,103 @@ try {
       throw new Error(`packed Phase 15 asset is empty: ${relativePath}`);
     }
   }
+  const requiredPhase17Assets = [
+    "policies/repository-intelligence/assets-lock-v1.json",
+    "policies/repository-intelligence/engine-v1.json",
+    "evals/repository-intelligence/suite-v1.json",
+  ];
+  for (const relativePath of requiredPhase17Assets) {
+    const bytes = await readFile(join(packageRoot, ...relativePath.split("/")));
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 17 asset is empty: ${relativePath}`);
+    }
+  }
+  const capabilityIndex = JSON.parse(
+    await readFile(
+      join(packageRoot, "capabilities", "builtin", "index.json"),
+      "utf8",
+    ),
+  );
+  if (
+    capabilityIndex.schema_version !== 1 ||
+    capabilityIndex.revision !== 1 ||
+    !Array.isArray(capabilityIndex.packages) ||
+    capabilityIndex.packages.length !== 0
+  ) {
+    throw new Error("packed Phase 18A built-in capability index is not exact");
+  }
+  const repositoryEngine = JSON.parse(
+    await readFile(
+      join(packageRoot, "policies", "repository-intelligence", "engine-v1.json"),
+      "utf8",
+    ),
+  );
+  const repositoryAssets = JSON.parse(
+    await readFile(
+      join(
+        packageRoot,
+        "policies",
+        "repository-intelligence",
+        "assets-lock-v1.json",
+      ),
+      "utf8",
+    ),
+  );
+  if (
+    packedManifest.dependencies?.typescript !== "6.0.3" ||
+    repositoryEngine.status !== "accepted" ||
+    repositoryEngine.engineIdentity?.adapterVersion !==
+      "bornagent-typescript-adapter-v2" ||
+    repositoryEngine.engineIdentity?.engineVersion !== "6.0.3" ||
+    repositoryEngine.engineIdentity?.identitySha256 !==
+      "8a8ea1e72dcb01ddbb4385e634897306b2c16468ebd82213b986d8f6d83e0922" ||
+    repositoryEngine.correctnessGatePassed !== true ||
+    repositoryEngine.freshnessGatePassed !== true ||
+    repositoryEngine.securityGatePassed !== true ||
+    repositoryEngine.contextReductionGatePassed !== true ||
+    repositoryAssets.networkRequired !== false ||
+    repositoryAssets.repositoryConfigAllowed !== false ||
+    repositoryAssets.repositoryPluginsAllowed !== false ||
+    repositoryAssets.assets?.[0]?.name !== "typescript" ||
+    repositoryAssets.assets?.[0]?.version !== "6.0.3"
+  ) {
+    throw new Error("packed Phase 17 engine decision/assets are not exact");
+  }
+  const repositorySuite = JSON.parse(
+    await readFile(
+      join(packageRoot, "evals", "repository-intelligence", "suite-v1.json"),
+      "utf8",
+    ),
+  );
+  const repositoryTaskRoot = join(
+    packageRoot,
+    "evals",
+    "repository-intelligence",
+    "tasks",
+  );
+  const repositoryTaskNames = (await readdir(repositoryTaskRoot)).sort();
+  const repositoryCaseNames = (repositorySuite.cases ?? [])
+    .map((item) => item.id)
+    .sort();
+  if (
+    repositorySuite.id !== "repository-intelligence-v1" ||
+    repositorySuite.suiteVersion !== 1 ||
+    repositorySuite.smokeCaseIds?.length !== 8 ||
+    repositoryCaseNames.length !== 20 ||
+    JSON.stringify(repositoryTaskNames) !== JSON.stringify(repositoryCaseNames)
+  ) {
+    throw new Error("packed Phase 17 repository suite is incomplete");
+  }
+  for (const taskName of repositoryTaskNames) {
+    await readFile(join(repositoryTaskRoot, taskName, "query.json"), "utf8");
+    await readFile(
+      join(repositoryTaskRoot, taskName, "grader", "expected.json"),
+      "utf8",
+    );
+    if ((await readdir(join(repositoryTaskRoot, taskName, "workspace"))).length === 0) {
+      throw new Error(`packed Phase 17 workspace is empty: ${taskName}`);
+    }
+  }
   for (const dependency of Object.keys(packedManifest.dependencies ?? {})) {
     const linkPath = join(installRoot, "node_modules", dependency);
     await mkdir(dirname(linkPath), { recursive: true });
@@ -212,7 +309,49 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, ran born --help, and validated 20 bundled eval tasks without executing full eval\n");
+  const capabilityDoctor = spawnSync(
+    process.execPath,
+    [binaryPath, "capabilities", "doctor", "--json"],
+    {
+      cwd: installRoot,
+      encoding: "utf8",
+      env: {
+        LOCALAPPDATA: join(temporaryRoot, "state"),
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        TEMP: temporaryRoot,
+        TMP: temporaryRoot,
+        XDG_STATE_HOME: join(temporaryRoot, "state"),
+      },
+      shell: false,
+    },
+  );
+  let capabilityDocument;
+  try {
+    capabilityDocument = JSON.parse(capabilityDoctor.stdout);
+  } catch {
+    capabilityDocument = null;
+  }
+  if (
+    capabilityDoctor.status !== 0 ||
+    capabilityDocument?.status !== "valid" ||
+    capabilityDocument?.eligiblePluginCount !== 0 ||
+    capabilityDocument?.componentCount !== 0 ||
+    capabilityDocument?.sourceRevisions?.builtin !== 1
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} capabilities doctor --json failed`,
+        capabilityDoctor.error?.message,
+        capabilityDoctor.stdout,
+        capabilityDoctor.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, and the Phase 18A built-in capability index; ran born --help and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

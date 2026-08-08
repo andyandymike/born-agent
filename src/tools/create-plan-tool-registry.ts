@@ -3,18 +3,22 @@ import type { UpdatePlanInput } from "../plans/update-plan-input-schema.js";
 import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type { ToolDefinition } from "./tool-types.js";
+import type { RepositoryRuleReadRuntime } from "../repository-rules/repository-rule-observation-binding.js";
+import type { RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
 
 export async function createPlanToolRegistry(
   workspace: string,
   updatePlan: ToolDefinition<UpdatePlanInput>,
   secrets: readonly (string | undefined)[] = [],
   artifacts?: ArtifactSessionRuntimeLike,
+  repositoryRules?: RepositoryRuleReadRuntime,
+  repositoryNavigation?: RepositoryNavigationService,
 ): Promise<ToolRegistry> {
   if (updatePlan.name !== "update_plan") {
     throw new Error("Plan registry requires the package-owned update_plan tool");
   }
   const definitions = [
-    ...(await createReadonlyToolDefinitions(workspace, artifacts)),
+    ...(await createReadonlyToolDefinitions(workspace, artifacts, repositoryRules, repositoryNavigation)),
     updatePlan as ToolDefinition<unknown>,
   ];
   const names = definitions.map((definition) => definition.name).sort();
@@ -22,6 +26,7 @@ export async function createPlanToolRegistry(
     "list_files",
     "read_file",
     "search",
+    ...(repositoryNavigation === undefined ? [] : ["repository_outline", "find_symbol", "find_references"]),
     ...(artifacts === undefined ? [] : ["read_artifact"]),
     "update_plan",
   ].sort();

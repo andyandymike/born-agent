@@ -168,6 +168,7 @@ export function agentPolicySha256(config: ResolvedAgentConfig): string {
 export interface WorkspaceResumeFingerprintBuildInput {
   readonly agentMode?: AgentMode;
   readonly backend: ModelBackend;
+  readonly capabilitySnapshotSha256?: string;
   readonly config: ResolvedAgentConfig;
   readonly platform: NodeJS.Platform;
   readonly workspace: string;
@@ -191,6 +192,9 @@ export async function buildWorkspaceResumeFingerprint(
   // produced under a different tool catalog or changed working tree.
   return createWorkspaceResumeFingerprint({
     backend: input.backend.identity,
+    ...(input.capabilitySnapshotSha256 === undefined
+      ? {}
+      : { capabilitySnapshotSha256: input.capabilitySnapshotSha256 }),
     canonicalRootIdentity: canonicalRootIdentity(root, input.platform),
     checkpointCodecVersion:
       input.backend.resume.capability === "exact_checkpoint"

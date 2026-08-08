@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
@@ -28,6 +30,7 @@ import { createPlanToolRegistry } from "../tools/create-plan-tool-registry.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { classifyTrustedFixtureVerification } from "../verification/trusted-fixture-verification-classifier.js";
 import { NodeOllamaLocalCatalogPort } from "../providers/pi/ollama-local-catalog-port.js";
+import { DefaultRepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
 import type { TuiHost } from "../tui/tui-host.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
 import { McpServerLauncher } from "../mcp/mcp-server-launcher.js";
@@ -41,9 +44,12 @@ import { reconcilePersistedContainers } from "../execution/docker/container-reco
 import { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
 import { NodeDockerAcquisitionPort } from "../execution/docker/acquisition/node-docker-acquisition-port.js";
 import { UserStateModelQualificationGate } from "../model/user-state-model-qualification-gate.js";
+import { DefaultCapabilityPlatform } from "../capabilities/capability-platform.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
+  readonly capabilityAssetsRoot?: string;
+  readonly capabilityUserStateRoot?: string;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly evalAssetsRoot?: string;
@@ -88,6 +94,10 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     });
   const permissionEngine = new PermissionEngine(localFreeOnlyPermissionPolicy);
   const localModelCatalog = new NodeOllamaLocalCatalogPort();
+  const capabilityAssetsRoot = resolve(
+    options.capabilityAssetsRoot ??
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "capabilities", "builtin"),
+  );
   return {
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
@@ -99,6 +109,16 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       new TerminalApprovalPrompt({
         ...options.approvalInput,
         output: io.stderr,
+      }),
+    createCapabilityPlatform: (workspace) =>
+      new DefaultCapabilityPlatform({
+        builtinRoot: capabilityAssetsRoot,
+        env: options.env,
+        platform: options.platform,
+        ...(options.capabilityUserStateRoot === undefined
+          ? {}
+          : { userStateRoot: options.capabilityUserStateRoot }),
+        workspace,
       }),
     createMcpClientManager: ({ events, prompt, secrets = [] }) => {
       const launcher = new McpServerLauncher({
@@ -129,6 +149,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             registryOptions.updatePlanTool,
             registryOptions.secrets ?? [],
             registryOptions.artifactRuntime,
+            registryOptions.repositoryRules === undefined
+              ? undefined
+              : {
+                  assertFresh: registryOptions.repositoryRules.assertFresh,
+                  tracker: registryOptions.repositoryRules.tracker,
+                },
+            registryOptions.repositoryNavigation,
           );
         }
         return createReadonlyToolRegistry(
@@ -136,6 +163,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
           registryOptions.secrets ?? [],
           registryOptions.artifactRuntime,
           registryOptions.additionalTools ?? [],
+          registryOptions.repositoryRules === undefined
+            ? undefined
+            : {
+                assertFresh: registryOptions.repositoryRules.assertFresh,
+                tracker: registryOptions.repositoryRules.tracker,
+              },
+          registryOptions.repositoryNavigation,
         );
       }
       const executableRegistry = createDefaultExecutableRegistry({
@@ -228,6 +262,11 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     },
     createSessionWriter: V2SessionWriter.create,
     supportsPhase16TaskState: true,
+    createRepositoryNavigationService: (workspace, secrets, events) =>
+      DefaultRepositoryNavigationService.create(workspace, {
+        ...(events === undefined ? {} : { events }),
+        secrets,
+      }),
     // PHASE14: construct credential-aware provider machinery only for ordinary model commands; `born eval` owns a separate no-credential runtime.
     createModelBackend: (request) => createProductionBackendFactory(options.env).create(request),
     cwd: options.cwd,

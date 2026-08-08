@@ -7,11 +7,21 @@ import { createSearchTool } from "./search-tool.js";
 import { SensitivePathPolicy } from "./sensitive-path-policy.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type { ToolDefinition, ToolRegistration } from "./tool-types.js";
+import type { RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
+import { createRepositoryOutlineTool } from "./repository-outline-tool.js";
+import { createFindSymbolTool } from "./find-symbol-tool.js";
+import { createFindReferencesTool } from "./find-references-tool.js";
 import { WorkspacePathPolicy } from "./workspace-path-policy.js";
+import {
+  bindRepositoryRuleObservations,
+  type RepositoryRuleReadRuntime,
+} from "../repository-rules/repository-rule-observation-binding.js";
 
 export async function createReadonlyToolDefinitions(
   workspace: string,
   artifacts?: ArtifactSessionRuntimeLike,
+  repositoryRules?: RepositoryRuleReadRuntime,
+  repositoryNavigation?: RepositoryNavigationService,
 ): Promise<readonly ToolDefinition<unknown>[]> {
   // PHASE3: 三个工具共享同一份 canonical workspace 与敏感路径策略，防止各自实现出不同边界。
   const sensitive = new SensitivePathPolicy();
@@ -22,6 +32,13 @@ export async function createReadonlyToolDefinitions(
     createReadFileTool(paths) as ToolDefinition<unknown>,
     createSearchTool(paths, runner, sensitive) as ToolDefinition<unknown>,
     createListFilesTool(paths, runner, sensitive) as ToolDefinition<unknown>,
+    ...(repositoryNavigation === undefined
+      ? []
+      : [
+          createRepositoryOutlineTool(repositoryNavigation) as ToolDefinition<unknown>,
+          createFindSymbolTool(repositoryNavigation) as ToolDefinition<unknown>,
+          createFindReferencesTool(repositoryNavigation) as ToolDefinition<unknown>,
+        ]),
     ...(artifacts === undefined
       ? []
       : [
@@ -31,7 +48,11 @@ export async function createReadonlyToolDefinitions(
   if (definitions.some((definition) => definition.capability !== "read")) {
     throw new Error("read-only registry cannot contain mutation tools");
   }
-  return definitions;
+  return repositoryRules === undefined
+    ? definitions
+    : definitions.map((definition) =>
+        bindRepositoryRuleObservations(definition, repositoryRules),
+      );
 }
 
 export async function createReadonlyToolRegistry(
@@ -39,8 +60,15 @@ export async function createReadonlyToolRegistry(
   secrets: readonly (string | undefined)[] = [],
   artifacts?: ArtifactSessionRuntimeLike,
   additionalTools: readonly ToolRegistration<unknown>[] = [],
+  repositoryRules?: RepositoryRuleReadRuntime,
+  repositoryNavigation?: RepositoryNavigationService,
 ): Promise<ToolRegistry> {
-  const definitions = await createReadonlyToolDefinitions(workspace, artifacts);
+  const definitions = await createReadonlyToolDefinitions(
+    workspace,
+    artifacts,
+    repositoryRules,
+    repositoryNavigation,
+  );
   return new ToolRegistry(
     [...definitions, ...additionalTools],
     secrets,

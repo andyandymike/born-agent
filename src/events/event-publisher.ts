@@ -71,6 +71,8 @@ interface ToolCallState {
 interface PatchPlanState {
   readonly callId: string;
   readonly planId: string;
+  readonly ruleManifestSha256?: string;
+  readonly ruleScopeSetSha256?: string;
   readonly step: number;
 }
 
@@ -81,6 +83,8 @@ interface ApprovalState {
   decision?: "approved" | "cancelled" | "denied";
   readonly requestId: string;
   readonly planId?: string;
+  readonly ruleManifestSha256?: string;
+  readonly ruleScopeSetSha256?: string;
   readonly step: number;
 }
 
@@ -139,6 +143,25 @@ function approvalActionSha256(
   return data.action === "apply_patch"
     ? (data.action_sha256 ?? data.plan_id)
     : data.action_sha256;
+}
+
+function patchActionSha256(
+  planId: string,
+  ruleManifestSha256: string | undefined,
+  ruleScopeSetSha256: string | undefined,
+): string {
+  if (ruleManifestSha256 === undefined || ruleScopeSetSha256 === undefined) {
+    if (ruleManifestSha256 !== undefined || ruleScopeSetSha256 !== undefined) {
+      throw new Error("patch rule scope identity is incomplete");
+    }
+    return planId;
+  }
+  return sha256Canonical({
+    actionKind: "apply_patch",
+    manifestSha256: ruleManifestSha256,
+    planId,
+    ruleScopeSetSha256,
+  });
 }
 
 const REGISTRY_PRE_EXECUTION_ERROR_CODES = new Set([
@@ -826,8 +849,15 @@ export class EventPublisher {
         if (
           plan?.planId !== draft.data.plan_id ||
           plan.step !== draft.data.step ||
+          plan.ruleManifestSha256 !== draft.data.rule_manifest_sha256 ||
+          plan.ruleScopeSetSha256 !== draft.data.rule_scope_set_sha256 ||
           (draft.data.action_sha256 !== undefined &&
-            draft.data.action_sha256 !== plan.planId)
+            draft.data.action_sha256 !==
+              patchActionSha256(
+                plan.planId,
+                plan.ruleManifestSha256,
+                plan.ruleScopeSetSha256,
+              ))
         ) {
           throw new Error("approval request must match one patch plan");
         }
@@ -874,6 +904,8 @@ export class EventPublisher {
         approval.callId !== draft.data.call_id ||
         approval.planId !== draft.data.plan_id ||
         approval.step !== draft.data.step ||
+        approval.ruleManifestSha256 !== draft.data.rule_manifest_sha256 ||
+        approval.ruleScopeSetSha256 !== draft.data.rule_scope_set_sha256 ||
         this.patchApplies.has(draft.data.call_id)
       ) {
         throw new Error("patch apply must follow its approved request");
@@ -888,6 +920,8 @@ export class EventPublisher {
         apply.approvalRequestId !== draft.data.approval_request_id ||
         apply.planId !== draft.data.plan_id ||
         apply.step !== draft.data.step ||
+        apply.ruleManifestSha256 !== draft.data.rule_manifest_sha256 ||
+        apply.ruleScopeSetSha256 !== draft.data.rule_scope_set_sha256 ||
         !patchCompletionMatchesStarted(apply.files, draft.data.files)
       ) {
         throw new Error("patch completion must match one started apply");
@@ -1454,6 +1488,12 @@ export class EventPublisher {
       this.patchPlans.set(event.data.call_id, {
         callId: event.data.call_id,
         planId: event.data.plan_id,
+        ...(event.data.rule_manifest_sha256 === undefined
+          ? {}
+          : { ruleManifestSha256: event.data.rule_manifest_sha256 }),
+        ...(event.data.rule_scope_set_sha256 === undefined
+          ? {}
+          : { ruleScopeSetSha256: event.data.rule_scope_set_sha256 }),
         step: event.data.step,
       });
     } else if (event.type === "permission.evaluated") {
@@ -1472,6 +1512,14 @@ export class EventPublisher {
         ...(event.data.action === "apply_patch"
           ? { planId: event.data.plan_id }
           : {}),
+        ...(event.data.action === "apply_patch" &&
+        event.data.rule_manifest_sha256 !== undefined
+          ? { ruleManifestSha256: event.data.rule_manifest_sha256 }
+          : {}),
+        ...(event.data.action === "apply_patch" &&
+        event.data.rule_scope_set_sha256 !== undefined
+          ? { ruleScopeSetSha256: event.data.rule_scope_set_sha256 }
+          : {}),
       });
     } else if (event.type === "approval.decided") {
       const approval = this.approvals.get(event.data.approval_request_id);
@@ -1483,6 +1531,12 @@ export class EventPublisher {
         completed: false,
         files: event.data.files,
         planId: event.data.plan_id,
+        ...(event.data.rule_manifest_sha256 === undefined
+          ? {}
+          : { ruleManifestSha256: event.data.rule_manifest_sha256 }),
+        ...(event.data.rule_scope_set_sha256 === undefined
+          ? {}
+          : { ruleScopeSetSha256: event.data.rule_scope_set_sha256 }),
         step: event.data.step,
       });
     } else if (event.type === "patch.apply.completed") {

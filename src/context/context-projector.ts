@@ -233,6 +233,8 @@ export class ContextProjector {
     const add = (seed: ContextItemInput): void => {
       items.push(createContextItem(seed, this.estimator));
     };
+    const latestRepositorySource = [...events].reverse().find((event) => event.type === "repository.source.snapshot.captured");
+    const latestRepositoryIndex = [...events].reverse().find((event) => event.type === "repository.index.selected");
 
     for (const instruction of [...input.systemInstructions].sort((left, right) =>
       left.id.localeCompare(right.id),
@@ -434,6 +436,48 @@ export class ContextProjector {
             metadata: jsonValue(data, event),
             priority: "critical",
             protectedCategory: "backend_budget_epoch",
+            role: "system",
+            visibility: "provider_context",
+          });
+          break;
+        case "repository.source.snapshot.captured":
+          if (event.eventId !== latestRepositorySource?.eventId) break;
+          add({
+            ...base,
+            authority: "authoritative",
+            content: `BORNAGENT_REPOSITORY_STATE_V1\n${canonicalJson({ kind: "source", ...data })}`,
+            kind: "state_fact",
+            metadata: jsonValue(data, event),
+            priority: "critical",
+            protectedCategory: "repository_state",
+            role: "system",
+            visibility: "provider_context",
+          });
+          break;
+        case "repository.index.selected":
+          if (event.eventId !== latestRepositoryIndex?.eventId) break;
+          add({
+            ...base,
+            authority: "authoritative",
+            content: `BORNAGENT_REPOSITORY_STATE_V1\n${canonicalJson({ kind: "index", ...data })}`,
+            kind: "state_fact",
+            metadata: jsonValue(data, event),
+            priority: "critical",
+            protectedCategory: "repository_state",
+            role: "system",
+            visibility: "provider_context",
+          });
+          break;
+        case "repository.index.invalidated":
+          if (latestRepositoryIndex !== undefined && latestRepositoryIndex.sessionSeq > event.sessionSeq) break;
+          add({
+            ...base,
+            authority: "authoritative",
+            content: `BORNAGENT_REPOSITORY_STATE_V1\n${canonicalJson({ kind: "invalidated", ...data })}`,
+            kind: "state_fact",
+            metadata: jsonValue(data, event),
+            priority: "critical",
+            protectedCategory: "unresolved_errors",
             role: "system",
             visibility: "provider_context",
           });

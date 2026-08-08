@@ -25,6 +25,11 @@ export interface SessionWriter {
     runId: string,
     event: Phase10ArtifactEvent,
   ): Promise<unknown>;
+  /** Narrow compatibility port for a writer that records only the Phase 18A snapshot artifact. */
+  appendCapabilitySnapshotArtifact?(
+    runId: string,
+    event: Phase10ArtifactEvent,
+  ): Promise<unknown>;
   appendRunEvent?<TType extends Phase9RunEventType>(
     runId: string,
     type: TType,

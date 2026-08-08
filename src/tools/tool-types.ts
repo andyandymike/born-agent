@@ -4,6 +4,7 @@ import type { ArtifactOutputMaterializationPort } from "../artifacts/artifact-se
 import type { ModelToolDefinition } from "../model/model-backend.js";
 import type { RuntimeToolValidator } from "./validators/runtime-tool-validator.js";
 import type { PlanMutationControl } from "../plans/plan-mutation-control.js";
+import type { RepositoryRuleObservationBinding } from "../repository-rules/repository-rule-observation-binding.js";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 16 * 1024;
 export const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
@@ -66,6 +67,7 @@ export type ToolRawResult =
       readonly control?: ToolControlSignal;
       /** Already-sanitized exact observation for protocol adapters such as MCP. */
       readonly preSerializedOutput?: string;
+      readonly repositoryRuleBinding?: RepositoryRuleObservationBinding;
       readonly truncated: boolean;
       readonly value: Readonly<Record<string, unknown>>;
     }
@@ -74,6 +76,7 @@ export type ToolRawResult =
       readonly control?: ToolControlSignal;
       readonly ok: false;
       readonly preSerializedOutput?: string;
+      readonly repositoryRuleBinding?: RepositoryRuleObservationBinding;
       // PHASE6: execution failures can still carry bounded stdout/stderr evidence;
       // the Registry remains the single serializer/redactor for that observation.
       readonly truncated?: boolean;
@@ -87,6 +90,7 @@ export type ToolExecution =
       readonly ok: true;
       readonly control?: ToolControlSignal;
       readonly output: string;
+      readonly repositoryRuleBinding?: RepositoryRuleObservationBinding;
       readonly truncated: boolean;
     }
   | {
@@ -94,6 +98,7 @@ export type ToolExecution =
       readonly control?: ToolControlSignal;
       readonly ok: false;
       readonly output: string;
+      readonly repositoryRuleBinding?: RepositoryRuleObservationBinding;
       readonly truncated: boolean;
     };
 

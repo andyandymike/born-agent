@@ -11,6 +11,12 @@ import {
   type PatchPlan,
 } from "../changes/patch-types.js";
 import {
+  createPatchRuleScopeBinding,
+  type PatchRuleScopeBinding,
+} from "../changes/patch-rule-scope-binding.js";
+import type { RepositoryRuleScopeResolver } from "../repository-rules/repository-rule-scope.js";
+import type { RepositoryRuleObservationTracker } from "../repository-rules/repository-rule-observation-binding.js";
+import {
   EventPersistenceError,
   type EventPublisher,
 } from "../events/event-publisher.js";
@@ -59,6 +65,11 @@ export interface ApplyPatchToolOptions {
   readonly onApplied?: (result: PatchApplyResult) => Promise<void> | void;
   readonly planner: PatchPlannerLike;
   readonly publisher: EventPublisher;
+  readonly repositoryRules?: {
+    readonly assertFresh: () => Promise<void>;
+    readonly resolver: RepositoryRuleScopeResolver;
+    readonly tracker?: RepositoryRuleObservationTracker;
+  };
   readonly goalChange?: {
     readonly artifactRuntime: ArtifactSessionRuntimeLike;
     readonly beforeCapture: (plan: PatchPlan) => Promise<void> | void;
@@ -66,6 +77,26 @@ export interface ApplyPatchToolOptions {
     readonly goalRevision: number;
   };
   readonly secrets?: readonly (string | undefined)[];
+}
+
+async function repositoryRulesStale(
+  repositoryRules: ApplyPatchToolOptions["repositoryRules"],
+): Promise<ToolRawResult | null> {
+  if (repositoryRules === undefined) return null;
+  try {
+    await repositoryRules.assertFresh();
+    return null;
+  } catch {
+    return {
+      error: toolError(
+        "permission",
+        "repository_rules_stale",
+        "repository rules changed after this run was frozen; start a new run",
+        true,
+      ),
+      ok: false,
+    };
+  }
 }
 
 async function publishBoundary(
@@ -200,6 +231,8 @@ export function createApplyPatchTool(
     description:
       "Propose a bounded Git-style unified diff. The host validates it and asks the user before creating or modifying files.",
     execute: async (input, context) => {
+      const initialRulesFailure = await repositoryRulesStale(options.repositoryRules);
+      if (initialRulesFailure !== null) return initialRulesFailure;
       if (
         (options.secrets ?? []).some(
           (secret) => secret !== undefined && secret.length > 0 && input.patch.includes(secret),
@@ -229,6 +262,29 @@ export function createApplyPatchTool(
               ok: false,
             };
       }
+      let ruleScope: PatchRuleScopeBinding | undefined;
+      if (options.repositoryRules !== undefined) {
+        const rulesFailure = await repositoryRulesStale(options.repositoryRules);
+        if (rulesFailure !== null) return rulesFailure;
+        try {
+          ruleScope = createPatchRuleScopeBinding(
+            options.repositoryRules.resolver,
+            plan.files.map((file) => file.relativePath),
+          );
+          options.repositoryRules.tracker?.observe(
+            plan.files.map((file) => file.relativePath),
+          );
+        } catch {
+          return {
+            error: toolError(
+              "permission",
+              "repository_rule_scope_invalid",
+              "patch targets could not be bound to the frozen repository rules",
+            ),
+            ok: false,
+          };
+        }
+      }
 
       const patchPlanEvent = await publishBoundary(
         options.publisher,
@@ -242,6 +298,12 @@ export function createApplyPatchTool(
               path: file.relativePath,
             })),
             plan_id: plan.planId,
+            ...(ruleScope === undefined
+              ? {}
+              : {
+                  rule_manifest_sha256: ruleScope.manifestSha256,
+                  rule_scope_set_sha256: ruleScope.ruleScopeSetSha256,
+                }),
             preview: plan.preview,
             removed_lines: plan.removedLines,
             step: context.step,
@@ -254,8 +316,15 @@ export function createApplyPatchTool(
 
       let approval;
       try {
+        const rulesFailure = await repositoryRulesStale(options.repositoryRules);
+        if (rulesFailure !== null) return rulesFailure;
         approval = await options.approvalGate.request(
-          { callId: context.callId, plan, step: context.step },
+          {
+            callId: context.callId,
+            plan,
+            ...(ruleScope === undefined ? {} : { ruleScope }),
+            step: context.step,
+          },
           context.signal,
         );
       } catch (error) {
@@ -286,6 +355,11 @@ export function createApplyPatchTool(
           ok: false,
         };
       }
+
+      const approvedRulesFailure = await repositoryRulesStale(
+        options.repositoryRules,
+      );
+      if (approvedRulesFailure !== null) return approvedRulesFailure;
 
       try {
         await options.planner.revalidate(plan, context.signal);
@@ -351,6 +425,12 @@ export function createApplyPatchTool(
                 file.kind === "create" ? null : file.preimageSha256,
             })),
             plan_id: plan.planId,
+            ...(ruleScope === undefined
+              ? {}
+              : {
+                  rule_manifest_sha256: ruleScope.manifestSha256,
+                  rule_scope_set_sha256: ruleScope.ruleScopeSetSha256,
+                }),
             step: context.step,
           },
           type: "patch.apply.started",
@@ -395,6 +475,12 @@ export function createApplyPatchTool(
             })),
             journal_sha256: resultJournalSha256(result),
             plan_id: result.planId,
+            ...(ruleScope === undefined
+              ? {}
+              : {
+                  rule_manifest_sha256: ruleScope.manifestSha256,
+                  rule_scope_set_sha256: ruleScope.ruleScopeSetSha256,
+                }),
             removed_lines: result.removedLines,
             step: context.step,
           },

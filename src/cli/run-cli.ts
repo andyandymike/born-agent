@@ -33,6 +33,18 @@ import {
   executePlanReplace,
   executePlanShow,
 } from "../commands/plan.js";
+import {
+  executeRepoIndex,
+  executeRepoQueryOutline,
+  executeRepoQueryReferences,
+  executeRepoQuerySymbol,
+  executeRepoStatus,
+} from "../commands/repo.js";
+import {
+  executeCapabilitiesDoctor,
+  executeCapabilitiesList,
+  executeCapabilitiesShow,
+} from "../commands/capabilities.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -55,6 +67,97 @@ export async function runCli(
     });
 
   let commandExitCode = 0;
+
+  const capabilities = program
+    .command("capabilities")
+    .description("Inspect the exact local capability catalog without executing components.");
+
+  capabilities
+    .command("list")
+    .description("List bounded capability metadata from explicit sources.")
+    .option("--source <source>", "builtin, user_install, or workspace")
+    .option("--kind <kind>", "skill, hook, or mcp_server")
+    .option("--enabled-only", "show only capabilities eligible for a new run", false)
+    .option("--workspace <absolute-path>", "inspect one explicit workspace")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { enabledOnly: boolean; json: boolean; kind?: string; source?: string; workspace?: string }) => {
+      commandExitCode = await executeCapabilitiesList(options, runtime, io);
+    });
+
+  capabilities
+    .command("show")
+    .description("Show one exact or uniquely resolved capability.")
+    .argument("<selector>", "qualified ID or unique read-only selector")
+    .option("--workspace <absolute-path>", "inspect one explicit workspace")
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean; workspace?: string }) => {
+      commandExitCode = await executeCapabilitiesShow(selector, options, runtime, io);
+    });
+
+  capabilities
+    .command("doctor")
+    .description("Validate capability sources, manifests, paths, digests, and conflicts without repair.")
+    .option("--workspace <absolute-path>", "inspect one explicit workspace")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean; workspace?: string }) => {
+      commandExitCode = await executeCapabilitiesDoctor(options, runtime, io);
+    });
+
+  const repo = program
+    .command("repo")
+    .description("Inspect, build, and query the local derived repository index.");
+
+  repo
+    .command("status")
+    .description("Inspect source, rules, engine, and existing cache without building.")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean }) => {
+      commandExitCode = await executeRepoStatus(options, runtime, io);
+    });
+
+  repo
+    .command("index")
+    .description("Build or update the local derived repository index in the foreground.")
+    .option("--rebuild", "ignore the current pointer and verify a clean rebuild", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean; rebuild: boolean }) => {
+      commandExitCode = await executeRepoIndex(options, runtime, io);
+    });
+
+  const repoQuery = repo.command("query").description("Run one bounded structured repository query.");
+
+  repoQuery
+    .command("outline")
+    .argument("[path]", "canonical workspace-relative subtree")
+    .option("--max-depth <depth>", "relative depth 0..4")
+    .option("--limit <count>", "result limit 1..500")
+    .option("--cursor <cursor>", "opaque generation-bound cursor")
+    .option("--json", "write versioned JSON", true)
+    .action(async (path: string | undefined, options: { cursor?: string; json: boolean; limit?: string; maxDepth?: string }) => {
+      commandExitCode = await executeRepoQueryOutline(path, options, runtime, io);
+    });
+
+  repoQuery
+    .command("symbol")
+    .argument("<query>", "bounded symbol name query")
+    .option("--path <prefix>", "canonical workspace-relative path prefix")
+    .option("--limit <count>", "result limit 1..50")
+    .option("--cursor <cursor>", "opaque generation-bound cursor")
+    .option("--json", "write versioned JSON", true)
+    .action(async (query: string, options: { cursor?: string; json: boolean; limit?: string; path?: string }) => {
+      commandExitCode = await executeRepoQuerySymbol(query, options, runtime, io);
+    });
+
+  repoQuery
+    .command("references")
+    .argument("<symbol-id>", "generation-bound symbol ID from find_symbol")
+    .option("--relation <relation>", "reference relation filter", collectOption, [])
+    .option("--limit <count>", "result limit 1..100")
+    .option("--cursor <cursor>", "opaque generation-bound cursor")
+    .option("--json", "write versioned JSON", true)
+    .action(async (symbolId: string, options: { cursor?: string; json: boolean; limit?: string; relation: string[] }) => {
+      commandExitCode = await executeRepoQueryReferences(symbolId, { ...options, relations: options.relation }, runtime, io);
+    });
 
   const policy = program
     .command("policy")

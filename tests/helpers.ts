@@ -5,6 +5,7 @@ import { BackendPreflightError } from "../src/model/backend-factory.js";
 import type { RunEvent } from "../src/events/run-event.js";
 import type { ExecutableResult } from "../src/doctor/types.js";
 import type { SessionWriter } from "../src/sessions/jsonl-session-writer.js";
+import type { Phase10ArtifactEvent } from "../src/artifacts/artifact-types.js";
 import type {
   Phase9RunEventData,
   Phase9RunEventType,
@@ -94,6 +95,20 @@ export class InMemorySessionWriter implements SessionWriter {
   ): Promise<void> {
     this.runEventsV2.push({ data, eventId, runId, type });
     this.persistedTypes.push(type);
+  }
+
+  async appendCapabilitySnapshotArtifact(
+    runId: string,
+    event: Phase10ArtifactEvent,
+  ): Promise<void> {
+    this.v2Counter += 1;
+    this.runEventsV2.push({
+      data: event.data,
+      eventId: `90000000-0000-4000-8000-${String(this.v2Counter).padStart(12, "0")}`,
+      runId,
+      type: event.type,
+    });
+    this.persistedTypes.push(event.type);
   }
 
   async close(): Promise<void> {

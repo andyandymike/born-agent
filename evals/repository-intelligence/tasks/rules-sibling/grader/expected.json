@@ -1,0 +1,1 @@
+{"schemaVersion":1,"caseId":"rules-sibling","confirmedAbsent":false,"expected":[{"path":"a/AGENTS.md","line":null,"column":null},{"path":"b/AGENTS.md","line":null,"column":null}]}

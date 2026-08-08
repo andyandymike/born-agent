@@ -54,6 +54,7 @@ export type RunCommandInput = z.infer<typeof runCommandInputSchema>;
 
 export interface RunCommandToolOptions {
   readonly approvalGate: CommandApprovalGate;
+  readonly beforeEffect?: () => Promise<void>;
   readonly defaultTimeoutMs: number;
   readonly executor: Executor;
   readonly maxOutputBytes: number;
@@ -352,6 +353,19 @@ export function createRunCommandTool(
     description:
       "Run one policy-controlled executable with an exact argv array in the configured local or Docker executor; local execution is not an OS sandbox and either backend may require user approval.",
     execute: async (input, context) => {
+      try {
+        await options.beforeEffect?.();
+      } catch {
+        return {
+          error: toolError(
+            "permission",
+            "repository_rules_stale",
+            "repository rules changed after this run was frozen; start a new run",
+            true,
+          ),
+          ok: false,
+        };
+      }
       let prepared: PreparedExecution;
       try {
         prepared = await options.preparer.prepare({
@@ -448,6 +462,19 @@ export function createRunCommandTool(
             "permission",
             "command_stale",
             "command inputs changed after permission evaluation",
+            true,
+          ),
+          ok: false,
+        };
+      }
+      try {
+        await options.beforeEffect?.();
+      } catch {
+        return {
+          error: toolError(
+            "permission",
+            "repository_rules_stale",
+            "repository rules changed after this run was frozen; start a new run",
             true,
           ),
           ok: false,

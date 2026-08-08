@@ -1,0 +1,1 @@
+{"schemaVersion":1,"caseId":"outline-tree","confirmedAbsent":false,"expected":[{"path":"a.ts","line":null,"column":null},{"path":"lib/b.ts","line":null,"column":null},{"path":"test/c.test.ts","line":null,"column":null}]}

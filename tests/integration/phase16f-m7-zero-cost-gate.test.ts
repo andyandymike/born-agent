@@ -231,26 +231,57 @@ function lastEventId(
 }
 
 function planBehavior(): FakeStreamBehavior {
-  return scriptedBehavior((index) => {
+  return scriptedBehavior((index, request) => {
     switch (index) {
       case 0:
+        return turn("repository_outline", "plan-outline", {
+          cursor: null,
+          limit: 20,
+          max_depth: 4,
+          path: VERIFY_CWD,
+        });
+      case 1:
+        return turn("find_symbol", "plan-find-clamp", {
+          cursor: null,
+          kinds: null,
+          limit: 10,
+          path_prefix: VERIFY_CWD,
+          query: "clamp",
+        });
+      case 2: {
+        if (request.input.kind !== "tool_result") {
+          throw new Error("find_symbol result was not continued");
+        }
+        const output = JSON.parse(request.input.output) as {
+          readonly result: readonly { readonly symbolId: string }[];
+        };
+        const symbolId = output.result[0]?.symbolId;
+        if (symbolId === undefined) throw new Error("clamp symbol was not found");
+        return turn("find_references", "plan-find-clamp-references", {
+          cursor: null,
+          limit: 20,
+          relations: null,
+          symbol_id: symbolId,
+        });
+      }
+      case 3:
         return turn("read_file", "plan-read-source", {
           end_line: null,
           path: TARGET,
           start_line: null,
         });
-      case 1:
+      case 4:
         return turn("read_file", "plan-read-verifier", {
           end_line: null,
           path: `${VERIFY_CWD}/verify.mjs`,
           start_line: null,
         });
-      case 2:
+      case 5:
         return turn("update_plan", "plan-propose", {
           operation: "propose",
           plan: { items: PLAN_ITEMS, title: "M7 verified clamp workflow" },
         });
-      case 3:
+      case 6:
         return finalTurn("The four-item durable Plan is ready for exact review.");
       default:
         throw new Error("unexpected Plan model turn");
@@ -688,8 +719,8 @@ class ReplayRenderer implements PiTuiRenderer {
   }
 }
 
-describe("Phase 16F M7 zero-cost gate", () => {
-  it("completes the reviewed multi-run Goal, starts a new Goal, and replays the same final report", async () => {
+describe("Phase 16F M7 / Phase 17E M8 zero-cost gate", () => {
+  it("navigates, completes the reviewed multi-run Goal, deletes cache, starts a new Goal, and replays exactly", async () => {
     const cwd = await fixtureWorkspace();
     const probe: WriterProbe = { current: null };
     const backends = [
@@ -745,7 +776,7 @@ describe("Phase 16F M7 zero-cost gate", () => {
           });
           watchdog = setTimeout(() => {
             renderer?.failAfterTimeout();
-          }, 25_000);
+          }, 45_000);
           return renderer;
         },
         stdinIsTTY: true,
@@ -813,7 +844,7 @@ describe("Phase 16F M7 zero-cost gate", () => {
     expect(await readFile(join(cwd, ...TARGET.split("/")), "utf8")).toBe(FIXED);
     expect(backendIndex).toBe(5);
     expect(backends.map((backend) => backend.calls.length)).toEqual([
-      4, 7, 1, 7, 1,
+      7, 7, 1, 7, 1,
     ]);
 
     const file = (await readdir(join(cwd, ".bornagent", "sessions"))).find(
@@ -821,9 +852,8 @@ describe("Phase 16F M7 zero-cost gate", () => {
     );
     expect(file).toBeDefined();
     const sessionId = file!.slice(0, -".jsonl".length);
-    const stored = await readStoredSession(
-      join(cwd, ".bornagent", "sessions", file!),
-    );
+    const sessionPath = join(cwd, ".bornagent", "sessions", file!);
+    const stored = await readStoredSession(sessionPath);
     const reconstructed = reconstructMultiRunSession(stored);
     const starts = stored.filter((event) => event.type === "run.started");
     const goals = stored.filter((event) => event.type === "goal.created");
@@ -838,6 +868,19 @@ describe("Phase 16F M7 zero-cost gate", () => {
           event.runId === starts[0]!.runId,
       ),
     ).toHaveLength(2);
+    expect(
+      stored.filter(
+        (event) =>
+          event.type === "tool.call.completed" &&
+          ["find_references", "find_symbol", "repository_outline"].includes(
+            event.data.tool_name,
+          ) &&
+          event.runId === starts[0]!.runId,
+      ),
+    ).toHaveLength(3);
+    expect(
+      stored.filter((event) => event.type === "repository.index.selected"),
+    ).not.toHaveLength(0);
     expect(
       stored.filter((event) => event.type === "patch.apply.completed"),
     ).toHaveLength(1);
@@ -886,6 +929,21 @@ describe("Phase 16F M7 zero-cost gate", () => {
       plan: { execution: { completedItems: 4, revision: 2, totalItems: 4 } },
     });
 
+    // PHASE17: replay authority is the durable event log, never the derived
+    // repository cache. Delete every index byte before both replay surfaces.
+    expect(
+      (await readdir(join(cwd, ".bornagent", "cache", "repository-intelligence")))
+        .length,
+    ).toBeGreaterThan(0);
+    const sessionBytesBeforeCacheDelete = await readFile(sessionPath, "utf8");
+    await rm(join(cwd, ".bornagent", "cache"), {
+      force: true,
+      recursive: true,
+    });
+    expect(await readFile(sessionPath, "utf8")).toBe(
+      sessionBytesBeforeCacheDelete,
+    );
+
     const show = createMemoryIO();
     expect(
       await runCli(
@@ -933,5 +991,5 @@ describe("Phase 16F M7 zero-cost gate", () => {
     expect(replayExit, replayIo.readStderr()).toBe(0);
     expect(replayTimedOut).toBe(false);
     expect(replayRenderer?.reportSha256).toBe(shown.outcomeReport.reportSha256);
-  }, 40_000);
+  }, 55_000);
 });

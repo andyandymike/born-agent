@@ -1,0 +1,1 @@
+{"schemaVersion":1,"caseId":"outline-subtree","confirmedAbsent":false,"expected":[{"path":"src/a.ts","line":null,"column":null},{"path":"src/nested/b.ts","line":null,"column":null}]}

@@ -8,6 +8,7 @@ export interface ApprovalPath {
 }
 
 export interface PatchApprovalPreview {
+  readonly actionSha256?: string;
   readonly actionKind: "apply_patch";
   readonly addedLines: number;
   readonly paths: readonly ApprovalPath[];
@@ -15,6 +16,8 @@ export interface PatchApprovalPreview {
   readonly preview: string;
   readonly previewTruncated: boolean;
   readonly removedLines: number;
+  readonly ruleManifestSha256?: string;
+  readonly ruleScopeSetSha256?: string;
 }
 
 export interface CommandApprovalPreview {

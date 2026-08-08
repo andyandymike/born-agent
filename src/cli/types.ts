@@ -24,6 +24,8 @@ import type {
 } from "../execution/docker/container-reconciliation-runtime.js";
 import type { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-artifact-acquirer.js";
 import type { ModelQualificationGate } from "../model/model-qualification-gate.js";
+import type { RepositoryNavigationEventSink, RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
+import type { CapabilityPlatformLike } from "../capabilities/capability-platform.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -39,7 +41,15 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   createAgentToolRegistry(
     options: AgentToolRegistryOptions,
   ): Promise<ToolRegistryLike>;
+  readonly createRepositoryNavigationService?: (
+    workspace: string,
+    secrets: readonly string[],
+    events?: RepositoryNavigationEventSink,
+  ) => Promise<RepositoryNavigationService>;
   createApprovalPrompt(io: CliIO): ApprovalPrompt;
+  readonly createCapabilityPlatform?: (
+    workspace: string,
+  ) => CapabilityPlatformLike;
   readonly createMcpClientManager?: (options: {
     readonly events: McpEventAppender;
     readonly prompt: ApprovalPrompt;

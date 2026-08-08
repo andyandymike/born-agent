@@ -9,8 +9,8 @@ const REQUIRED_FIXTURE_FILES = Object.freeze([
 ]);
 const REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/server.mjs": "9093c8cbf78b9bc29b0d1ae82f2ed75fb6b28af951aa1c3ef786070f53ad3037",
-  "package.json": "826b9403aa121e1bdeae8481b0271a4b525fd764c479ddaebe1d32d304b0eb2e",
-  "pnpm-lock.yaml": "262734ed79bd9c7c68a68d9a7c4c6af5a2e957689c59186a05d9a72dc9cefe97",
+  "package.json": "08d16733823a4b2dcbce80845482abc168174235a1d490a927c99d9a8afa72db",
+  "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 
 export function isCheckedInOfflineFixture(input: {

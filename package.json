@@ -7,6 +7,7 @@
   "license": "MIT",
   "files": [
     "dist",
+    "capabilities",
     "evals",
     "policies",
     "docker/artifacts"
@@ -30,7 +31,9 @@
     "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run && node scripts/clean.mjs && tsc -p tsconfig.build.json",
     "session:validate": "node scripts/validate-latest-session.mjs",
     "phase4:validate": "node scripts/validate-phase-04-session.mjs",
-    "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs"
+    "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs",
+    "repository:baseline": "tsx src/repository-intelligence/benchmark/run-baseline-cli.ts",
+    "repository:candidates": "tsx src/repository-intelligence/benchmark/run-candidates-cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.7",
@@ -38,6 +41,7 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "ajv": "8.17.1",
     "commander": "15.0.0",
+    "typescript": "6.0.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -47,7 +51,6 @@
     "globals": "17.7.0",
     "node-pty": "1.1.0",
     "tsx": "4.23.1",
-    "typescript": "6.0.3",
     "typescript-eslint": "8.64.0",
     "vitest": "4.1.10"
   }

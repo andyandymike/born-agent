@@ -32,6 +32,8 @@ import type {
   Phase16MutationIntent,
   Phase16StartIntent,
 } from "./phase16-user-intent.js";
+import { RepositoryInvalidationWatcher } from "../repository-intelligence/repository-invalidation-watcher.js";
+import { RepositoryRefreshCoordinator } from "../repository-intelligence/repository-refresh-coordinator.js";
 
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
@@ -505,9 +507,28 @@ export async function executeTui(
   };
   const catalog = new SessionCatalog(runtime.cwd);
   const sessionFileWatcher = new SessionFileWatcher(runtime.cwd);
+  let repositoryRefresh:
+    | {
+        readonly coordinator: RepositoryRefreshCoordinator;
+        readonly service: Awaited<ReturnType<NonNullable<CliRuntime["createRepositoryNavigationService"]>>>;
+      }
+    | undefined;
+  const getRepositoryRefresh = async () => {
+    if (repositoryRefresh !== undefined) return repositoryRefresh;
+    if (runtime.createRepositoryNavigationService === undefined) {
+      throw new Error("repository navigation is unavailable");
+    }
+    const service = await runtime.createRepositoryNavigationService(runtime.cwd, []);
+    const coordinator = new RepositoryRefreshCoordinator(service, {
+      onState: (state) => controllerRef.current?.acceptRepositoryJobState(state),
+    });
+    repositoryRefresh = { coordinator, service };
+    return repositoryRefresh;
+  };
   const continuousPhase16 = runtime.supportsPhase16TaskState === true;
   const core: TuiCorePort = {
     cancelActiveRun: () => abortBridge.cancelActiveRun(),
+    cancelRepositoryRefresh: () => repositoryRefresh?.coordinator.cancel(),
     loadSession: async (sessionId) =>
       (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
     ...(continuousPhase16
@@ -538,6 +559,15 @@ export async function executeTui(
       captureCoreRun((coreIo) =>
         executeAgent(agentOptions(options, task), tuiRuntime, coreIo),
       ),
+    ...(runtime.createRepositoryNavigationService === undefined
+      ? {}
+      : {
+          refreshRepository: async () => {
+            const refresh = await getRepositoryRefresh();
+            await refresh.coordinator.refresh();
+            return refresh.service.status();
+          },
+        }),
     watchSession: (sessionId, onChange, onError) =>
       sessionFileWatcher.watch(sessionId, { onChange, onError }),
     ...(continuousPhase16
@@ -602,9 +632,29 @@ export async function executeTui(
   });
   controllerRef.current = controller;
 
+  let repositoryWatcher: RepositoryInvalidationWatcher | undefined;
+
   let exitCode: 0 | 1;
   try {
     controller.start(initialSnapshot);
+    try {
+      repositoryWatcher = await RepositoryInvalidationWatcher.create(
+        runtime.cwd,
+        (invalidation) => {
+          controller.acceptRepositoryInvalidation(invalidation);
+          repositoryRefresh?.coordinator.invalidate(invalidation);
+        },
+        {
+          onError: () => {
+            controller.setRepositoryWatchState("unavailable");
+            repositoryRefresh?.coordinator.markWatchUnavailable();
+          },
+        },
+      );
+      controller.setRepositoryWatchState(repositoryWatcher.start());
+    } catch {
+      controller.setRepositoryWatchState("unavailable");
+    }
     // PHASE11: run exit codes stay in durable events. The app remains alive
     // after completion/cancellation and returns only its own 0/1 lifecycle code.
     await controller.runInitial({
@@ -618,6 +668,8 @@ export async function executeTui(
     abortBridge.cancelActiveRun();
     exitCode = 1;
   } finally {
+    repositoryWatcher?.stop();
+    await repositoryRefresh?.coordinator.stop();
     try {
       controller.stop();
     } catch {

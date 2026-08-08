@@ -46,6 +46,7 @@ import { SessionLockError } from "../sessions/session-lock.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { executeAgent } from "./agent.js";
 import { countPendingContainerLifecycles } from "../execution/docker/container-reconciliation-runtime.js";
+import { CapabilityError } from "../capabilities/capability-errors.js";
 import { loadRuntimePolicyRegistry } from "../policy/policy-config-loader.js";
 import { RuntimePolicyError } from "../policy/policy-errors.js";
 import {
@@ -501,6 +502,10 @@ const NON_LEGACY_RUN_EVENTS = new Set([
   "mcp.tool.call.started",
   "repository.rules.changed",
   "repository.rules.loaded",
+  "repository.rules.manifest.loaded",
+  "repository.source.snapshot.captured",
+  "repository.index.invalidated",
+  "repository.index.selected",
   "resume.pending_call.adopted",
   "tool.call.recovered",
 ]);
@@ -1094,11 +1099,22 @@ export async function executeSessionsResume(
     }
     const config = resolveAgentConfig(agentOptions, runtime.env);
     if (!config.ok) return usageError(io, config.error);
+    const currentCapabilitySnapshot = runtime.createCapabilityPlatform === undefined
+      ? undefined
+      : await runtime
+          .createCapabilityPlatform(runtime.cwd)
+          .createSnapshot(runtime.timestamp());
     const currentFingerprint = await buildWorkspaceResumeFingerprint({
       ...(agentOptions.mode === undefined
         ? {}
         : { agentMode: agentModeSchema.parse(agentOptions.mode) }),
       backend: selected.backend,
+      ...(currentCapabilitySnapshot === undefined
+        ? {}
+        : {
+            capabilitySnapshotSha256:
+              currentCapabilitySnapshot.snapshotSha256,
+          }),
       config: config.value,
       platform: runtime.platform,
       workspace: runtime.cwd,
@@ -1186,6 +1202,9 @@ export async function executeSessionsResume(
     );
     return await executeAgent(selected.options, runtime, io, {
       backend: selected.backend,
+      ...(currentCapabilitySnapshot === undefined
+        ? {}
+        : { capabilitySnapshot: currentCapabilitySnapshot }),
       continuation: backendResume.continuation,
       fingerprint: currentFingerprint,
       inheritedCall:
@@ -1222,6 +1241,10 @@ export async function executeSessionsResume(
     }
     if (error instanceof BackendPreflightError) {
       return usageError(io, error.message);
+    }
+    if (error instanceof CapabilityError) {
+      io.stderr.write(`${error.code}: ${error.message}\n`);
+      return error.exitCode;
     }
     return dataError(io, error instanceof Error ? error.message : "resume failed");
   } finally {

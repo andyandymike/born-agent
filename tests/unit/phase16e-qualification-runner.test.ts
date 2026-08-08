@@ -38,7 +38,7 @@ const identity: ModelQualificationIdentity = {
   modelRuntimeIdentity: { fixtureVersion: "fixture-v1", kind: "fake_fixture" },
   policyProfileId: "test-profile",
   policyProfileSha256: "2".repeat(64),
-  probeSuiteVersion: "phase16e-v1",
+  probeSuiteVersion: "phase17-navigation-v1",
   probeToolSchemaSha256: "3".repeat(64),
   provider: "openai",
 };
@@ -55,9 +55,9 @@ function passingBehavior(): FakeStreamBehavior {
     if (request === 1) {
       yield {
         call: {
-          argumentsJson: JSON.stringify({ nonce: "nonce-fixture" }),
-          callId: "echo-1",
-          name: "qualification_echo",
+          argumentsJson: JSON.stringify({ cursor: null, kinds: null, limit: 1, path_prefix: null, query: "nonce-fixture" }),
+          callId: "navigation-1",
+          name: "find_symbol",
         },
         type: "tool_call",
       };
@@ -138,9 +138,9 @@ describe("Phase 16E qualification runner", () => {
       if (request === 1) {
         yield {
           call: {
-            argumentsJson: '{"nonce":"wrong","extra":true}',
+            argumentsJson: '{"cursor":null,"kinds":null,"limit":1,"path_prefix":null,"query":"wrong","extra":true}',
             callId: "bad",
-            name: "qualification_echo",
+            name: "find_symbol",
           },
           type: "tool_call",
         };

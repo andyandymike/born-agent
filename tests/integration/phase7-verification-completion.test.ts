@@ -156,9 +156,12 @@ function scriptedClient(
   return new FakeStreamingChatClient(async function* (request) {
     expect(request.tools.map((tool) => tool.name)).toEqual([
       "apply_patch",
+      "find_references",
+      "find_symbol",
       "finish_task",
       "list_files",
       "read_file",
+      "repository_outline",
       "run_command",
       "search",
     ]);

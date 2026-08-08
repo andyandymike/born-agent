@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import { parseStrictJson } from "../system/strict-json.js";
+import { canonicalJson } from "../completion/canonical-json.js";
 import {
   assertModeDeclared,
   adapterCapabilityDeclarationSchema,
@@ -29,7 +30,7 @@ import {
   MODEL_QUALIFICATION_INSTRUCTIONS,
   MODEL_QUALIFICATION_LIMITS,
   QUALIFICATION_ACKNOWLEDGEMENT,
-  QUALIFICATION_ECHO_TOOL,
+  QUALIFICATION_NAVIGATION_TOOL,
   QUALIFICATION_SEQUENCE_COMPLETE,
   QUALIFICATION_STEP_TOOL,
   sequentialProbePrompt,
@@ -98,23 +99,17 @@ function failedResult<T extends ProbeResult>(
 
 function exactObject(
   input: unknown,
-  expected: Readonly<Record<string, string | number>>,
+  expected: Readonly<Record<string, unknown>>,
 ): boolean {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return false;
   }
-  const record = input as Readonly<Record<string, unknown>>;
-  const keys = Object.keys(record).sort();
-  const expectedKeys = Object.keys(expected).sort();
-  return (
-    keys.join(",") === expectedKeys.join(",") &&
-    expectedKeys.every((key) => record[key] === expected[key])
-  );
+  return canonicalJson(input) === canonicalJson(expected);
 }
 
 function exactCall(
   capture: TurnCapture,
-  expected: { readonly name: string; readonly arguments: Readonly<Record<string, string | number>> },
+  expected: { readonly name: string; readonly arguments: Readonly<Record<string, unknown>> },
 ): { readonly callId: string; readonly matches: boolean } {
   const call = capture.calls[0];
   if (capture.calls.length !== 1 || call === undefined || call.callId.length === 0) {
@@ -183,12 +178,12 @@ export class ModelQualificationRunner {
     const allUsage: ModelUsage[] = [];
     const strict = await this.captureTurn(input.backend, {
       input: { kind: "user_prompt", text: strictProbePrompt(nonce) },
-      tools: [QUALIFICATION_ECHO_TOOL],
+      tools: [QUALIFICATION_NAVIGATION_TOOL],
     });
     allUsage.push(...strict.usage);
     const strictCall = exactCall(strict, {
-      arguments: { nonce },
-      name: QUALIFICATION_ECHO_TOOL.name,
+      arguments: { cursor: null, kinds: null, limit: 1, path_prefix: null, query: nonce },
+      name: QUALIFICATION_NAVIGATION_TOOL.name,
     });
     const strictPassed =
       strict.status === "completed" &&
@@ -214,9 +209,9 @@ export class ModelQualificationRunner {
           callId: strictCall.callId,
           continuation: strict.terminal,
           kind: "tool_result",
-          output: JSON.stringify({ nonce }),
+          output: JSON.stringify({ matched: true }),
         },
-        tools: [QUALIFICATION_ECHO_TOOL],
+        tools: [QUALIFICATION_NAVIGATION_TOOL],
       });
       allUsage.push(...continuationCapture.usage);
     }

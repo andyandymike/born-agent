@@ -49,9 +49,18 @@ import type {
   Phase16MutationIntent,
   Phase16StartIntent,
 } from "./phase16-user-intent.js";
+import type { RepositoryInvalidation } from "../repository-intelligence/repository-invalidation-watcher.js";
+import type { RepositoryJobState } from "../repository-intelligence/repository-job-state.js";
+import {
+  applyRepositoryJobState,
+  invalidateRepositoryStatus,
+  type RepositoryStatusProjection,
+  withRepositoryWatchState,
+} from "../repository-intelligence/repository-status-projection.js";
 
 export interface TuiCorePort {
   cancelActiveRun(): void;
+  cancelRepositoryRefresh?(): void;
   loadSession(sessionId: string): Promise<readonly TuiPersistedEvent[]>;
   mutateIntent?(intent: Phase16MutationIntent): Promise<TuiCoreRunResult>;
   resumeSession(
@@ -59,6 +68,7 @@ export interface TuiCorePort {
     message?: string,
   ): Promise<TuiCoreRunResult>;
   startTask(task: string): Promise<TuiCoreRunResult>;
+  refreshRepository?(): Promise<RepositoryStatusProjection>;
   startIntent?(
     intent: Phase16StartIntent,
     selectedMode: "build" | "plan",
@@ -238,6 +248,7 @@ export class TuiController {
       const durableRunActive = isActiveRun(this.viewState.run);
       const approvalActive =
         this.viewState.approval?.expiresState.status === "active";
+      const repositoryBuilding = this.viewState.repository.indexState === "building";
       if (
         !durableRunActive &&
         !approvalActive &&
@@ -255,6 +266,8 @@ export class TuiController {
         } else {
           this.options.core.cancelActiveRun();
         }
+      } else if (repositoryBuilding) {
+        this.options.core.cancelRepositoryRefresh?.();
       } else if (this.ephemeralState.draftInput.length > 0) {
         this.ephemeralState = setDraftInput(this.ephemeralState, "");
       } else {
@@ -406,6 +419,59 @@ export class TuiController {
     }
   }
 
+  public acceptRepositoryInvalidation(invalidation: RepositoryInvalidation): void {
+    if (this.stopped) return;
+    this.viewState = {
+      ...this.viewState,
+      repository: invalidateRepositoryStatus(this.viewState.repository, invalidation),
+    };
+    this.scheduleRender();
+  }
+
+  public acceptRepositoryJobState(state: RepositoryJobState): void {
+    if (this.stopped) return;
+    this.viewState = {
+      ...this.viewState,
+      repository: applyRepositoryJobState(this.viewState.repository, state),
+    };
+    this.scheduleRender();
+  }
+
+  public acceptRepositoryStatus(status: RepositoryStatusProjection): void {
+    if (this.stopped) return;
+    const withWatch = withRepositoryWatchState(
+      status,
+      this.viewState.repository.watchState,
+    );
+    this.viewState = {
+      ...this.viewState,
+      repository:
+        withWatch.watchState === "unavailable"
+          ? applyRepositoryJobState(withWatch, {
+              code: "repository_watch_unavailable",
+              kind: "degraded",
+            })
+          : withWatch,
+    };
+    this.scheduleRender();
+  }
+
+  public setRepositoryWatchState(state: RepositoryStatusProjection["watchState"]): void {
+    if (this.stopped) return;
+    const withWatch = withRepositoryWatchState(this.viewState.repository, state);
+    this.viewState = {
+      ...this.viewState,
+      repository:
+        state === "unavailable"
+          ? applyRepositoryJobState(withWatch, {
+              code: "repository_watch_unavailable",
+              kind: "degraded",
+            })
+          : withWatch,
+    };
+    this.scheduleRender();
+  }
+
   public handleSourceFatal(): void {
     void this.failFatal();
   }
@@ -530,6 +596,17 @@ export class TuiController {
         result = await this.coordinator?.dispatch({
           type: "refresh_session",
         });
+        if (result?.status !== "fatal" && this.options.core.refreshRepository !== undefined) {
+          try {
+            this.acceptRepositoryStatus(await this.options.core.refreshRepository());
+          } catch (error) {
+            this.showCommandDiagnostic(
+              error instanceof Error
+                ? `Repository refresh failed: ${error.message}`
+                : "Repository refresh failed.",
+            );
+          }
+        }
       } finally {
         this.idleOperationInFlight = false;
       }
@@ -974,7 +1051,12 @@ export class TuiController {
   }
 
   private applySnapshot(snapshot: readonly TuiPersistedEvent[]): void {
-    this.viewState = createInitialTuiViewState();
+    const watchState = this.viewState.repository.watchState;
+    const initial = createInitialTuiViewState();
+    this.viewState = {
+      ...initial,
+      repository: withRepositoryWatchState(initial.repository, watchState),
+    };
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
     this.options.source.resetWhileIdle({ snapshot });

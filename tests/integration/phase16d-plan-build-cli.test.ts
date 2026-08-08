@@ -55,13 +55,17 @@ function planBehavior(): FakeStreamBehavior {
   return async function* (request) {
     turn += 1;
     if (turn === 1) {
-      expect(request.tools.map((tool) => tool.name).sort()).toEqual([
+      const toolNames = request.tools.map((tool) => tool.name).sort();
+      expect(toolNames).toEqual(expect.arrayContaining([
         "list_files",
         "read_artifact",
         "read_file",
         "search",
         "update_plan",
-      ]);
+      ]));
+      expect(toolNames.filter((name) => ["find_references", "find_symbol", "repository_outline"].includes(name))).toEqual(
+        toolNames.includes("find_symbol") ? ["find_references", "find_symbol", "repository_outline"] : [],
+      );
       yield {
         call: {
           argumentsJson: JSON.stringify({

@@ -9,6 +9,7 @@ import {
 import type {
   ContextArtifactReference,
   ContextItem,
+  ContextItemInput,
   ContextJson,
 } from "./context-item.js";
 import { createContextItem } from "./context-item.js";
@@ -37,6 +38,7 @@ export interface AgentContextRuntimeOptions {
   readonly plannerVersion?: string;
   readonly repositoryRules?: RepositoryRuleSet;
   readonly repositoryRulesEventId?: string;
+  readonly repositoryRuleContext?: () => readonly ContextItemInput[];
   readonly systemInstructions: string;
   readonly taskContext?: () => FrozenTaskContextInput;
 }
@@ -110,6 +112,7 @@ export class AgentContextRuntime {
   readonly #planner: ContextPlanner;
   readonly #projector: ContextProjector;
   readonly #repositoryRules: FrozenRepositoryRulesInput | null;
+  readonly #repositoryRuleContext: (() => readonly ContextItemInput[]) | undefined;
   readonly #systemInstructions: string;
   readonly #taskContext: (() => FrozenTaskContextInput) | undefined;
 
@@ -126,6 +129,7 @@ export class AgentContextRuntime {
       options.repositoryRules,
       options.repositoryRulesEventId,
     );
+    this.#repositoryRuleContext = options.repositoryRuleContext;
     this.#systemInstructions = options.systemInstructions;
     this.#taskContext = options.taskContext;
   }
@@ -165,8 +169,12 @@ export class AgentContextRuntime {
               this.#estimator,
             );
           })();
+    const selectedRepositoryRules = (this.#repositoryRuleContext?.() ?? []).map(
+      (item) => createContextItem(item, this.#estimator),
+    );
     const additionalItems = [
       ...(input.additionalItems ?? []),
+      ...selectedRepositoryRules,
       ...(taskContextItem === undefined ? [] : [taskContextItem]),
     ];
     const state = this.#projector.project({

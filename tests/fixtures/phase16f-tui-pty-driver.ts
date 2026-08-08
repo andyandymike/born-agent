@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { writeFile } from "node:fs/promises";
 
 import { spawn } from "node-pty";
 
@@ -9,6 +10,7 @@ if (workspace === undefined || appEntry === undefined) {
 }
 const workspacePath = workspace;
 const appEntryPath = appEntry;
+const repositoryLifecycle = process.argv[4] === "repository";
 
 const MAX_OUTPUT_BYTES = 2_000_000;
 
@@ -204,6 +206,38 @@ async function main(): Promise<void> {
     await delay(100);
     terminal.write("\u0003");
     await waitFor((plain) => plain.includes("run=cancelled"), "first run cancelled");
+    let repositoryDirty = false;
+    let repositoryReady = false;
+    let repositoryRefreshed = false;
+    if (repositoryLifecycle) {
+      terminal.write("/refresh\r");
+      await waitFor(
+        (plain) => plain.includes("engine=typescript-language-service") && plain.includes("index=ready"),
+        "repository first refresh",
+      );
+      repositoryReady = true;
+      const readyOffset = visibleText(raw).lastIndexOf("index=ready");
+      await writeFile(
+        `${workspacePath}${process.platform === "win32" ? "\\" : "/"}repo.ts`,
+        "export const ptyValue = 2;\n",
+        "utf8",
+      );
+      await waitFor(
+        (plain) => plain.indexOf("index=dirty", readyOffset + 1) >= 0,
+        "repository external invalidation",
+      );
+      repositoryDirty = true;
+      const dirtyOffset = visibleText(raw).lastIndexOf("index=dirty");
+      // `/refresh` deliberately remains visible in the local draft. Re-submit it, then clear
+      // the draft before the second ordinary task.
+      terminal.write("\r");
+      await waitFor(
+        (plain) => plain.indexOf("index=ready", dirtyOffset + 1) >= 0,
+        "repository second refresh",
+      );
+      repositoryRefreshed = true;
+      terminal.write("\u007f".repeat(8));
+    }
     terminal.write("Second PTY run");
     await waitFor(
       (plain) => plain.includes("> Second PTY run"),
@@ -237,6 +271,9 @@ async function main(): Promise<void> {
       appExitCode: 0,
       outputBase64: Buffer.from(raw, "utf8").toString("base64"),
       resized,
+      repositoryDirty,
+      repositoryReady,
+      repositoryRefreshed,
       shellExitCode: terminalExit.exitCode,
       shellRestored:
         visibleText(raw).split("PTY_SHELL_RESTORED").length - 1 >= 2,

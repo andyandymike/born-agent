@@ -38,7 +38,7 @@ export const repositoryRulesLoadedDataSchema = z.discriminatedUnion("state", [
     .strict(),
 ]);
 
-export const repositoryRulesChangedDataSchema = z
+const rootRepositoryRulesChangedDataSchema = z
   .object({
     current_content_sha256: sha256Schema.nullable().optional(),
     current_error_code: z
@@ -87,9 +87,44 @@ export const repositoryRulesChangedDataSchema = z
     }
   });
 
+const manifestRepositoryRulesChangedDataSchema = z
+  .object({
+    change_scope: z.literal("manifest"),
+    current_identity_sha256: sha256Schema.nullable(),
+    frozen_manifest_sha256: sha256Schema,
+    reason: z.enum(["content_changed", "created", "invalid", "removed"]),
+  })
+  .strict();
+
+export const repositoryRulesChangedDataSchema = z.union([
+  rootRepositoryRulesChangedDataSchema,
+  manifestRepositoryRulesChangedDataSchema,
+]);
+
+export const repositoryRulesManifestLoadedDataSchema = z
+  .object({
+    discovery_policy_sha256: sha256Schema,
+    manifest_artifact_id: artifactIdSchema,
+    manifest_object_ref: relativeObjectRefSchema,
+    manifest_sha256: sha256Schema,
+    rule_count: z.number().int().nonnegative().max(4096),
+    source_state_sha256: sha256Schema,
+    total_content_bytes: z.number().int().nonnegative().max(16 * 1024 * 1024),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.manifest_artifact_id !== `sha256:${value.manifest_sha256}` ||
+      !value.manifest_object_ref.endsWith(`/objects/${value.manifest_sha256}`)
+    ) {
+      context.addIssue({ code: "custom", message: "repository rule manifest artifact identity is inconsistent" });
+    }
+  });
+
 export const phase10RepositoryRulesRunEventDataSchemas = {
   "repository.rules.changed": repositoryRulesChangedDataSchema,
   "repository.rules.loaded": repositoryRulesLoadedDataSchema,
+  "repository.rules.manifest.loaded": repositoryRulesManifestLoadedDataSchema,
 } as const;
 
 export type Phase10RepositoryRulesRunEventType =

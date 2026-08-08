@@ -151,6 +151,21 @@ function toolCompletedData(
           retryable: execution.error.retryable,
         }),
     output: execution.output,
+    ...(execution.repositoryRuleBinding === undefined
+      ? {}
+      : {
+          repository_rule_binding: {
+            rule_manifest_sha256:
+              execution.repositoryRuleBinding.ruleManifestSha256,
+            rule_scope_truncated:
+              execution.repositoryRuleBinding.ruleScopeTruncated,
+            target_scopes:
+              execution.repositoryRuleBinding.targetScopes.map((scope) => ({
+                relative_path: scope.relativePath,
+                scope_sha256: scope.scopeSha256,
+              })),
+          },
+        }),
     status: execution.ok ? ("success" as const) : ("error" as const),
     step,
     tool_name: call.name,

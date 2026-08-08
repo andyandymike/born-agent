@@ -7,6 +7,7 @@ import { phase12McpRunEventDataSchemas } from "../mcp/mcp-event-schema.js";
 import { phase13SandboxRunEventDataSchemas } from "../execution/docker/sandbox-event-schema.js";
 import { phase16TaskSessionEventDataSchemas } from "../coordination/task-event-schema.js";
 import { phase16GoalChangeRunEventDataSchemas } from "../coordination/goal-change-event-schema.js";
+import { phase17RepositoryIntelligenceRunEventDataSchemas } from "../repository-intelligence/repository-intelligence-event-schema.js";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
@@ -210,6 +211,7 @@ export const phase9RunEventDataSchemas = {
   ...phase10RepositoryRulesRunEventDataSchemas,
   ...phase12McpRunEventDataSchemas,
   ...phase13SandboxRunEventDataSchemas,
+  ...phase17RepositoryIntelligenceRunEventDataSchemas,
   "backend.canonical_boundary.created":
     backendCanonicalBoundaryCreatedDataSchema,
   "backend.checkpoint.created": backendCheckpointCreatedDataSchema,

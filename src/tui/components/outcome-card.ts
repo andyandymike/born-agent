@@ -7,6 +7,11 @@ export function renderOutcomeCard(
   return [
     `OUTCOME | ${report.outcome} | changes=${String(report.changes.length)} | verification=${report.verification?.status ?? "none"}`,
     `OUTCOME HASH | ${report.reportSha256}`,
+    ...(report.repository === null
+      ? []
+      : [
+          `REPOSITORY | gen=${report.repository.finalGenerationSha256.slice(0, 8)} | coverage=${report.repository.coverage} | queries=${String(report.repository.queries.outline + report.repository.queries.symbol + report.repository.queries.references)}`,
+        ]),
     ...(report.outcomeReasons.length === 0
       ? []
       : [`OUTCOME REASONS | ${report.outcomeReasons.join(", ")}`]),

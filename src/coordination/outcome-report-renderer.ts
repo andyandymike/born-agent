@@ -19,7 +19,17 @@ export function renderOutcomeReport(
         : `${report.plan.execution.status} ${report.plan.execution.id} rev ${String(report.plan.execution.revision)} (${String(report.plan.execution.completedItems)}/${String(report.plan.execution.totalItems)} completed)`
     }`,
     `Changes: ${String(report.changes.length)}`,
+    `Capabilities: ${
+      report.capabilities === null
+        ? "legacy-none"
+        : `${report.capabilities.eligiblePluginCount} plugins / ${report.capabilities.componentCount} components (${report.capabilities.snapshotId.slice(0, 28)}...)`
+    }`,
     `Verification: ${report.verification?.status ?? "none"}`,
+    `Repository: ${
+      report.repository === null
+        ? "none"
+        : `${report.repository.coverage} ${report.repository.finalGenerationSha256} (outline=${String(report.repository.queries.outline)}, symbol=${String(report.repository.queries.symbol)}, references=${String(report.repository.queries.references)})`
+    }`,
     `Reasons: ${report.outcomeReasons.join(", ") || "none"}`,
   ];
   return `${lines.join("\n")}\n`;

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"references","program":[{"tool":"search","arguments":{"glob":null,"mode":"literal","path":null,"query":"from \"./source.js\""}}],"fixtureActions":[]}

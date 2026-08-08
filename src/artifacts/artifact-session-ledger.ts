@@ -186,6 +186,36 @@ function hasArtifactOriginAuthority(
     }
     return true;
   }
+  if (origin.type === "run.started") {
+    const originData =
+      origin.data !== null &&
+      typeof origin.data === "object" &&
+      !Array.isArray(origin.data)
+        ? (origin.data as Readonly<Record<string, unknown>>)
+        : {};
+    const capability =
+      originData.capability_snapshot !== null &&
+      typeof originData.capability_snapshot === "object" &&
+      !Array.isArray(originData.capability_snapshot)
+        ? (originData.capability_snapshot as Readonly<Record<string, unknown>>)
+        : undefined;
+    if (
+      origin.sessionSeq >= event.sessionSeq ||
+      capability === undefined ||
+      capability.artifact_id !== data.artifact_id ||
+      capability.bytes !== data.bytes ||
+      capability.object_ref !== data.object_ref ||
+      capability.sha256 !== data.sha256 ||
+      data.media_type !== "text/plain; charset=utf-8"
+    ) {
+      fail(
+        event,
+        "artifact_origin_invalid",
+        "capability snapshot artifact must exact-match its earlier run.started binding",
+      );
+    }
+    return true;
+  }
   if (origin.type === "repository.rules.loaded") {
     const originData =
       origin.data !== null &&
@@ -205,6 +235,30 @@ function hasArtifactOriginAuthority(
         event,
         "artifact_origin_invalid",
         "repository-rules artifact must pair with its later loaded event",
+      );
+    }
+    return true;
+  }
+  if (origin.type === "repository.rules.manifest.loaded") {
+    const originData =
+      origin.data !== null &&
+      typeof origin.data === "object" &&
+      !Array.isArray(origin.data)
+        ? (origin.data as Readonly<Record<string, unknown>>)
+        : {};
+    const isManifestDescriptor = data.media_type === "text/plain; charset=utf-8";
+    if (
+      origin.sessionSeq <= event.sessionSeq ||
+      (isManifestDescriptor &&
+        (originData.manifest_artifact_id !== data.artifact_id ||
+          originData.manifest_sha256 !== data.sha256 ||
+          originData.manifest_object_ref !== data.object_ref)) ||
+      (!isManifestDescriptor && data.media_type !== "text/markdown; charset=utf-8")
+    ) {
+      fail(
+        event,
+        "artifact_origin_invalid",
+        "nested repository rule artifact does not match its frozen manifest origin",
       );
     }
     return true;

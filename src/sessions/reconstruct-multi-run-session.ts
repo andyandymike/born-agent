@@ -130,6 +130,10 @@ const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
   "mcp.tool.call.started",
   "repository.rules.changed",
   "repository.rules.loaded",
+  "repository.rules.manifest.loaded",
+  "repository.source.snapshot.captured",
+  "repository.index.invalidated",
+  "repository.index.selected",
   "resume.pending_call.adopted",
   "tool.call.recovered",
 ]);

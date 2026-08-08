@@ -3,6 +3,7 @@ import { z } from "zod";
 import { persistedCompletionEvidenceSchema } from "../completion/completion-evidence-schema.js";
 import { persistedDockerExecutionImageIdentitySchema } from "../execution/docker/acquisition/docker-image-identity.js";
 import { persistedRuntimePolicyEvidenceSchema } from "../policy/policy-evidence.js";
+import { persistedCapabilitySnapshotBindingSchema } from "../capabilities/capability-snapshot.js";
 
 // PHASE2: RunEvent 是 BornAgent 自己的长期存储协议。
 // TypeScript 只能检查编译期代码，Zod 还会检查 SDK 数据、磁盘 JSONL 和未来读回的数据。
@@ -84,6 +85,7 @@ const workspaceResumeFingerprintSchema = z
       })
       .strict(),
     canonical_root_identity: sha256Schema,
+    capability_snapshot_sha256: sha256Schema.optional(),
     checkpoint_codec_version: stableIdentifierSchema.nullable(),
     completion_schema_sha256: sha256Schema,
     policy_sha256: sha256Schema,
@@ -100,6 +102,7 @@ const workspaceResumeFingerprintSchema = z
   })
   .strict();
 const commonRunStartedData = {
+  capability_snapshot: persistedCapabilitySnapshotBindingSchema.optional(),
   input: inputSchema,
   model: z.string().min(1),
   // PHASE8: provider ids are registry-owned strings; the event protocol must not
@@ -602,6 +605,23 @@ const toolCallCompletedSchema = z
         // PHASE6: command observations can carry up to 1 MiB plus bounded JSON framing.
         output: utf8StringWithin(1_114_112),
         retryable: z.boolean().optional(),
+        repository_rule_binding: z
+          .object({
+            rule_manifest_sha256: sha256Schema,
+            rule_scope_truncated: z.boolean(),
+            target_scopes: z
+              .array(
+                z
+                  .object({
+                    relative_path: relativePathSchema,
+                    scope_sha256: sha256Schema,
+                  })
+                  .strict(),
+              )
+              .max(16),
+          })
+          .strict()
+          .optional(),
         status: z.enum(["error", "success"]),
         step: positiveInteger,
         tool_name: toolNameSchema,
@@ -646,6 +666,8 @@ const patchPlanCreatedSchema = z
         patch_sha256: sha256Schema,
         paths: z.array(patchPathSchema).min(1).max(8),
         plan_id: sha256Schema,
+        rule_manifest_sha256: sha256Schema.optional(),
+        rule_scope_set_sha256: sha256Schema.optional(),
         preview: utf8StringWithin(32 * 1024),
         removed_lines: nonnegativeInteger,
         step: positiveInteger,
@@ -667,6 +689,8 @@ const legacyPatchApprovalRequestedDataSchema = z
     call_id: callIdSchema,
     paths: z.array(patchPathSchema).min(1).max(8),
     plan_id: sha256Schema,
+    rule_manifest_sha256: sha256Schema.optional(),
+    rule_scope_set_sha256: sha256Schema.optional(),
     preview: utf8StringWithin(32 * 1024),
     removed_lines: nonnegativeInteger,
     step: positiveInteger,
@@ -719,6 +743,8 @@ const legacyPatchApprovalDecidedDataSchema = z
     call_id: callIdSchema,
     decision: z.enum(["approved", "cancelled", "denied"]),
     plan_id: sha256Schema,
+    rule_manifest_sha256: sha256Schema.optional(),
+    rule_scope_set_sha256: sha256Schema.optional(),
     step: positiveInteger,
   })
   .strict();
@@ -767,6 +793,8 @@ const patchApplyStartedSchema = z
         call_id: callIdSchema,
         files: z.array(patchApplyFileStartedSchema).min(1).max(8),
         plan_id: sha256Schema,
+        rule_manifest_sha256: sha256Schema.optional(),
+        rule_scope_set_sha256: sha256Schema.optional(),
         step: positiveInteger,
       })
       .strict(),
@@ -790,6 +818,8 @@ const patchApplyCompletedSchema = z
         files: z.array(patchApplyFileCompletedSchema).min(1).max(8),
         journal_sha256: sha256Schema,
         plan_id: sha256Schema,
+        rule_manifest_sha256: sha256Schema.optional(),
+        rule_scope_set_sha256: sha256Schema.optional(),
         removed_lines: nonnegativeInteger,
         step: positiveInteger,
       })

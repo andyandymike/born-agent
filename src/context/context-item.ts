@@ -37,6 +37,7 @@ export type ProtectedFactCategory =
   | "dirty_baseline"
   | "pending_effects"
   | "repository_rules"
+  | "repository_state"
   | "system_policy"
   | "unresolved_errors"
   | "user_instruction"

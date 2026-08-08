@@ -162,6 +162,31 @@ interface MutableCommandAttempt {
   stdoutChunks: number;
 }
 
+function patchActionSha256(
+  planId: string,
+  ruleManifestSha256: string | undefined,
+  ruleScopeSetSha256: string | undefined,
+): string {
+  if (ruleManifestSha256 === undefined || ruleScopeSetSha256 === undefined) {
+    if (ruleManifestSha256 !== undefined || ruleScopeSetSha256 !== undefined) {
+      throw new Error("patch rule scope identity is incomplete");
+    }
+    return planId;
+  }
+  return sha256Canonical({
+    actionKind: "apply_patch",
+    manifestSha256: ruleManifestSha256,
+    planId,
+    ruleScopeSetSha256,
+  });
+}
+
+function patchApprovalActionSha256(
+  data: PatchApprovalRequestedData | PatchApprovalDecidedData,
+): string {
+  return data.action_sha256 ?? data.plan_id;
+}
+
 interface MutableVerification {
   completed?: VerificationCompletedEvent["data"];
   started: VerificationStartedEvent["data"];
@@ -727,8 +752,14 @@ export function reconstructSession(
           attempt.plan.removed_lines !== event.data.removed_lines ||
           attempt.plan.preview !== event.data.preview ||
           attempt.plan.truncated !== event.data.truncated ||
+          attempt.plan.rule_manifest_sha256 !== event.data.rule_manifest_sha256 ||
+          attempt.plan.rule_scope_set_sha256 !== event.data.rule_scope_set_sha256 ||
           (event.data.action_sha256 !== undefined &&
-            event.data.action_sha256 !== attempt.plan.plan_id) ||
+            event.data.action_sha256 !== patchActionSha256(
+              attempt.plan.plan_id,
+              attempt.plan.rule_manifest_sha256,
+              attempt.plan.rule_scope_set_sha256,
+            )) ||
           !patchPathsMatch(attempt.plan.paths, event.data.paths)
         ) {
           throw new Error("approval request does not match one patch plan");
@@ -770,8 +801,9 @@ export function reconstructSession(
           attempt.approvalDecided !== undefined ||
           attempt.plan.plan_id !== event.data.plan_id ||
           attempt.plan.step !== event.data.step ||
-          (event.data.action_sha256 !== undefined &&
-            event.data.action_sha256 !== attempt.plan.plan_id)
+          attempt.plan.rule_manifest_sha256 !== event.data.rule_manifest_sha256 ||
+          attempt.plan.rule_scope_set_sha256 !== event.data.rule_scope_set_sha256 ||
+          patchApprovalActionSha256(attempt.approvalRequested) !== patchApprovalActionSha256(event.data)
         ) {
           throw new Error("approval decision does not match one pending request");
         }
@@ -802,6 +834,8 @@ export function reconstructSession(
           event.data.approval_request_id ||
         attempt.plan.plan_id !== event.data.plan_id ||
         attempt.plan.step !== event.data.step ||
+        attempt.plan.rule_manifest_sha256 !== event.data.rule_manifest_sha256 ||
+        attempt.plan.rule_scope_set_sha256 !== event.data.rule_scope_set_sha256 ||
         !patchPathsMatch(attempt.plan.paths, event.data.files) ||
         !event.data.files.every((file) =>
           file.kind === "create"
@@ -825,6 +859,8 @@ export function reconstructSession(
         attempt.plan.step !== event.data.step ||
         attempt.plan.added_lines !== event.data.added_lines ||
         attempt.plan.removed_lines !== event.data.removed_lines ||
+        attempt.plan.rule_manifest_sha256 !== event.data.rule_manifest_sha256 ||
+        attempt.plan.rule_scope_set_sha256 !== event.data.rule_scope_set_sha256 ||
         !applyFilesMatch(attempt.applyStarted.files, event.data.files)
       ) {
         throw new Error("patch completion does not match one started apply");

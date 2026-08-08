@@ -21,6 +21,11 @@ export class TerminalApprovalPrompt implements ApprovalPrompt {
         this.options.output.write(`  ${target.kind} ${target.path}\n`);
       }
       this.options.output.write(`  plan ${preview.planId.slice(0, 12)}\n`);
+      if (preview.ruleScopeSetSha256 !== undefined) {
+        this.options.output.write(
+          `  repository rules ${preview.ruleScopeSetSha256.slice(0, 12)} (manifest ${preview.ruleManifestSha256?.slice(0, 12) ?? "missing"})\n`,
+        );
+      }
       if (preview.preview.length > 0) {
         this.options.output.write(`${preview.preview}\n`);
       }

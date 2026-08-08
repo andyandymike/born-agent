@@ -220,6 +220,9 @@ export class ToolRegistry implements ToolRegistryLike {
           },
           ok: false,
           output,
+          ...(result.repositoryRuleBinding === undefined
+            ? {}
+            : { repositoryRuleBinding: result.repositoryRuleBinding }),
           truncated: result.truncated ?? false,
         });
       }
@@ -252,6 +255,9 @@ export class ToolRegistry implements ToolRegistryLike {
         error: safeError,
         ok: false,
         output,
+        ...(result.repositoryRuleBinding === undefined
+          ? {}
+          : { repositoryRuleBinding: result.repositoryRuleBinding }),
         truncated: result.truncated ?? false,
       });
     }
@@ -291,6 +297,9 @@ export class ToolRegistry implements ToolRegistryLike {
       ...(result.control === undefined ? {} : { control: result.control }),
       ok: true,
       output,
+      ...(result.repositoryRuleBinding === undefined
+        ? {}
+        : { repositoryRuleBinding: result.repositoryRuleBinding }),
       truncated: result.truncated,
     });
   }

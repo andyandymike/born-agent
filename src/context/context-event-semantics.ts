@@ -112,6 +112,10 @@ export function assertPhase10ContextEventSemantics(
 
     switch (event.type) {
       case "repository.rules.loaded":
+      case "repository.rules.manifest.loaded":
+      case "repository.source.snapshot.captured":
+      case "repository.index.invalidated":
+      case "repository.index.selected":
         activatePhase10(state, event);
         break;
       case "context.estimate.created": {

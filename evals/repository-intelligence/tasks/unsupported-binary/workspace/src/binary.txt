@@ -1,0 +1,1 @@
+ordinary text fixture whose query is absent

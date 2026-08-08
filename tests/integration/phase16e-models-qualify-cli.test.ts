@@ -34,14 +34,14 @@ function passingBehavior(): FakeStreamBehavior {
   return async function* (input, signal) {
     request += 1;
     if (input.input.kind === "user_prompt") {
-      nonce = /nonce "([A-Za-z0-9._-]+)"/u.exec(input.input.text)?.[1] ?? nonce;
+      nonce = /query "([A-Za-z0-9._-]+)"/u.exec(input.input.text)?.[1] ?? nonce;
     }
     if (request === 1) {
       yield {
         call: {
-          argumentsJson: JSON.stringify({ nonce }),
-          callId: "echo-1",
-          name: "qualification_echo",
+          argumentsJson: JSON.stringify({ cursor: null, kinds: null, limit: 1, path_prefix: null, query: nonce }),
+          callId: "navigation-1",
+          name: "find_symbol",
         },
         type: "tool_call",
       };
@@ -84,13 +84,13 @@ function failingBehavior(): FakeStreamBehavior {
   return async function* (input, signal) {
     if (
       input.input.kind === "user_prompt" &&
-      input.input.text.includes("qualification_echo")
+      input.input.text.includes("find_symbol")
     ) {
       yield {
         call: {
-          argumentsJson: '{"nonce":"wrong","extra":true}',
-          callId: "bad-echo",
-          name: "qualification_echo",
+          argumentsJson: '{"cursor":null,"kinds":null,"limit":1,"path_prefix":null,"query":"wrong","extra":true}',
+          callId: "bad-navigation",
+          name: "find_symbol",
         },
         type: "tool_call",
       };

@@ -18,6 +18,10 @@ import type {
   PlanRevisionProjection,
   TaskStateProjection,
 } from "./task-state-types.js";
+import {
+  projectRepositoryIntelligenceRunSummary,
+  repositoryIntelligenceRunSummarySchema,
+} from "../repository-intelligence/repository-run-summary.js";
 
 type CompletionEvaluationEvent = Extract<
   DecodedRunEvent,
@@ -46,6 +50,17 @@ const relativePath = z
 
 const outcomeWithoutHashSchema = z
   .object({
+    capabilities: z
+      .object({
+        artifactId: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        capabilitySchemaSha256: sha256,
+        componentCount: z.number().int().nonnegative().max(128),
+        eligiblePluginCount: z.number().int().nonnegative().max(16),
+        enablementRevision: z.number().int().nonnegative(),
+        snapshotId: z.string().regex(/^capability-snapshot:[a-f0-9]{64}$/u),
+      })
+      .strict()
+      .nullable(),
     changeAttribution: z
       .object({
         baselineEventId: uuid,
@@ -144,6 +159,7 @@ const outcomeWithoutHashSchema = z
       })
       .strict()
       .nullable(),
+    repository: repositoryIntelligenceRunSummarySchema.nullable(),
     schemaVersion: z.literal(1),
     sessionId: uuid,
     usage: z
@@ -687,6 +703,18 @@ function eventEvidenceIds(input: {
   for (const record of input.changeLedger?.records ?? []) add(record.eventId);
   add(input.run?.started.eventId);
   add(input.run?.terminal?.eventId);
+  if (input.run?.started.data.agent_mode !== undefined) {
+    const repositoryEvidence = input.run.events.filter(
+      (event) =>
+        event.type === "repository.source.snapshot.captured" ||
+        event.type === "repository.rules.manifest.loaded" ||
+        event.type === "repository.index.invalidated" ||
+        event.type === "repository.index.selected" ||
+        ((event.type === "tool.call.completed" || event.type === "tool.call.recovered") &&
+          ["repository_outline", "find_symbol", "find_references"].includes(event.data.tool_name)),
+    );
+    for (const event of repositoryEvidence.slice(-512)) add(event.eventId);
+  }
   if (input.evaluation !== undefined) {
     const evaluation = input.evaluation;
     add(input.evaluation.eventId);
@@ -808,6 +836,26 @@ export class OutcomeReportBuilder {
         );
       }
       const withoutHash = outcomeWithoutHashSchema.parse({
+        capabilities:
+          run?.started.data.capability_snapshot === undefined
+            ? null
+            : {
+                artifactId:
+                  run.started.data.capability_snapshot.artifact_id,
+                capabilitySchemaSha256:
+                  run.started.data.capability_snapshot
+                    .capability_schema_sha256,
+                componentCount:
+                  run.started.data.capability_snapshot.component_count,
+                eligiblePluginCount:
+                  run.started.data.capability_snapshot
+                    .eligible_plugin_count,
+                enablementRevision:
+                  run.started.data.capability_snapshot
+                    .enablement_revision,
+                snapshotId:
+                  run.started.data.capability_snapshot.snapshot_id,
+              },
         changeAttribution: attribution,
         changes,
         evidenceEventIds: eventEvidenceIds({
@@ -846,6 +894,7 @@ export class OutcomeReportBuilder {
                 qualificationSha256,
                 status: run.status,
               },
+        repository: projectRepositoryIntelligenceRunSummary(run),
         schemaVersion: 1,
         sessionId: session.sessionId,
         usage: {

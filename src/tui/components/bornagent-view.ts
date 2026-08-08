@@ -93,6 +93,7 @@ export class BornAgentViewComponent implements Component {
         : [];
     return [
       this.#line(this.#renderStatus(), width),
+      this.#line(this.#renderRepositoryStatus(), width),
       ...phase16,
       ...this.#renderTranscript(width),
       ...this.#renderPlanDecision(width),
@@ -124,6 +125,12 @@ export class BornAgentViewComponent implements Component {
       ` | context=${context.estimatedInputTokens ?? "?"}@${context.epoch}` +
       `${compacting}${blocked}`
     );
+  }
+
+  #renderRepositoryStatus(): string {
+    const repository = this.#view.repository;
+    const phase = repository.buildPhase === null ? "" : `:${repository.buildPhase}`;
+    return `REPO | engine=${repository.engineId ?? "none"} | gen=${repository.generationSha256?.slice(0, 8) ?? "none"} | coverage=${repository.coverage ?? "none"} | index=${repository.indexState}${phase}`;
   }
 
   #renderTranscript(width: number): string[] {

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"freshness","program":[{"tool":"search","arguments":{"glob":null,"mode":"literal","path":null,"query":"oldName"}},{"tool":"search","arguments":{"glob":null,"mode":"literal","path":null,"query":"newName"}}],"fixtureActions":[{"kind":"write_file","afterStep":0,"path":"src/main.ts","content":"export function newName(): number { return 2; }\n"}]}

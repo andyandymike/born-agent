@@ -58,7 +58,20 @@ import type {
   Phase10ContextRunEventType,
 } from "../context/context-event-schema.js";
 import { RootAgentsLoader } from "../repository-rules/root-agents-loader.js";
-import type { RepositoryRulesChangeDetection } from "../repository-rules/repository-rule-set.js";
+import { NestedAgentsLoader } from "../repository-rules/nested-agents-loader.js";
+import {
+  RepositoryRuleChangeDetector,
+  RepositoryRulesStaleError,
+  type RepositoryRuleManifestChange,
+} from "../repository-rules/repository-rule-change-detector.js";
+import { RepositoryRuleScopeResolver } from "../repository-rules/repository-rule-scope.js";
+import { RepositoryRuleObservationTracker } from "../repository-rules/repository-rule-observation-binding.js";
+import { selectRepositoryRuleContext } from "../context/repository-rule-context-selector.js";
+import type { NestedRepositoryRuleSet } from "../repository-rules/repository-rule-manifest.js";
+import { repositoryRuleManifestIdentityDescriptor } from "../repository-rules/repository-rule-manifest-schema.js";
+import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
+import { RepositoryIntelligenceError } from "../repository-intelligence/repository-intelligence-error.js";
+import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
 import { buildWorkspaceResumeFingerprint } from "../resume/workspace-resume-fingerprint-builder.js";
 import {
   persistWorkspaceResumeFingerprint,
@@ -121,9 +134,17 @@ import { VerifiedCompletionPolicy } from "../completion/completion-policy.js";
 import { OutcomeReportBuilder } from "../coordination/outcome-report.js";
 import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
+import { CapabilityError } from "../capabilities/capability-errors.js";
+import type { CapabilitySnapshotV1 } from "../capabilities/capability-types.js";
+import {
+  appendPreparedCapabilitySnapshotArtifact,
+  prepareCapabilityRunSnapshot,
+  type PreparedCapabilityRunSnapshot,
+} from "../capabilities/capability-run-snapshot.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
+  readonly capabilitySnapshot?: CapabilitySnapshotV1;
   readonly continuation: BackendContinuation | null;
   readonly fingerprint: WorkspaceResumeFingerprint;
   readonly inheritedCall: InheritedAgentCall | null;
@@ -388,6 +409,40 @@ export async function executeAgent(
     return 1;
   }
 
+  let capabilitySnapshot = resumedExecution?.capabilitySnapshot;
+  let preparedCapabilitySnapshot: PreparedCapabilityRunSnapshot | undefined;
+  if (runtime.createCapabilityPlatform !== undefined || capabilitySnapshot !== undefined) {
+    try {
+      if (
+        writer.appendArtifactEvent === undefined &&
+        writer.appendCapabilitySnapshotArtifact === undefined
+      ) {
+        throw new CapabilityError(
+          "capability_artifact_integrity_failed",
+          "Phase 18 runtime requires a full artifact-aware session writer",
+        );
+      }
+      capabilitySnapshot ??= await runtime
+        .createCapabilityPlatform!(runtime.cwd)
+        .createSnapshot(runtime.timestamp());
+      preparedCapabilitySnapshot = await prepareCapabilityRunSnapshot({
+        existingEvents: writer.readDecodedEvents?.() ?? [],
+        runId,
+        sessionId,
+        snapshot: capabilitySnapshot,
+        workspace: runtime.cwd,
+      });
+    } catch (error) {
+      renderer.renderDiagnostic(
+        error instanceof CapabilityError
+          ? `${error.code}: ${error.message}`
+          : "capability snapshot preflight failed",
+      );
+      await writer.close().catch(() => undefined);
+      return error instanceof CapabilityError ? error.exitCode : 1;
+    }
+  }
+
   let phase16Binding: Phase16RunBinding | undefined;
   let pendingGoalBaseline:
     | {
@@ -614,6 +669,9 @@ export async function executeAgent(
           ? {}
           : { agentMode: selectedAgentMode.mode }),
         backend,
+        ...(capabilitySnapshot === undefined
+          ? {}
+          : { capabilitySnapshotSha256: capabilitySnapshot.snapshotSha256 }),
         config,
         platform: runtime.platform,
         workspace: runtime.cwd,
@@ -757,6 +815,9 @@ export async function executeAgent(
                 ...(writer.appendArtifactEvent === undefined
                   ? []
                   : ["read_artifact"]),
+                ...(runtime.createRepositoryNavigationService === undefined
+                  ? []
+                  : ["repository_outline", "find_symbol", "find_references"]),
                 "search",
                 "update_plan",
               ]
@@ -767,6 +828,9 @@ export async function executeAgent(
                 ...(writer.appendArtifactEvent === undefined
                   ? []
                   : ["read_artifact"]),
+                ...(runtime.createRepositoryNavigationService === undefined
+                  ? []
+                  : ["repository_outline", "find_symbol", "find_references"]),
                 "search",
               ]
             : [
@@ -777,6 +841,9 @@ export async function executeAgent(
                 ...(writer.appendArtifactEvent === undefined
                   ? []
                   : ["read_artifact"]),
+                ...(runtime.createRepositoryNavigationService === undefined
+                  ? []
+                  : ["repository_outline", "find_symbol", "find_references"]),
                 "run_command",
                 "search",
                 ...(phase16Binding === undefined ? [] : ["update_plan"]),
@@ -793,14 +860,23 @@ export async function executeAgent(
                 persistWorkspaceResumeFingerprint(workspaceResumeFingerprint),
             }),
       };
-    if (phase16Binding === undefined) {
-      await publisher.publish({ data: runStartedData, type: "run.started" });
-    } else {
-      await publisher.publishPhase16RunStarted(
-        runStartedData,
+    const capabilityBoundRunStartedData = {
+      ...runStartedData,
+      ...(preparedCapabilitySnapshot === undefined
+        ? {}
+        : { capability_snapshot: preparedCapabilitySnapshot.binding }),
+    };
+    // PHASE18: the exact snapshot object is durable before run.started, while
+    // the event is the sole authority that selects those bytes for this run.
+    const runStarted = phase16Binding === undefined
+      ? await publisher.publish({
+          data: capabilityBoundRunStartedData,
+          type: "run.started",
+        })
+      : await publisher.publishPhase16RunStarted(
+        capabilityBoundRunStartedData,
         phase16Binding,
       );
-    }
     await publisher.publish({
       data: {
         adapter: backend.identity.adapter,
@@ -825,6 +901,14 @@ export async function executeAgent(
         pendingGoalBaseline.data,
         pendingGoalBaseline.eventId,
       );
+    }
+    if (preparedCapabilitySnapshot !== undefined) {
+      await appendPreparedCapabilitySnapshotArtifact({
+        originEventId: runStarted.event_id,
+        prepared: preparedCapabilitySnapshot,
+        runId,
+        writer,
+      });
     }
     if (writer.appendRunEvent === undefined) {
       throw new TypeError("agent session writer does not support Phase 10 events");
@@ -893,16 +977,45 @@ export async function executeAgent(
             });
           })();
 
-    let rulesLoader: RootAgentsLoader | undefined;
     let repositoryRules;
     let repositoryRulesEventId: string | undefined;
+    let ruleChangeDetector: RepositoryRuleChangeDetector | undefined;
+    let repositoryRuleScopeResolver: RepositoryRuleScopeResolver | undefined;
+    let repositoryRuleObservationTracker:
+      | RepositoryRuleObservationTracker
+      | undefined;
+    let nestedRepositoryRules: NestedRepositoryRuleSet | undefined;
+    let repositoryRulesManifestEventId: string | undefined;
     if (
       artifactRuntime !== undefined &&
       writer.appendRunEventWithId !== undefined
     ) {
       const rulesEventId = runtime.randomUUID();
+      const manifestEventId = runtime.randomUUID();
+      repositoryRulesManifestEventId = manifestEventId;
       repositoryRulesEventId = rulesEventId;
-      rulesLoader = await RootAgentsLoader.create(runtime.cwd, {
+      const sourceSnapshot = await (
+        await RepositorySourceSnapshotter.create(runtime.cwd)
+      ).snapshot(userController.signal);
+      try {
+        await writer.appendRunEventWithId(
+          runId,
+          runtime.randomUUID(),
+          "repository.source.snapshot.captured",
+          {
+            coverage: sourceSnapshot.snapshot.coverage,
+            entries_sha256: sourceSnapshot.snapshot.entriesSha256,
+            file_count: sourceSnapshot.snapshot.entries.length,
+            inventory_policy_sha256: sourceSnapshot.snapshot.inventoryPolicySha256,
+            skipped_count: Object.values(sourceSnapshot.snapshot.skipped).reduce((total, value) => total + value, 0),
+            source_kind: sourceSnapshot.snapshot.sourceKind,
+            source_state_sha256: sourceSnapshot.snapshot.sourceStateSha256,
+          },
+        );
+      } catch (error) {
+        throw new EventPersistenceError(error);
+      }
+      const rulesLoader = await RootAgentsLoader.create(runtime.cwd, {
         artifactStore: {
           storeRepositoryRules: async (input) => {
             const stored = await artifactRuntime.materializeText({
@@ -947,29 +1060,111 @@ export async function executeAgent(
             : `repository_rules path=AGENTS.md sha256=${repositoryRules.snapshot.contentSha256}\n`,
         );
       }
+      const nestedLoader = await NestedAgentsLoader.create(runtime.cwd, {
+        artifactStore: {
+          storeRepositoryRules: async (input) => {
+            const stored = await artifactRuntime.materializeText({
+              bytes: input.bytes,
+              expectedSha256: input.expectedSha256,
+              mediaType: input.mediaType,
+              originEventId: manifestEventId,
+            });
+            return {
+              artifactId: stored.artifactId,
+              bytes: stored.bytes,
+              relativeRef: stored.objectRef,
+              sha256: stored.sha256,
+            };
+          },
+        },
+      });
+      const nestedRules = await nestedLoader.loadForRun(
+        sourceSnapshot.snapshot.sourceStateSha256,
+        { preloadedRoot: repositoryRules },
+      );
+      nestedRepositoryRules = nestedRules;
+      const manifestDescriptor = repositoryRuleManifestIdentityDescriptor(nestedRules.manifest);
+      if (sha256Canonical(manifestDescriptor) !== nestedRules.manifest.manifestSha256) {
+        throw new TypeError("repository rule manifest descriptor hash is inconsistent");
+      }
+      const manifestArtifact = await artifactRuntime.materializeText({
+        bytes: Buffer.from(canonicalJson(manifestDescriptor), "utf8"),
+        expectedSha256: nestedRules.manifest.manifestSha256,
+        mediaType: "text/plain; charset=utf-8",
+        originEventId: manifestEventId,
+      });
+      try {
+        await writer.appendRunEventWithId(
+          runId,
+          manifestEventId,
+          "repository.rules.manifest.loaded",
+          {
+            discovery_policy_sha256:
+              nestedRules.manifest.discoveryPolicySha256,
+            manifest_artifact_id: manifestArtifact.artifactId,
+            manifest_object_ref: manifestArtifact.objectRef,
+            manifest_sha256: nestedRules.manifest.manifestSha256,
+            rule_count: nestedRules.manifest.entries.length,
+            source_state_sha256: nestedRules.manifest.sourceStateSha256,
+            total_content_bytes: nestedRules.totalContentBytes,
+          },
+        );
+      } catch (error) {
+        throw new EventPersistenceError(error);
+      }
+      ruleChangeDetector = new RepositoryRuleChangeDetector(
+        nestedLoader,
+        nestedRules,
+      );
+      repositoryRuleScopeResolver = new RepositoryRuleScopeResolver(
+        nestedRules.manifest,
+      );
+      repositoryRuleObservationTracker = new RepositoryRuleObservationTracker(
+        repositoryRuleScopeResolver,
+      );
+      for (const event of decodedEvents()) {
+        if (
+          event.type !== "tool.call.completed" ||
+          event.data.repository_rule_binding === undefined ||
+          event.data.repository_rule_binding.rule_manifest_sha256 !==
+            nestedRules.manifest.manifestSha256
+        ) {
+          continue;
+        }
+        repositoryRuleObservationTracker.restore({
+          ruleManifestSha256:
+            event.data.repository_rule_binding.rule_manifest_sha256,
+          ruleScopeTruncated:
+            event.data.repository_rule_binding.rule_scope_truncated,
+          targetScopes:
+            event.data.repository_rule_binding.target_scopes.map((scope) => ({
+              relativePath: scope.relative_path,
+              scopeSha256: scope.scope_sha256,
+            })),
+        });
+      }
+      if (config.verbose) {
+        io.stderr.write(
+          `repository_rule_manifest sha256=${nestedRules.manifest.manifestSha256} rules=${nestedRules.manifest.entries.length}\n`,
+        );
+      }
     }
 
     let rulesChangeRecorded = false;
     const persistRulesChange = async (
-      change: RepositoryRulesChangeDetection,
+      change: RepositoryRuleManifestChange,
     ): Promise<void> => {
       if (!change.changed || rulesChangeRecorded) return;
-      const current = change.current;
       try {
         await writer.appendRunEvent!(runId, "repository.rules.changed", {
-          ...(current.state === "loaded"
-            ? { current_content_sha256: current.contentSha256 }
-            : current.state === "missing"
-              ? { current_content_sha256: null }
-              : { current_error_code: current.errorCode }),
-          current_state: current.state,
-          frozen_content_sha256:
-            change.frozen.state === "loaded"
-              ? change.frozen.contentSha256
-              : null,
-          frozen_state: change.frozen.state,
+          change_scope: "manifest",
+          current_identity_sha256:
+            change.currentIdentity === null
+              ? null
+              : sha256Canonical(change.currentIdentity),
+          frozen_manifest_sha256:
+            repositoryRuleScopeResolver!.manifest.manifestSha256,
           reason: change.reason,
-          relative_path: "AGENTS.md",
         });
       } catch (error) {
         throw new EventPersistenceError(error);
@@ -978,6 +1173,13 @@ export async function executeAgent(
       if (config.verbose) {
         io.stderr.write(`repository_rules changed reason=${change.reason}\n`);
       }
+    };
+    const assertRepositoryRulesFresh = async (): Promise<void> => {
+      if (ruleChangeDetector === undefined) return;
+      const change = await ruleChangeDetector.detect();
+      if (!change.changed) return;
+      await persistRulesChange(change);
+      throw new RepositoryRulesStaleError();
     };
 
     const contextEvents: ContextEventAppender = {
@@ -1018,13 +1220,11 @@ export async function executeAgent(
     );
     const context = new AgentContextController({
       backend,
-      ...(rulesLoader === undefined || repositoryRules === undefined
+      ...(ruleChangeDetector === undefined || repositoryRules === undefined
         ? {}
         : {
             beforePlan: async () => {
-              await persistRulesChange(
-                await rulesLoader!.detectChange(repositoryRules!),
-              );
+              await assertRepositoryRulesFresh();
             },
           }),
       eventAppender: contextEvents,
@@ -1033,10 +1233,36 @@ export async function executeAgent(
       runtime: new AgentContextRuntime({
         budget: contextRuntimeResult.value.budget,
         estimator: contextRuntimeResult.value.estimator,
-        ...(repositoryRules === undefined ? {} : { repositoryRules }),
-        ...(repositoryRulesEventId === undefined
-          ? {}
-          : { repositoryRulesEventId }),
+        ...(nestedRepositoryRules !== undefined &&
+        repositoryRulesManifestEventId !== undefined &&
+        repositoryRuleScopeResolver !== undefined &&
+        repositoryRuleObservationTracker !== undefined
+          ? {
+              repositoryRuleContext: () =>
+                selectRepositoryRuleContext(
+                  nestedRepositoryRules!,
+                  repositoryRuleScopeResolver!,
+                  {
+                    eventId: repositoryRulesManifestEventId!,
+                    ...(repositoryRulesEventId === undefined
+                      ? {}
+                      : { rootEventId: repositoryRulesEventId }),
+                    recency: (() => {
+                      const event = decodedEvents().at(-1);
+                      return event === undefined
+                        ? 0
+                        : "sessionSeq" in event
+                          ? event.sessionSeq
+                          : event.seq;
+                    })(),
+                    trustedTargetPaths:
+                      repositoryRuleObservationTracker!.trustedTargetPaths(),
+                  },
+                ).items,
+            }
+          : repositoryRules === undefined || repositoryRulesEventId === undefined
+            ? {}
+            : { repositoryRules, repositoryRulesEventId }),
         systemInstructions: runInstructions,
         ...(phase16TaskState === undefined || phase16Binding === undefined
           ? {}
@@ -1181,6 +1407,40 @@ export async function executeAgent(
               store: new DurableAgentPlanStore(runtime.randomUUID),
             });
           })();
+    const repositoryNavigation = runtime.createRepositoryNavigationService === undefined
+      ? undefined
+      : await runtime.createRepositoryNavigationService(
+          runtime.cwd,
+          secrets.filter((value): value is string => value !== undefined),
+          writer.appendRunEventWithId === undefined
+            ? undefined
+            : {
+                indexInvalidated: async (data) => {
+                  try {
+                    await writer.appendRunEventWithId!(runId, runtime.randomUUID(), "repository.index.invalidated", data);
+                  } catch (error) {
+                    throw new EventPersistenceError(error);
+                  }
+                },
+                indexSelected: async (data) => {
+                  try {
+                    await writer.appendRunEventWithId!(runId, runtime.randomUUID(), "repository.index.selected", data);
+                  } catch (error) {
+                    throw new EventPersistenceError(error);
+                  }
+                },
+              },
+        );
+    if (repositoryNavigation !== undefined) {
+      try {
+        await repositoryNavigation.ensureCurrent({ allowBuild: false, signal: userController.signal });
+      } catch (error) {
+        if (
+          !(error instanceof RepositoryIntelligenceError) ||
+          !["repository_index_stale", "repository_index_corrupt"].includes(error.code)
+        ) throw error;
+      }
+    }
     const tools = await runtime.createAgentToolRegistry({
       ...(additionalTools.length === 0 ? {} : { additionalTools }),
       approvalMode: config.editApproval,
@@ -1264,6 +1524,17 @@ export async function executeAgent(
       now: runtime.now,
       publisher,
       randomUUID: runtime.randomUUID,
+      ...(repositoryRuleScopeResolver === undefined ||
+      repositoryRuleObservationTracker === undefined
+        ? {}
+        : {
+            repositoryRules: {
+              assertFresh: assertRepositoryRulesFresh,
+              resolver: repositoryRuleScopeResolver,
+              tracker: repositoryRuleObservationTracker,
+            },
+          }),
+      ...(repositoryNavigation === undefined ? {} : { repositoryNavigation }),
       reportFormat: config.reportFormat,
       runId,
       ...(sandboxEvents === undefined ? {} : { sandboxEvents }),

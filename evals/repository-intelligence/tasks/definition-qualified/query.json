@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"definition","program":[{"tool":"search","arguments":{"glob":"*.ts","mode":"literal","path":"src","query":"method()"}}],"fixtureActions":[]}

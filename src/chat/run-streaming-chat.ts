@@ -44,9 +44,16 @@ import {
 } from "../policy/policy-resolver.js";
 import { persistRuntimePolicyEvidence } from "../policy/policy-evidence.js";
 import { credentialSecretsForPolicy } from "../policy/provider-access-policy.js";
+import type { CapabilityPlatformLike } from "../capabilities/capability-platform.js";
+import { CapabilityError } from "../capabilities/capability-errors.js";
+import {
+  appendPreparedCapabilitySnapshotArtifact,
+  prepareCapabilityRunSnapshot,
+  type PreparedCapabilityRunSnapshot,
+} from "../capabilities/capability-run-snapshot.js";
 
 type CancellationReason = "cancelled" | "timeout";
-export type StreamingChatExitCode = 0 | 1 | 2 | 4 | 5 | 6 | 130;
+export type StreamingChatExitCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 130;
 
 export interface StreamingRunRenderer extends RunEventRenderer {
   renderDiagnostic(message: string): void;
@@ -59,6 +66,9 @@ export interface StreamingChatRuntime {
   readonly platform: NodeJS.Platform;
   clearTimer(handle: unknown): void;
   createModelBackend(request: BackendCreationRequest): ModelBackend;
+  readonly createCapabilityPlatform?: (
+    workspace: string,
+  ) => CapabilityPlatformLike;
   createSessionWriter(
     workspace: string,
     sessionId: string,
@@ -731,6 +741,39 @@ export async function runStreamingChat(
     return 1;
   }
 
+  let preparedCapabilitySnapshot: PreparedCapabilityRunSnapshot | undefined;
+  if (runtime.createCapabilityPlatform !== undefined) {
+    try {
+      if (
+        writer.appendArtifactEvent === undefined &&
+        writer.appendCapabilitySnapshotArtifact === undefined
+      ) {
+        throw new CapabilityError(
+          "capability_artifact_integrity_failed",
+          "Phase 18 runtime requires a full artifact-aware session writer",
+        );
+      }
+      const snapshot = await runtime
+        .createCapabilityPlatform(runtime.cwd)
+        .createSnapshot(runtime.timestamp());
+      preparedCapabilitySnapshot = await prepareCapabilityRunSnapshot({
+        existingEvents: writer.readDecodedEvents?.() ?? [],
+        runId,
+        sessionId,
+        snapshot,
+        workspace: runtime.cwd,
+      });
+    } catch (error) {
+      renderer.renderDiagnostic(
+        error instanceof CapabilityError
+          ? `${error.code}: ${error.message}`
+          : "capability snapshot preflight failed",
+      );
+      await writer.close().catch(() => undefined);
+      return error instanceof CapabilityError ? error.exitCode : 1;
+    }
+  }
+
   const publisher = new EventPublisher({
     randomUUID: runtime.randomUUID,
     renderer,
@@ -759,8 +802,11 @@ export async function runStreamingChat(
 
   try {
     // PHASE2/3: run.started 是 session 第一条事实；无效配置不会创建 session。
-    await publisher.publish({
+    const runStarted = await publisher.publish({
       data: {
+        ...(preparedCapabilitySnapshot === undefined
+          ? {}
+          : { capability_snapshot: preparedCapabilitySnapshot.binding }),
         command: "chat",
         input: { role: "user", text: config.prompt },
         model: config.model,
@@ -793,6 +839,14 @@ export async function runStreamingChat(
       },
       type: "backend.selected",
     });
+    if (preparedCapabilitySnapshot !== undefined) {
+      await appendPreparedCapabilitySnapshotArtifact({
+        originEventId: runStarted.event_id,
+        prepared: preparedCapabilitySnapshot,
+        runId,
+        writer,
+      });
+    }
     const tools = config.toolsEnabled
       ? await runtime.createToolRegistry(runtime.cwd, secrets)
       : undefined;

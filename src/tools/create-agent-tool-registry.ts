@@ -44,6 +44,9 @@ import { createRunCommandTool } from "./run-command-tool.js";
 import type { RegisteredTool, ToolDefinition, ToolRegistration } from "./tool-types.js";
 import type { SandboxEventAppender } from "../execution/docker/sandbox-event-schema.js";
 import type { UpdatePlanInput } from "../plans/update-plan-input-schema.js";
+import type { RepositoryRuleScopeResolver } from "../repository-rules/repository-rule-scope.js";
+import type { RepositoryRuleObservationTracker } from "../repository-rules/repository-rule-observation-binding.js";
+import type { RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
 
 export interface AgentToolRegistryOptions {
   readonly additionalTools?: readonly RegisteredTool[];
@@ -68,6 +71,12 @@ export interface AgentToolRegistryOptions {
   readonly now: () => number;
   readonly publisher: EventPublisher;
   readonly randomUUID: () => string;
+  readonly repositoryRules?: {
+    readonly assertFresh: () => Promise<void>;
+    readonly resolver: RepositoryRuleScopeResolver;
+    readonly tracker: RepositoryRuleObservationTracker;
+  };
+  readonly repositoryNavigation?: RepositoryNavigationService;
   readonly reportFormat: ReportFormat;
   readonly runId: string;
   readonly sandboxEvents?: SandboxEventAppender;
@@ -135,7 +144,17 @@ export async function createAgentToolRegistry(
           workspace: options.workspace,
         });
   const definitions: ToolRegistration<unknown>[] = [
-    ...(await createReadonlyToolDefinitions(options.workspace)),
+    ...(await createReadonlyToolDefinitions(
+      options.workspace,
+      undefined,
+      options.repositoryRules === undefined
+        ? undefined
+        : {
+            assertFresh: options.repositoryRules.assertFresh,
+            tracker: options.repositoryRules.tracker,
+          },
+      options.repositoryNavigation,
+    )),
     ...(options.artifactRuntime === undefined
       ? []
       : [
@@ -166,10 +185,16 @@ export async function createAgentToolRegistry(
           }),
       planner,
       publisher: options.publisher,
+      ...(options.repositoryRules === undefined
+        ? {}
+        : { repositoryRules: options.repositoryRules }),
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     }) as ToolDefinition<unknown>,
     createRunCommandTool({
       approvalGate: commandApprovalGate,
+      ...(options.repositoryRules === undefined
+        ? {}
+        : { beforeEffect: options.repositoryRules.assertFresh }),
       defaultTimeoutMs: options.commandTimeoutMs,
       executor: options.executor,
       maxOutputBytes: options.maxCommandOutputBytes,

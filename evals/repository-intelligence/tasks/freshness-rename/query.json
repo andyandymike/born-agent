@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"freshness","program":[{"tool":"list_files","arguments":{"glob":null,"path":null}},{"tool":"list_files","arguments":{"glob":null,"path":null}}],"fixtureActions":[{"kind":"rename_file","afterStep":0,"from":"src/old.ts","to":"src/new.ts"}]}

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"rules","program":[{"tool":"list_files","arguments":{"glob":"**/AGENTS.md","path":null}}],"fixtureActions":[]}

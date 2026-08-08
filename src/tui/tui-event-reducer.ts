@@ -18,6 +18,7 @@ import type {
   TranscriptViewItem,
   TuiViewState,
 } from "./tui-view-state.js";
+import { reduceRepositoryStatusEvent } from "../repository-intelligence/repository-status-projection.js";
 
 interface DecodedExtensionRunEvent<TType extends string, TData> {
   readonly data: TData;
@@ -126,6 +127,10 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "permission.evaluated",
   "repository.rules.changed",
   "repository.rules.loaded",
+  "repository.rules.manifest.loaded",
+  "repository.source.snapshot.captured",
+  "repository.index.invalidated",
+  "repository.index.selected",
   "resume.pending_call.adopted",
   "run.budget_exceeded",
   "run.cancelled",
@@ -951,10 +956,18 @@ function reduceKnownEvent(
             : "repository rules missing",
         runId: event.runId,
       });
+    case "repository.rules.manifest.loaded":
+      return appendItem({ ...state, repository: reduceRepositoryStatusEvent(state.repository, event) }, {
+        id: event.eventId,
+        kind: "session",
+        label: `repository rule manifest loaded (${event.data.rule_count} rules)`,
+        runId: event.runId,
+      });
     case "repository.rules.changed":
       return appendItem(
         {
           ...state,
+          repository: reduceRepositoryStatusEvent(state.repository, event),
           approval: expireApproval(
             state.approval,
             "workspace_or_action_changed",
@@ -972,6 +985,27 @@ function reduceKnownEvent(
           runId: event.runId,
         },
       );
+    case "repository.source.snapshot.captured":
+      return appendItem({ ...state, repository: reduceRepositoryStatusEvent(state.repository, event) }, {
+        id: event.eventId,
+        kind: "session",
+        label: `repository source captured (${event.data.file_count} files, ${event.data.coverage})`,
+        runId: event.runId,
+      });
+    case "repository.index.invalidated":
+      return appendItem({ ...state, repository: reduceRepositoryStatusEvent(state.repository, event) }, {
+        id: event.eventId,
+        kind: "session",
+        label: `repository index invalidated (${sanitize(event.data.reason)})`,
+        runId: event.runId,
+      });
+    case "repository.index.selected":
+      return appendItem({ ...state, repository: reduceRepositoryStatusEvent(state.repository, event) }, {
+        id: event.eventId,
+        kind: "session",
+        label: `repository index ${event.data.generation_sha256.slice(0, 8)} selected (${event.data.coverage})`,
+        runId: event.runId,
+      });
     case "session.lock.recovered":
       return appendItem(state, {
         id: event.eventId,

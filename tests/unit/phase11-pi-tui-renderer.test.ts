@@ -216,9 +216,10 @@ describe("Phase 11 pi-tui renderer", () => {
     const lines = component.render(48);
     const text = lines.join("\n");
 
-    expect(lines).toHaveLength(11);
+    expect(lines).toHaveLength(12);
     expect(lines.every((line) => visibleWidth(line) <= 48)).toBe(true);
     expect(text).toContain("STATUS");
+    expect(text).toContain("REPO | engine=none");
     expect(text).toContain("TRANSCRIPT");
     expect(text).toContain("[tool:success]");
     expect(text).toContain("[patch:awaiting_approval]");

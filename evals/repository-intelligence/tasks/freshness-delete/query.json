@@ -1,0 +1,1 @@
+{"schemaVersion":1,"requestKind":"freshness","program":[{"tool":"search","arguments":{"glob":null,"mode":"literal","path":null,"query":"removed"}},{"tool":"search","arguments":{"glob":null,"mode":"literal","path":null,"query":"removed"}}],"fixtureActions":[{"kind":"delete_file","afterStep":0,"path":"src/main.ts"}]}

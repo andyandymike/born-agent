@@ -4,6 +4,7 @@ import type { SourceStateDigest } from "../verification/source-state-digest.js";
 
 export interface WorkspaceResumeFingerprint {
   readonly backend: BackendIdentity;
+  readonly capabilitySnapshotSha256?: string;
   readonly canonicalRootIdentity: string;
   readonly checkpointCodecVersion: string | null;
   readonly completionSchemaSha256: string;
@@ -26,6 +27,7 @@ export interface PersistedWorkspaceResumeFingerprint {
     readonly provider: string;
   };
   readonly canonical_root_identity: string;
+  readonly capability_snapshot_sha256?: string | undefined;
   readonly checkpoint_codec_version: string | null;
   readonly completion_schema_sha256: string;
   readonly policy_sha256: string;
@@ -68,6 +70,9 @@ export function persistWorkspaceResumeFingerprint(
       provider: fingerprint.backend.provider,
     }),
     canonical_root_identity: fingerprint.canonicalRootIdentity,
+    ...(fingerprint.capabilitySnapshotSha256 === undefined
+      ? {}
+      : { capability_snapshot_sha256: fingerprint.capabilitySnapshotSha256 }),
     checkpoint_codec_version: fingerprint.checkpointCodecVersion,
     completion_schema_sha256: fingerprint.completionSchemaSha256,
     policy_sha256: fingerprint.policySha256,
@@ -99,6 +104,9 @@ export function restoreWorkspaceResumeFingerprint(
       provider: persisted.backend.provider as BackendIdentity["provider"],
     },
     canonicalRootIdentity: persisted.canonical_root_identity,
+    ...(persisted.capability_snapshot_sha256 === undefined
+      ? {}
+      : { capabilitySnapshotSha256: persisted.capability_snapshot_sha256 }),
     checkpointCodecVersion: persisted.checkpoint_codec_version,
     completionSchemaSha256: persisted.completion_schema_sha256,
     policySha256: persisted.policy_sha256,
@@ -175,6 +183,11 @@ export function compareWorkspaceResumeFingerprints(
     ["policy", expected.policySha256, current.policySha256],
     ["completion_schema", expected.completionSchemaSha256, current.completionSchemaSha256],
     ["tool_schema", expected.toolSchemaSha256, current.toolSchemaSha256],
+    [
+      "capability_snapshot",
+      expected.capabilitySnapshotSha256,
+      current.capabilitySnapshotSha256,
+    ],
   ] as const;
   for (const [field, expectedValue, currentValue] of exactOnlyFields) {
     compareField(

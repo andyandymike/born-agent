@@ -19,7 +19,7 @@ interface PendingApproval {
 
 function previewActionSha256(preview: ApprovalPreview): string {
   return preview.actionKind === "apply_patch"
-    ? preview.planId
+    ? (preview.actionSha256 ?? preview.planId)
     : preview.actionSha256;
 }
 

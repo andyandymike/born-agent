@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "kind": "npm_package",
+      "name": "typescript",
+      "version": "6.0.3",
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "runtimeRole": "in_process_language_service"
+    }
+  ],
+  "networkRequired": false,
+  "repositoryConfigAllowed": false,
+  "repositoryPluginsAllowed": false
+}

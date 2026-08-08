@@ -1,5 +1,6 @@
 import type { OutcomeReport } from "../coordination/outcome-report.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
+import { initialRepositoryStatusProjection, type RepositoryStatusProjection } from "../repository-intelligence/repository-status-projection.js";
 
 export type TuiRunStatus =
   | "budget_exceeded"
@@ -205,6 +206,7 @@ export interface TuiViewState {
   readonly approval: ApprovalView | null;
   readonly context: ContextView;
   readonly outcomeReport: OutcomeReport | null;
+  readonly repository: RepositoryStatusProjection;
   readonly run: RunView | null;
   readonly session: SessionView;
   readonly taskState: TaskStateProjection;
@@ -222,6 +224,7 @@ export function createInitialTuiViewState(): TuiViewState {
       protectedEstimatedTokens: null,
     },
     outcomeReport: null,
+    repository: initialRepositoryStatusProjection(),
     run: null,
     session: {
       actionBlocked: false,
