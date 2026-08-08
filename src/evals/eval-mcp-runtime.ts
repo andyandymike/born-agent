@@ -125,6 +125,12 @@ export class InProcessEvalMcpLauncher {
     });
 
     const client = {
+      negotiation: () => ({
+        capabilities: Object.freeze({ tools: Object.freeze({}) }),
+        protocolVersion: "2025-06-18",
+        serverName: "bornagent-eval-fixture",
+        serverVersion: "1",
+      }),
       listTools: async () => [
         {
           description: "Search two deterministic public fixture files",
@@ -167,12 +173,12 @@ export class InProcessEvalMcpLauncher {
     // or socket can survive an injected crash boundary.
     const started = Object.freeze({
       action,
+      authority: "reviewed_offline_fixture" as const,
       client,
       config,
       flushDiagnostics: async () => undefined,
       integrityManifest,
       processIdentity,
-      reviewedOffline: true as const,
     }) as unknown as StartedMcpServer;
     this.#started.set(config.serverId, started);
     return started;

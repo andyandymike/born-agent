@@ -127,6 +127,14 @@ interface VerificationState {
   readonly started: Extract<RunEvent, { type: "verification.started" }>["data"];
 }
 
+export interface CurrentVerificationCommandFact {
+  readonly actionSha256: string;
+  readonly command: string;
+  readonly evidenceEventIds: readonly string[];
+  readonly sourceSnapshotSha256: string;
+  readonly verificationId: string;
+}
+
 interface CompletionCandidateState {
   readonly candidate: Extract<RunEvent, { type: "completion.candidate" }>["data"];
   evaluated?: Extract<RunEvent, { type: "completion.evaluated" }>["data"];
@@ -316,6 +324,56 @@ export class EventPublisher {
     // have crossed the writer's durable boundary. Returning a copy prevents a
     // checkpoint hook from mutating the publisher state machine.
     return [...this.persistedEvents];
+  }
+
+  currentVerificationCommandFacts(): readonly CurrentVerificationCommandFact[] {
+    const facts: CurrentVerificationCommandFact[] = [];
+    for (const [verificationId, verification] of this.verifications) {
+      const completed = verification.completed;
+      const execution = this.commandExecutions.get(
+        verification.started.command_execution_id,
+      );
+      if (
+        completed === undefined ||
+        completed.status !== "passed" ||
+        completed.stale ||
+        completed.completed_generation !== this.verificationGeneration ||
+        completed.started_generation !== this.verificationGeneration ||
+        execution === undefined ||
+        !execution.completed ||
+        execution.cleanupVerified !== true ||
+        execution.purpose !== "verify" ||
+        execution.actionSha256 !== completed.action_sha256 ||
+        execution.completedData?.exit_code !== 0 ||
+        execution.completedData.termination !== "exit"
+      ) {
+        continue;
+      }
+      const evidenceEventIds = this.persistedEvents
+        .filter((event) =>
+          (event.type === "command.execution.requested" &&
+            event.data.execution_id === execution.executionId) ||
+          (event.type === "command.completed" &&
+            event.data.execution_id === execution.executionId) ||
+          (event.type === "verification.started" &&
+            event.data.verification_id === verificationId) ||
+          (event.type === "verification.completed" &&
+            event.data.verification_id === verificationId)
+        )
+        .map((event) => event.event_id);
+      if (evidenceEventIds.length !== 4) continue;
+      facts.push(Object.freeze({
+        actionSha256: completed.action_sha256,
+        command: execution.requestedData.redacted_argv.join(" "),
+        evidenceEventIds: Object.freeze(evidenceEventIds),
+        sourceSnapshotSha256: completed.after_snapshot_sha256,
+        verificationId,
+      }));
+    }
+    return Object.freeze(facts.sort((left, right) =>
+      left.command.localeCompare(right.command) ||
+      left.verificationId.localeCompare(right.verificationId)
+    ));
   }
 
   async publish(draft: RunEventDraft): Promise<RunEvent> {

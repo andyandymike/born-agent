@@ -103,10 +103,16 @@ export interface PermissionContext {
   readonly reviewedOfflineMcpActionSha256?:
     | ReadonlySet<Sha256Hex>
     | readonly Sha256Hex[];
+  /** Exact start actions derived from a user-enabled, run-frozen Plugin. */
+  readonly frozenCapabilityMcpActionSha256?:
+    | ReadonlySet<Sha256Hex>
+    | readonly Sha256Hex[];
   /** Server ids whose exact start action passed the offline review gate. */
   readonly reviewedOfflineMcpServerIds?:
     | ReadonlySet<string>
     | readonly string[];
+  /** Servers whose exact start action already crossed its independent gate. */
+  readonly startedMcpServerIds?: ReadonlySet<string> | readonly string[];
 }
 
 interface PermissionDecisionBase {

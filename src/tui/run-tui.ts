@@ -94,6 +94,8 @@ function agentOptions(
     maxTokens: options.maxTokens,
     maxToolOutputBytes: options.maxToolOutputBytes,
     mcpServerIds: options.mcpServerIds,
+    mcpPromptArgumentsJson: options.mcpPromptArgumentsJson,
+    mcpPromptSelection: options.mcpPromptSelection,
     ...(mode === undefined
       ? {}
       : {
@@ -112,6 +114,8 @@ function agentOptions(
     sandboxMemoryMiB: options.sandboxMemoryMiB,
     sandboxPids: options.sandboxPids,
     sandboxTmpMiB: options.sandboxTmpMiB,
+    skillArguments: options.skillArguments,
+    skillSelections: options.skillSelections,
     task,
     taskProfile:
       mode === "plan"
@@ -526,11 +530,66 @@ export async function executeTui(
     return repositoryRefresh;
   };
   const continuousPhase16 = runtime.supportsPhase16TaskState === true;
+  let nextSkillSelections = [...(options.skillSelections ?? [])];
+  let nextSkillArguments = options.skillArguments;
+  let nextMcpPromptSelection = options.mcpPromptSelection;
+  let nextMcpPromptArgumentsJson = options.mcpPromptArgumentsJson;
+  const takeNextRunOptions = (): TuiCommandOptions => {
+    const selected: TuiCommandOptions = {
+      ...options,
+      mcpPromptArgumentsJson: nextMcpPromptArgumentsJson,
+      mcpPromptSelection: nextMcpPromptSelection,
+      skillArguments: nextSkillArguments,
+      skillSelections: nextSkillSelections,
+    };
+    nextMcpPromptSelection = undefined;
+    nextMcpPromptArgumentsJson = undefined;
+    nextSkillSelections = [];
+    nextSkillArguments = undefined;
+    return selected;
+  };
   const core: TuiCorePort = {
     cancelActiveRun: () => abortBridge.cancelActiveRun(),
     cancelRepositoryRefresh: () => repositoryRefresh?.coordinator.cancel(),
     loadSession: async (sessionId) =>
       (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
+    selectMcpPrompt: async (selector: string, argumentsJson: string | undefined) => {
+      const { parseExplicitMcpPromptSelection } = await import("../mcp/mcp-prompt-selection.js");
+      const selection = parseExplicitMcpPromptSelection({
+        argumentsJson,
+        selectedServerIds: options.mcpServerIds ?? [],
+        selector,
+      });
+      if (selection === undefined) throw new Error("MCP prompt selection is required");
+      nextMcpPromptSelection = selection.selector;
+      nextMcpPromptArgumentsJson = argumentsJson;
+      return selection.selector;
+    },
+    ...(runtime.createPluginLifecycle === undefined
+      ? {}
+      : {
+          listPlugins: async () => {
+            const plugins = await runtime.createPluginLifecycle!(runtime.cwd).list();
+            if (plugins.length === 0) return "Plugins: none installed.";
+            return `Plugins: ${plugins.map((plugin) =>
+              `${plugin.pluginId}@${plugin.pluginVersion}#${plugin.pluginSha256.slice(0, 12)}:${plugin.enabled ? "enabled-next-run" : "disabled"}`
+            ).join(" | ")}`;
+          },
+        }),
+    ...(runtime.createCapabilityPlatform === undefined
+      ? {}
+      : {
+          selectSkill: async (selector: string, argumentsText: string) => {
+            const registry = await runtime.createCapabilityPlatform!(runtime.cwd).buildRegistry();
+            const record = registry.resolveUniqueReadOnly(selector);
+            if (!record.enabled || record.identity.kind !== "skill") {
+              throw new Error("selector must resolve to one enabled Skill");
+            }
+            nextSkillSelections = [record.identity.qualifiedId];
+            nextSkillArguments = argumentsText;
+            return record.identity.qualifiedId;
+          },
+        }),
     ...(continuousPhase16
       ? {
           mutateIntent: (intent: Phase16MutationIntent) =>
@@ -557,7 +616,7 @@ export async function executeTui(
       ),
     startTask: (task) =>
       captureCoreRun((coreIo) =>
-        executeAgent(agentOptions(options, task), tuiRuntime, coreIo),
+        executeAgent(agentOptions(takeNextRunOptions(), task), tuiRuntime, coreIo),
       ),
     ...(runtime.createRepositoryNavigationService === undefined
       ? {}
@@ -582,7 +641,7 @@ export async function executeTui(
                 intent,
                 selectedMode,
                 modeSource,
-                options,
+                takeNextRunOptions(),
                 tuiRuntime,
                 coreIo,
               ),

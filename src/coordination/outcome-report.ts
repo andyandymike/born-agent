@@ -22,6 +22,18 @@ import {
   projectRepositoryIntelligenceRunSummary,
   repositoryIntelligenceRunSummarySchema,
 } from "../repository-intelligence/repository-run-summary.js";
+import {
+  projectSkillRunSummary,
+  skillRunSummarySchema,
+} from "../skills/skill-run-summary.js";
+import {
+  mcpPrimitiveRunSummarySchema,
+  projectMcpPrimitiveRunSummary,
+} from "../mcp/mcp-primitive-run-summary.js";
+import {
+  hookRunSummarySchema,
+  projectHookRunSummary,
+} from "../hooks/hook-run-summary.js";
 
 type CompletionEvaluationEvent = Extract<
   DecodedRunEvent,
@@ -93,6 +105,8 @@ const outcomeWithoutHashSchema = z
       })
       .strict()
       .nullable(),
+    hooks: hookRunSummarySchema,
+    mcp: mcpPrimitiveRunSummarySchema,
     outcome: z.enum([
       "abandoned",
       "blocked",
@@ -160,6 +174,7 @@ const outcomeWithoutHashSchema = z
       .strict()
       .nullable(),
     repository: repositoryIntelligenceRunSummarySchema.nullable(),
+    skills: skillRunSummarySchema,
     schemaVersion: z.literal(1),
     sessionId: uuid,
     usage: z
@@ -715,6 +730,11 @@ function eventEvidenceIds(input: {
     );
     for (const event of repositoryEvidence.slice(-512)) add(event.eventId);
   }
+  for (const event of input.run?.events ?? []) {
+    if (event.type.startsWith("skill.")) add(event.eventId);
+    if (event.type.startsWith("hook.")) add(event.eventId);
+    if (event.type.startsWith("mcp.resource.") || event.type.startsWith("mcp.prompt.") || event.type === "mcp.server.negotiated") add(event.eventId);
+  }
   if (input.evaluation !== undefined) {
     const evaluation = input.evaluation;
     add(input.evaluation.eventId);
@@ -877,6 +897,8 @@ export class OutcomeReportBuilder {
                 revision: goal.content.revision,
                 status: goal.status,
               },
+        hooks: projectHookRunSummary(run?.events ?? []),
+        mcp: projectMcpPrimitiveRunSummary(run?.events ?? []),
         outcome: classified.outcome,
         outcomeReasons: classified.reasons,
         plan,
@@ -895,6 +917,7 @@ export class OutcomeReportBuilder {
                 status: run.status,
               },
         repository: projectRepositoryIntelligenceRunSummary(run),
+        skills: projectSkillRunSummary(run?.events ?? []),
         schemaVersion: 1,
         sessionId: session.sessionId,
         usage: {

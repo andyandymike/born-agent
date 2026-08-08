@@ -91,6 +91,7 @@ export interface AgentLoopDeps {
     readonly evidenceSha256: string;
     readonly reportSha256: string;
   }) => Promise<void>;
+  readonly beforeRunTerminal?: (terminal: AgentTerminal) => Promise<void>;
   readonly agentMode?: AgentMode;
   readonly clock: AgentClock;
   readonly context?: AgentContextController;
@@ -373,6 +374,8 @@ export async function runAgentLoop(
   const publishCancelled = async (): Promise<AgentTerminal> => {
     await publishAggregateUsage();
     const snapshot = budget.snapshot();
+    const terminal = { exitCode: 130, type: "cancelled" } as const;
+    await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
         duration_ms: snapshot.elapsedMs,
@@ -383,7 +386,7 @@ export async function runAgentLoop(
       },
       type: "run.cancelled",
     });
-    return { exitCode: 130, type: "cancelled" };
+    return terminal;
   };
 
   const publishBudget = async (
@@ -408,6 +411,12 @@ export async function runAgentLoop(
       exceeded.reason === "max_duration"
         ? observed
         : snapshot.elapsedMs;
+    const terminal = {
+      exitCode: 7,
+      reason: exceeded.reason,
+      type: "budget_exceeded",
+    } as const;
+    await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
         duration_ms: duration,
@@ -420,17 +429,18 @@ export async function runAgentLoop(
       },
       type: "run.budget_exceeded",
     });
-    return {
-      exitCode: 7,
-      reason: exceeded.reason,
-      type: "budget_exceeded",
-    };
+    return terminal;
   };
 
   const publishFailure = async (
     error: ProviderFailure,
   ): Promise<AgentTerminal> => {
     const snapshot = budget.snapshot();
+    const terminal = {
+      exitCode: providerExitCode(error),
+      type: "failed",
+    } as const;
+    await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
         category: error.category,
@@ -447,7 +457,7 @@ export async function runAgentLoop(
       },
       type: "run.failed",
     });
-    return { exitCode: providerExitCode(error), type: "failed" };
+    return terminal;
   };
 
   const publishInternalFailure = async (
@@ -457,6 +467,8 @@ export async function runAgentLoop(
   ): Promise<AgentTerminal> => {
     await publishAggregateUsage();
     const snapshot = budget.snapshot();
+    const terminal = { exitCode: 1, type: "failed" } as const;
+    await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
         category: "internal",
@@ -470,7 +482,7 @@ export async function runAgentLoop(
       },
       type: "run.failed",
     });
-    return { exitCode: 1, type: "failed" };
+    return terminal;
   };
 
   const publishIncomplete = async (
@@ -484,6 +496,8 @@ export async function runAgentLoop(
     // understandable task outcome (exit 8), not a provider or process crash.
     await publishAggregateUsage();
     const snapshot = budget.snapshot();
+    const terminal = { exitCode: 8, reason, type: "incomplete" } as const;
+    await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
         duration_ms: snapshot.elapsedMs,
@@ -506,7 +520,7 @@ export async function runAgentLoop(
         "incomplete",
       );
     }
-    return { exitCode: 8, reason, type: "incomplete" };
+    return terminal;
   };
 
   const createRequestAbort = (): RequestAbortState => {
@@ -659,6 +673,8 @@ export async function runAgentLoop(
           evidenceSha256: control.evidenceSha256,
           reportSha256: control.reportSha256,
         });
+        const terminal = { exitCode: 0, type: "completed" } as const;
+        await deps.beforeRunTerminal?.(terminal);
         await publisher.publish({
           data: {
             completion_mode: "verified_finish_task",
@@ -676,7 +692,7 @@ export async function runAgentLoop(
           reportFormat === "json" ? control.reportJson : control.reportText,
           "completed",
         );
-        return { exitCode: 0, type: "completed" };
+        return terminal;
       }
       if (isCompletionControl(control) && control.effect === "incomplete") {
         return await publishIncomplete(control.reason as CompletionReason, control);
@@ -787,6 +803,8 @@ export async function runAgentLoop(
         }
         if (requestAbort.timedOut()) {
           const snapshot = budget.snapshot();
+          const terminal = { exitCode: 6, type: "failed" } as const;
+          await deps.beforeRunTerminal?.(terminal);
           await publisher.publish({
             data: {
               category: "timeout",
@@ -800,7 +818,7 @@ export async function runAgentLoop(
             },
             type: "run.failed",
           });
-          return { exitCode: 6, type: "failed" };
+          return terminal;
         }
         return await publishInternalFailure(
           "unexpected_abort",
@@ -924,6 +942,8 @@ export async function runAgentLoop(
             return await publishIncomplete("clarification_required");
           }
           await publishAggregateUsage();
+          const terminal = { exitCode: 0, type: "completed" } as const;
+          await deps.beforeRunTerminal?.(terminal);
           await publisher.publish({
             data: {
               completion_mode: "plan_ready",
@@ -938,7 +958,7 @@ export async function runAgentLoop(
             },
             type: "run.completed",
           });
-          return { exitCode: 0, type: "completed" };
+          return terminal;
         }
         if (taskProfile === "coding") {
           // PHASE7: Natural text has no finish_task call/result identity. It stays
@@ -953,6 +973,8 @@ export async function runAgentLoop(
           );
         }
         await publishAggregateUsage();
+        const terminal = { exitCode: 0, type: "completed" } as const;
+        await deps.beforeRunTerminal?.(terminal);
         await publisher.publish({
           data: {
             completion_mode: "model_final",
@@ -967,7 +989,7 @@ export async function runAgentLoop(
           },
           type: "run.completed",
         });
-        return { exitCode: 0, type: "completed" };
+        return terminal;
       }
 
       // PHASE4: token/duration 是执行前置门禁；超限后不能把未被允许的
@@ -1114,6 +1136,8 @@ export async function runAgentLoop(
           evidenceSha256: control.evidenceSha256,
           reportSha256: control.reportSha256,
         });
+        const terminal = { exitCode: 0, type: "completed" } as const;
+        await deps.beforeRunTerminal?.(terminal);
         await publisher.publish({
           data: {
             completion_mode: "verified_finish_task",
@@ -1131,7 +1155,7 @@ export async function runAgentLoop(
           reportFormat === "json" ? control.reportJson : control.reportText,
           "completed",
         );
-        return { exitCode: 0, type: "completed" };
+        return terminal;
       }
       if (isCompletionControl(control) && control.effect === "incomplete") {
         return await publishIncomplete(control.reason as CompletionReason, control);

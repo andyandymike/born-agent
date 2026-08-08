@@ -11,6 +11,7 @@ import type {
   CapabilityKind,
   PackageInventoryEntry,
   RequestedEffect,
+  StableCapabilityPackageFile,
   StableCapabilityPackage,
 } from "./capability-types.js";
 import {
@@ -21,9 +22,12 @@ import {
   type ParsedCapabilityComponent,
   type ParsedPluginManifest,
 } from "./plugin-manifest-schema.js";
+import { installedPluginRecordSchema } from "../plugins/plugin-state-schema.js";
+import { parseStrictJson } from "../system/strict-json.js";
 
 export const MAX_CAPABILITY_PACKAGE_FILES = 512;
 export const MAX_CAPABILITY_PACKAGE_BYTES = 16 * 1024 * 1024;
+export const CAPABILITY_STORE_RECORD_PATH = ".bornagent-package-record.json";
 
 interface FileIdentity {
   readonly ctimeMs: number;
@@ -241,8 +245,10 @@ function assertDeclaredFilesExist(
   const required: string[] = [];
   if (component.kind === "skill") {
     required.push(component.entry, ...(component.resources ?? []).map((resource) => resource.path));
+  } else if (component.kind === "hook" && component.handler.type === "command") {
+    required.push(component.handler.executable);
   } else if (component.kind === "mcp_server") {
-    required.push(...component.integrity_files);
+    required.push(component.executable, ...component.integrity_files);
   }
   for (const declared of required) {
     const path = relativeFromComponent(componentPath, declared);
@@ -318,7 +324,8 @@ export class StablePackageReader {
     const root = policy.workspaceRealPath;
     const rootBefore = fileIdentity(await lstat(root));
     const firstPaths = await enumeratePaths(root);
-    if (!firstPaths.includes("bornagent.plugin.json")) {
+    const packagePaths = firstPaths.filter((path) => path !== CAPABILITY_STORE_RECORD_PATH);
+    if (!packagePaths.includes("bornagent.plugin.json")) {
       throw new CapabilityError(
         "capability_manifest_invalid",
         "package root has no bornagent.plugin.json",
@@ -386,11 +393,23 @@ export class StablePackageReader {
     }
 
     const inventory: readonly PackageInventoryEntry[] = Object.freeze(
-      firstPaths.map((path) => {
+      packagePaths.map((path) => {
         const file = files.get(path)!;
         return Object.freeze({
           byteLength: file.bytes.byteLength,
           mediaType: mediaType(path),
+          path,
+          sha256: createHash("sha256").update(file.bytes).digest("hex"),
+        });
+      }),
+    );
+    const stableFiles: readonly StableCapabilityPackageFile[] = Object.freeze(
+      packagePaths.map((path) => {
+        const file = files.get(path)!;
+        return Object.freeze({
+          // Callers receive a private immutable-by-convention capture instead
+          // of a live file handle or a path that could be rebound later.
+          bytes: Uint8Array.from(file.bytes),
           path,
           sha256: createHash("sha256").update(file.bytes).digest("hex"),
         });
@@ -402,6 +421,29 @@ export class StablePackageReader {
       manifestSha256,
       schemaVersion: 1,
     });
+    const storeRecordFile = files.get(CAPABILITY_STORE_RECORD_PATH);
+    if (storeRecordFile !== undefined) {
+      try {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(storeRecordFile.bytes);
+        const record = installedPluginRecordSchema.parse(parseStrictJson(text));
+        if (
+          record.pluginId !== manifest.plugin_id ||
+          record.pluginVersion !== manifest.plugin_version ||
+          record.pluginSha256 !== pluginSha256 ||
+          record.manifestSha256 !== manifestSha256 ||
+          record.inventorySha256 !== inventorySha256
+        ) {
+          throw new Error("record identity does not match package bytes");
+        }
+      } catch (error) {
+        throw new CapabilityError(
+          "capability_state_invalid",
+          "installed package record does not match its immutable package bytes",
+          2,
+          { cause: error },
+        );
+      }
+    }
     // PHASE18: identity is derived only from bytes read through stable handles;
     // a later path lookup can never silently rebind this package to new bytes.
     return Object.freeze({
@@ -410,6 +452,7 @@ export class StablePackageReader {
       )),
       description: manifest.description,
       displayName: manifest.display_name,
+      files: stableFiles,
       inventory,
       inventorySha256,
       manifestBytes: manifestFile.bytes,

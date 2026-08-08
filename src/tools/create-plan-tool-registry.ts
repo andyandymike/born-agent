@@ -2,7 +2,7 @@ import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-r
 import type { UpdatePlanInput } from "../plans/update-plan-input-schema.js";
 import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.js";
 import { ToolRegistry } from "./tool-registry.js";
-import type { ToolDefinition } from "./tool-types.js";
+import type { ToolDefinition, ToolRegistration } from "./tool-types.js";
 import type { RepositoryRuleReadRuntime } from "../repository-rules/repository-rule-observation-binding.js";
 import type { RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
 
@@ -13,14 +13,19 @@ export async function createPlanToolRegistry(
   artifacts?: ArtifactSessionRuntimeLike,
   repositoryRules?: RepositoryRuleReadRuntime,
   repositoryNavigation?: RepositoryNavigationService,
+  additionalTools: readonly ToolRegistration<unknown>[] = [],
 ): Promise<ToolRegistry> {
   if (updatePlan.name !== "update_plan") {
     throw new Error("Plan registry requires the package-owned update_plan tool");
   }
   const definitions = [
     ...(await createReadonlyToolDefinitions(workspace, artifacts, repositoryRules, repositoryNavigation)),
+    ...additionalTools,
     updatePlan as ToolDefinition<unknown>,
   ];
+  if (additionalTools.some((tool) => tool.capability !== "read")) {
+    throw new Error("Plan registry capability extensions must be read-only");
+  }
   const names = definitions.map((definition) => definition.name).sort();
   const expected = [
     "list_files",
@@ -28,6 +33,7 @@ export async function createPlanToolRegistry(
     "search",
     ...(repositoryNavigation === undefined ? [] : ["repository_outline", "find_symbol", "find_references"]),
     ...(artifacts === undefined ? [] : ["read_artifact"]),
+    ...additionalTools.map((tool) => tool.name),
     "update_plan",
   ].sort();
   if (names.join(",") !== expected.join(",")) {

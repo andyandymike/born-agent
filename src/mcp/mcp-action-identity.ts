@@ -162,9 +162,78 @@ export interface McpToolCallActionIdentity {
   readonly serverId: string;
 }
 
+export interface McpResourceReadActionIdentity {
+  readonly actionKind: "mcp.resource.read";
+  readonly actionSha256: string;
+  readonly callTimeoutMs: number;
+  readonly catalogGenerationSha256: string;
+  readonly configSha256: string;
+  readonly negotiationSha256: string;
+  readonly processIdentitySha256: string;
+  readonly resourceId: string;
+  readonly resourceItemSha256: string;
+  readonly serverId: string;
+  readonly uriSha256: string;
+}
+
+export interface McpPromptGetActionIdentity {
+  readonly actionKind: "mcp.prompt.get";
+  readonly actionSha256: string;
+  readonly argumentsJson: string;
+  readonly argumentsSha256: string;
+  readonly callTimeoutMs: number;
+  readonly catalogGenerationSha256: string;
+  readonly configSha256: string;
+  readonly invocationEventId: string;
+  readonly negotiationSha256: string;
+  readonly processIdentitySha256: string;
+  readonly promptId: string;
+  readonly promptItemSha256: string;
+  readonly promptName: string;
+  readonly serverId: string;
+}
+
 export type McpPermissionActionIdentity =
   | McpServerStartActionIdentity
-  | McpToolCallActionIdentity;
+  | McpToolCallActionIdentity
+  | McpResourceReadActionIdentity
+  | McpPromptGetActionIdentity;
+
+function computeMcpResourceReadActionSha256(
+  action: Omit<McpResourceReadActionIdentity, "actionSha256">,
+): string {
+  return sha256(canonicalJson({
+    action_kind: action.actionKind,
+    call_timeout_ms: action.callTimeoutMs,
+    catalog_generation_sha256: action.catalogGenerationSha256,
+    config_sha256: action.configSha256,
+    negotiation_sha256: action.negotiationSha256,
+    process_identity_sha256: action.processIdentitySha256,
+    resource_id: action.resourceId,
+    resource_item_sha256: action.resourceItemSha256,
+    server_id: action.serverId,
+    uri_sha256: action.uriSha256,
+  }));
+}
+
+function computeMcpPromptGetActionSha256(
+  action: Omit<McpPromptGetActionIdentity, "actionSha256" | "argumentsJson">,
+): string {
+  return sha256(canonicalJson({
+    action_kind: action.actionKind,
+    arguments_sha256: action.argumentsSha256,
+    call_timeout_ms: action.callTimeoutMs,
+    catalog_generation_sha256: action.catalogGenerationSha256,
+    config_sha256: action.configSha256,
+    invocation_event_id: action.invocationEventId,
+    negotiation_sha256: action.negotiationSha256,
+    process_identity_sha256: action.processIdentitySha256,
+    prompt_id: action.promptId,
+    prompt_item_sha256: action.promptItemSha256,
+    prompt_name: action.promptName,
+    server_id: action.serverId,
+  }));
+}
 
 function computeMcpServerStartActionSha256(
   action: Omit<McpServerStartActionIdentity, "actionSha256">,
@@ -218,6 +287,31 @@ export function verifyMcpPermissionActionIdentity(
       computeMcpServerStartActionSha256(action) === action.actionSha256
     );
   }
+  if (action.actionKind === "mcp.resource.read") {
+    return (
+      SHA256.test(action.actionSha256) &&
+      SHA256.test(action.catalogGenerationSha256) &&
+      SHA256.test(action.configSha256) &&
+      SHA256.test(action.negotiationSha256) &&
+      SHA256.test(action.processIdentitySha256) &&
+      SHA256.test(action.resourceItemSha256) &&
+      SHA256.test(action.uriSha256) &&
+      computeMcpResourceReadActionSha256(action) === action.actionSha256
+    );
+  }
+  if (action.actionKind === "mcp.prompt.get") {
+    return (
+      SHA256.test(action.actionSha256) &&
+      SHA256.test(action.argumentsSha256) &&
+      SHA256.test(action.catalogGenerationSha256) &&
+      SHA256.test(action.configSha256) &&
+      SHA256.test(action.negotiationSha256) &&
+      SHA256.test(action.processIdentitySha256) &&
+      SHA256.test(action.promptItemSha256) &&
+      sha256(action.argumentsJson) === action.argumentsSha256 &&
+      computeMcpPromptGetActionSha256(action) === action.actionSha256
+    );
+  }
   return (
     SHA256.test(action.actionSha256) &&
     SHA256.test(action.argumentsSha256) &&
@@ -228,6 +322,100 @@ export function verifyMcpPermissionActionIdentity(
     sha256(action.argumentsJson) === action.argumentsSha256 &&
     computeMcpToolCallActionSha256(action) === action.actionSha256
   );
+}
+
+export function createMcpResourceReadActionIdentity(input: {
+  readonly callTimeoutMs: number;
+  readonly catalogGenerationSha256: string;
+  readonly configSha256: string;
+  readonly negotiationSha256: string;
+  readonly processIdentitySha256: string;
+  readonly resourceId: string;
+  readonly resourceItemSha256: string;
+  readonly serverId: string;
+  readonly uri: string;
+}): McpResourceReadActionIdentity {
+  for (const [label, value] of [
+    ["catalogGenerationSha256", input.catalogGenerationSha256],
+    ["configSha256", input.configSha256],
+    ["negotiationSha256", input.negotiationSha256],
+    ["processIdentitySha256", input.processIdentitySha256],
+    ["resourceItemSha256", input.resourceItemSha256],
+  ] as const) requireSha256(value, label);
+  requirePositiveInteger(input.callTimeoutMs, "callTimeoutMs");
+  if (
+    !/^[a-z][a-z0-9_-]{0,31}$/u.test(input.serverId) ||
+    !/^mcp-resource:[a-f0-9]{64}$/u.test(input.resourceId) ||
+    input.uri.length === 0 ||
+    input.uri.includes("\0")
+  ) {
+    throw new McpCoreError("mcp_action_invalid", "invalid MCP resource action identity");
+  }
+  const action = {
+    actionKind: "mcp.resource.read",
+    callTimeoutMs: input.callTimeoutMs,
+    catalogGenerationSha256: input.catalogGenerationSha256,
+    configSha256: input.configSha256,
+    negotiationSha256: input.negotiationSha256,
+    processIdentitySha256: input.processIdentitySha256,
+    resourceId: input.resourceId,
+    resourceItemSha256: input.resourceItemSha256,
+    serverId: input.serverId,
+    uriSha256: sha256(input.uri),
+  } as const;
+  return Object.freeze({ ...action, actionSha256: computeMcpResourceReadActionSha256(action) });
+}
+
+export function createMcpPromptGetActionIdentity(input: {
+  readonly argumentsValue: Readonly<Record<string, string>>;
+  readonly callTimeoutMs: number;
+  readonly catalogGenerationSha256: string;
+  readonly configSha256: string;
+  readonly invocationEventId: string;
+  readonly negotiationSha256: string;
+  readonly processIdentitySha256: string;
+  readonly promptId: string;
+  readonly promptItemSha256: string;
+  readonly promptName: string;
+  readonly serverId: string;
+}): McpPromptGetActionIdentity {
+  for (const [label, value] of [
+    ["catalogGenerationSha256", input.catalogGenerationSha256],
+    ["configSha256", input.configSha256],
+    ["negotiationSha256", input.negotiationSha256],
+    ["processIdentitySha256", input.processIdentitySha256],
+    ["promptItemSha256", input.promptItemSha256],
+  ] as const) requireSha256(value, label);
+  requirePositiveInteger(input.callTimeoutMs, "callTimeoutMs");
+  if (
+    !/^[a-z][a-z0-9_-]{0,31}$/u.test(input.serverId) ||
+    !/^mcp-prompt:[a-f0-9]{64}$/u.test(input.promptId) ||
+    !/^[0-9a-f-]{36}$/u.test(input.invocationEventId) ||
+    input.promptName.length === 0 ||
+    input.promptName.includes("\0")
+  ) {
+    throw new McpCoreError("mcp_action_invalid", "invalid MCP prompt action identity");
+  }
+  const argumentsJson = canonicalJson(input.argumentsValue);
+  const action = {
+    actionKind: "mcp.prompt.get",
+    argumentsSha256: sha256(argumentsJson),
+    callTimeoutMs: input.callTimeoutMs,
+    catalogGenerationSha256: input.catalogGenerationSha256,
+    configSha256: input.configSha256,
+    invocationEventId: input.invocationEventId,
+    negotiationSha256: input.negotiationSha256,
+    processIdentitySha256: input.processIdentitySha256,
+    promptId: input.promptId,
+    promptItemSha256: input.promptItemSha256,
+    promptName: input.promptName,
+    serverId: input.serverId,
+  } as const;
+  return Object.freeze({
+    ...action,
+    actionSha256: computeMcpPromptGetActionSha256(action),
+    argumentsJson,
+  });
 }
 
 export function createMcpToolCallActionIdentity(

@@ -33,7 +33,11 @@ export interface CommandApprovalPreview {
 }
 
 export interface McpApprovalPreview {
-  readonly actionKind: "mcp.server.start" | "mcp.tool.call";
+  readonly actionKind:
+    | "mcp.server.start"
+    | "mcp.tool.call"
+    | "mcp.resource.read"
+    | "mcp.prompt.get";
   readonly actionSha256: string;
   readonly reviewLines: readonly string[];
   readonly riskWarning: string;

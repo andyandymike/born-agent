@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "plugin_id": "bornagent.m9-review-pack",
+  "plugin_version": "1.0.0",
+  "display_name": "M9 Review Pack",
+  "description": "Deterministic offline fixture spanning Skills, Hooks, and MCP primitives.",
+  "components": {
+    "skills": [
+      "skills/review-change/skill.json",
+      "skills/explain-evidence/skill.json"
+    ],
+    "hooks": [
+      "hooks/protect-generated/hook.json",
+      "hooks/record-outcome/hook.json"
+    ],
+    "mcp_servers": [
+      "mcp/docs/server.json"
+    ]
+  }
+}

@@ -130,17 +130,18 @@ export class McpIntegrityManifestBuilder {
     }
 
     const fileSystem = this.options.fileSystem ?? nodeFileSystem;
+    const canonicalRoot = await fileSystem.realpath(this.options.workspaceRealPath);
     const entries: McpIntegrityEntry[] = [];
     let totalBytes = 0;
     for (const relativePath of normalizedPaths) {
-      const candidate = path.resolve(this.options.workspaceRealPath, relativePath);
+      const candidate = path.resolve(canonicalRoot, relativePath);
       await assertNoSymlinkComponents(
         fileSystem,
-        this.options.workspaceRealPath,
+        canonicalRoot,
         candidate,
       );
       const canonicalFile = await fileSystem.realpath(candidate);
-      if (!isInside(this.options.workspaceRealPath, canonicalFile)) {
+      if (!isInside(canonicalRoot, canonicalFile)) {
         throw new McpCoreError("mcp_integrity_invalid", "integrity file resolves outside the workspace");
       }
       const metadata = await fileSystem.stat(canonicalFile);

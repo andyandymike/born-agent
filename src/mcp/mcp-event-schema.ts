@@ -11,6 +11,13 @@ const bounded = (bytes: number) =>
   );
 const positive = z.number().int().positive();
 const nonnegative = z.number().int().nonnegative();
+const artifactId = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+const mcpActionKind = z.enum([
+  "mcp.server.start",
+  "mcp.tool.call",
+  "mcp.resource.read",
+  "mcp.prompt.get",
+]);
 
 const processIdentity = {
   host_fingerprint: sha256,
@@ -38,7 +45,7 @@ const callIdentity = {
 export const phase12McpRunEventDataSchemas = {
   "mcp.approval.decided": z
     .object({
-      action_kind: z.enum(["mcp.server.start", "mcp.tool.call"]),
+      action_kind: mcpActionKind,
       action_sha256: sha256,
       approval_request_id: uuid,
       decision: z.enum(["approved", "cancelled", "denied"]),
@@ -47,7 +54,7 @@ export const phase12McpRunEventDataSchemas = {
     .strict(),
   "mcp.approval.requested": z
     .object({
-      action_kind: z.enum(["mcp.server.start", "mcp.tool.call"]),
+      action_kind: mcpActionKind,
       action_sha256: sha256,
       approval_request_id: uuid,
       preview: bounded(32 * 1024),
@@ -89,7 +96,7 @@ export const phase12McpRunEventDataSchemas = {
     .strict(),
   "mcp.permission.evaluated": z
     .object({
-      action_kind: z.enum(["mcp.server.start", "mcp.tool.call"]),
+      action_kind: mcpActionKind,
       action_sha256: sha256,
       effect: z.enum(["allow", "ask", "deny"]),
       policy_version: bounded(128).min(1),
@@ -106,6 +113,176 @@ export const phase12McpRunEventDataSchemas = {
         context.addIssue({ code: "custom", message: "permission reason does not match effect" });
       }
     }),
+  "mcp.server.negotiated": z
+    .object({
+      instructions_artifact_id: artifactId.optional(),
+      instructions_sha256: sha256.optional(),
+      negotiation_sha256: sha256,
+      process_identity_sha256: sha256,
+      prompts_list_changed: z.boolean(),
+      prompts_supported: z.boolean(),
+      protocol_version: bounded(128).min(1),
+      resources_list_changed: z.boolean(),
+      resources_subscribe: z.boolean(),
+      resources_supported: z.boolean(),
+      server_identity_sha256: sha256,
+      server_id: serverId,
+      server_name: bounded(256).min(1),
+      server_version: bounded(256).optional(),
+      tools_list_changed: z.boolean(),
+      tools_supported: z.boolean(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (
+        (value.instructions_artifact_id !== undefined &&
+          (value.instructions_sha256 === undefined ||
+            value.instructions_artifact_id !== `sha256:${value.instructions_sha256}`))
+      ) {
+        context.addIssue({ code: "custom", message: "MCP instructions artifact identity is inconsistent" });
+      }
+    }),
+  "mcp.resource.cataloged": z
+    .object({
+      catalog_artifact_id: artifactId.optional(),
+      catalog_generation_sha256: sha256,
+      catalog_sha256: sha256,
+      count: nonnegative.max(256),
+      negotiation_sha256: sha256,
+      process_identity_sha256: sha256,
+      server_id: serverId,
+    })
+    .strict(),
+  "mcp.resource.catalog.stale": z
+    .object({
+      catalog_generation_sha256: sha256,
+      process_identity_sha256: sha256,
+      reason: z.enum(["list_changed", "process_changed", "explicit_refresh"]),
+      server_id: serverId,
+    })
+    .strict(),
+  "mcp.resource.read.requested": z
+    .object({
+      action_sha256: sha256,
+      approval_request_id: uuid,
+      call_id: bounded(200).min(1),
+      catalog_generation_sha256: sha256,
+      config_sha256: sha256,
+      max_bytes: positive.max(256 * 1024),
+      negotiation_sha256: sha256,
+      process_identity_sha256: sha256,
+      resource_id: bounded(128).regex(/^mcp-resource:[a-f0-9]{64}$/u),
+      resource_item_sha256: sha256,
+      server_id: serverId,
+      step: positive,
+      timeout_ms: positive,
+      uri_sha256: sha256,
+    })
+    .strict(),
+  "mcp.resource.read.completed": z
+    .object({
+      action_sha256: sha256,
+      byte_length: nonnegative.max(1024 * 1024),
+      content_part_count: nonnegative.max(16),
+      projection_artifact_id: artifactId.optional(),
+      projection_sha256: sha256.optional(),
+      raw_artifact_id: artifactId,
+      raw_sha256: sha256,
+      resource_id: bounded(128).regex(/^mcp-resource:[a-f0-9]{64}$/u),
+      server_id: serverId,
+      truncated: z.boolean(),
+      unsupported_content_count: nonnegative.max(16),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        (value.projection_artifact_id === undefined) ===
+        (value.projection_sha256 === undefined),
+      "MCP resource projection artifact identity is incomplete",
+    ),
+  "mcp.resource.read.failed": z
+    .object({
+      action_sha256: sha256,
+      code: bounded(128).min(1),
+      effect: z.enum(["no_effect", "effect_unknown", "stale"]),
+      resource_id: bounded(128).regex(/^mcp-resource:[a-f0-9]{64}$/u),
+      server_id: serverId,
+    })
+    .strict(),
+  "mcp.prompt.cataloged": z
+    .object({
+      catalog_artifact_id: artifactId.optional(),
+      catalog_generation_sha256: sha256,
+      catalog_sha256: sha256,
+      count: nonnegative.max(128),
+      negotiation_sha256: sha256,
+      process_identity_sha256: sha256,
+      server_id: serverId,
+    })
+    .strict(),
+  "mcp.prompt.catalog.stale": z
+    .object({
+      catalog_generation_sha256: sha256,
+      process_identity_sha256: sha256,
+      reason: z.enum(["list_changed", "process_changed", "explicit_refresh"]),
+      server_id: serverId,
+    })
+    .strict(),
+  "mcp.prompt.get.requested": z
+    .object({
+      action_sha256: sha256,
+      approval_request_id: uuid,
+      arguments_sha256: sha256,
+      catalog_generation_sha256: sha256,
+      config_sha256: sha256,
+      invocation_event_id: uuid,
+      negotiation_sha256: sha256,
+      process_identity_sha256: sha256,
+      prompt_id: bounded(128).regex(/^mcp-prompt:[a-f0-9]{64}$/u),
+      prompt_item_sha256: sha256,
+      prompt_name: bounded(512).min(1),
+      server_id: serverId,
+      timeout_ms: positive,
+    })
+    .strict(),
+  "mcp.prompt.user.invoked": z
+    .object({
+      arguments_sha256: sha256,
+      invocation_id: uuid,
+      selector: bounded(640).min(1),
+      source: z.enum(["cli", "tui"]),
+    })
+    .strict(),
+  "mcp.prompt.get.completed": z
+    .object({
+      action_sha256: sha256,
+      byte_length: nonnegative.max(256 * 1024),
+      message_count: nonnegative.max(32),
+      projection_artifact_id: artifactId.optional(),
+      projection_sha256: sha256.optional(),
+      prompt_id: bounded(128).regex(/^mcp-prompt:[a-f0-9]{64}$/u),
+      raw_artifact_id: artifactId,
+      raw_sha256: sha256,
+      server_id: serverId,
+      truncated: z.boolean(),
+      unsupported_content_count: nonnegative.max(32),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        (value.projection_artifact_id === undefined) ===
+        (value.projection_sha256 === undefined),
+      "MCP prompt projection artifact identity is incomplete",
+    ),
+  "mcp.prompt.get.failed": z
+    .object({
+      action_sha256: sha256,
+      code: bounded(128).min(1),
+      effect: z.enum(["no_effect", "effect_unknown", "stale"]),
+      prompt_id: bounded(128).regex(/^mcp-prompt:[a-f0-9]{64}$/u),
+      server_id: serverId,
+    })
+    .strict(),
   "mcp.server.start.effect_unknown": z
     .object({
       action_sha256: sha256,

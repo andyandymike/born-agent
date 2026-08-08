@@ -250,14 +250,12 @@ export function resolveCapabilityUserStateRoot(input: {
       input.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
       "BornAgent",
       "capabilities",
-      "v1",
     );
   }
   return join(
     input.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"),
     "bornagent",
     "capabilities",
-    "v1",
   );
 }
 
@@ -271,6 +269,41 @@ export class UserInstallCapabilitySource extends IndexedCapabilitySource {
     super();
     this.root = resolve(root);
     this.indexPath = join(this.root, "enablement.json");
+  }
+
+  override async discover(): Promise<CapabilitySourceDiscovery> {
+    const current = await readIndex(
+      join(this.root, "enablement", "v1", "state.json"),
+      { required: false, source: this.source },
+    );
+    const directLegacy = current === null ? await readIndex(this.indexPath, {
+      required: false,
+      source: this.source,
+    }) : null;
+    const versionedLegacy = current === null && directLegacy === null
+      ? await readIndex(join(this.root, "v1", "enablement.json"), {
+          required: false,
+          source: this.source,
+        })
+      : null;
+    const index = current ?? directLegacy ?? versionedLegacy;
+    const revision = index?.revision ?? 0;
+    return Object.freeze({
+      candidates: Object.freeze(
+        (index?.packages ?? []).map((entry) =>
+          candidate(
+            this.root,
+            this.source,
+            revision,
+            versionedLegacy === null
+              ? entry
+              : { ...entry, path: `v1/${entry.path}` },
+          ),
+        ),
+      ),
+      revision,
+      source: this.source,
+    });
   }
 }
 

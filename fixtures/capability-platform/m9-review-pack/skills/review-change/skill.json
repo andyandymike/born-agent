@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "skill",
+  "component_id": "review-change",
+  "display_name": "Review Change",
+  "description": "Review one bounded repository change using an inert checklist.",
+  "entry": "SKILL.md",
+  "invocation": "model_allowed",
+  "resources": [
+    {
+      "resource_id": "review-checklist",
+      "description": "Bounded checklist for reviewing one repository change.",
+      "path": "references/checklist.md",
+      "media_type": "text/markdown"
+    }
+  ],
+  "context": {
+    "max_entry_bytes": 8192,
+    "max_resource_bytes": 8192,
+    "max_total_resource_bytes": 16384
+  }
+}

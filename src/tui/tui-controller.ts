@@ -62,6 +62,9 @@ export interface TuiCorePort {
   cancelActiveRun(): void;
   cancelRepositoryRefresh?(): void;
   loadSession(sessionId: string): Promise<readonly TuiPersistedEvent[]>;
+  listPlugins?(): Promise<string>;
+  selectMcpPrompt?(selector: string, argumentsJson: string | undefined): Promise<string>;
+  selectSkill?(selector: string, argumentsText: string): Promise<string>;
   mutateIntent?(intent: Phase16MutationIntent): Promise<TuiCoreRunResult>;
   resumeSession(
     sessionId: string,
@@ -108,6 +111,8 @@ const GOAL_SET_COMMAND = /^\/goal\s+set\s+([\s\S]+)$/u;
 const GOAL_ABANDON_COMMAND = /^\/goal\s+abandon\s+([\s\S]+)$/u;
 const PLAN_REJECT_COMMAND = /^\/plan\s+reject\s+([\s\S]+)$/u;
 const PLAN_REPLACE_COMMAND = /^\/plan\s+replace\s+([\s\S]+)$/u;
+const SKILL_COMMAND = /^\/skill\s+(\S+)(?:\s+([\s\S]+))?$/u;
+const MCP_PROMPT_COMMAND = /^\/mcp-prompt\s+(\S+)(?:\s+([\s\S]+))?$/u;
 
 function printableInput(data: string): string | null {
   if (data.length === 0) return null;
@@ -613,6 +618,25 @@ export class TuiController {
       this.renderCoordinatorResult(result);
       return;
     }
+    if (text === "/plugins") {
+      if (this.options.core.listPlugins === undefined) {
+        this.showCommandDiagnostic("Local Plugin lifecycle is unavailable.");
+        return;
+      }
+      try {
+        const summary = await this.options.core.listPlugins();
+        this.ephemeralState = setCoreDiagnostic(
+          setDraftInput(this.ephemeralState, ""),
+          summary,
+        );
+      } catch (error) {
+        this.showCommandDiagnostic(
+          error instanceof Error ? `Plugin inspection failed: ${error.message}` : "Plugin inspection failed.",
+        );
+      }
+      this.scheduleRender();
+      return;
+    }
     const mode = MODE_COMMAND.exec(text)?.[1] as "build" | "plan" | undefined;
     if (mode !== undefined) {
       const result = await this.coordinator?.dispatch({
@@ -644,6 +668,51 @@ export class TuiController {
           ? "Session busy — input kept locally until a complete durable snapshot is available."
           : "Session refresh in progress — input kept locally until the durable snapshot is current.",
       );
+      return;
+    }
+    const skill = SKILL_COMMAND.exec(text);
+    if (skill?.[1] !== undefined) {
+      if (this.options.core.selectSkill === undefined) {
+        this.showCommandDiagnostic("Skill selection is unavailable.");
+        return;
+      }
+      try {
+        const selected = await this.options.core.selectSkill(skill[1], skill[2] ?? "");
+        this.ephemeralState = setCoreDiagnostic(
+          setDraftInput(this.ephemeralState, ""),
+          `Skill selected for the next run: ${selected}`,
+        );
+      } catch (error) {
+        this.showCommandDiagnostic(
+          error instanceof Error ? `Skill selection failed: ${error.message}` : "Skill selection failed.",
+        );
+      }
+      this.scheduleRender();
+      return;
+    }
+    const mcpPrompt = MCP_PROMPT_COMMAND.exec(text);
+    if (mcpPrompt?.[1] !== undefined) {
+      if (this.options.core.selectMcpPrompt === undefined) {
+        this.showCommandDiagnostic("MCP prompt selection is unavailable.");
+        return;
+      }
+      try {
+        const selected = await this.options.core.selectMcpPrompt(
+          mcpPrompt[1],
+          mcpPrompt[2],
+        );
+        this.ephemeralState = setCoreDiagnostic(
+          setDraftInput(this.ephemeralState, ""),
+          `MCP prompt selected for the next run: ${selected}`,
+        );
+      } catch (error) {
+        this.showCommandDiagnostic(
+          error instanceof Error
+            ? `MCP prompt selection failed: ${error.message}`
+            : "MCP prompt selection failed.",
+        );
+      }
+      this.scheduleRender();
       return;
     }
     const resume = RESUME_COMMAND.exec(text);

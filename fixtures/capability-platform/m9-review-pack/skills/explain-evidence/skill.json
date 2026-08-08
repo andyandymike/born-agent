@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "skill",
+  "component_id": "explain-evidence",
+  "display_name": "Explain Evidence",
+  "description": "User-only guidance for explaining audit evidence without upgrading claims.",
+  "entry": "SKILL.md",
+  "invocation": "user_only",
+  "context": {
+    "max_entry_bytes": 8192,
+    "max_resource_bytes": 4096,
+    "max_total_resource_bytes": 4096
+  }
+}

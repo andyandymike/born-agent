@@ -12,6 +12,7 @@ export interface McpEventAppender {
   append<TType extends Phase12McpRunEventType>(
     type: TType,
     data: Phase12McpRunEventData<TType>,
+    eventId?: string,
   ): Promise<void>;
 }
 
@@ -26,7 +27,11 @@ export class McpApprovalGate {
 
   public async request(
     preview: Omit<McpApprovalPreview, "actionKind"> & {
-      readonly actionKind: "mcp.server.start" | "mcp.tool.call";
+      readonly actionKind:
+        | "mcp.server.start"
+        | "mcp.tool.call"
+        | "mcp.resource.read"
+        | "mcp.prompt.get";
       readonly serverId: string;
     },
     signal: AbortSignal,

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "kind": "hook",
+  "component_id": "record-outcome",
+  "display_name": "Record Outcome",
+  "description": "Offline command observer fixture with a strict foreground JSON result.",
+  "event": "run.terminal",
+  "mode": "observe",
+  "handler": {
+    "type": "command",
+    "executable": "observer.mjs",
+    "argv": [],
+    "cwd": "workspace_root",
+    "environment": {},
+    "sandbox": "policy_selected"
+  },
+  "timeout_ms": 2000,
+  "failure_policy": "record_degraded",
+  "requested_effects": ["process_spawn"]
+}

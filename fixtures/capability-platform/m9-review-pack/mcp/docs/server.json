@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "kind": "mcp_server",
+  "component_id": "offline-docs",
+  "display_name": "Offline Docs",
+  "description": "Deterministic local stdio MCP fixture for tools, resources, and prompts.",
+  "transport": "stdio",
+  "executable": "server.mjs",
+  "args": [],
+  "cwd": "plugin_root",
+  "integrity_files": [
+    "server.mjs",
+    "resources/guide.md"
+  ],
+  "env": [],
+  "startup_timeout_ms": 2000,
+  "call_timeout_ms": 5000,
+  "requested_effects": ["process_spawn", "workspace_read"]
+}

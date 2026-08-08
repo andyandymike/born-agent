@@ -26,6 +26,9 @@ import type { DockerArtifactAcquirer } from "../execution/docker/acquisition/doc
 import type { ModelQualificationGate } from "../model/model-qualification-gate.js";
 import type { RepositoryNavigationEventSink, RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
 import type { CapabilityPlatformLike } from "../capabilities/capability-platform.js";
+import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
+import type { PluginLifecycleLike } from "../plugins/plugin-lifecycle.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -51,10 +54,14 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     workspace: string,
   ) => CapabilityPlatformLike;
   readonly createMcpClientManager?: (options: {
+    readonly artifacts?: ArtifactSessionRuntimeLike;
     readonly events: McpEventAppender;
+    readonly hooks?: EffectHookPipeline;
     readonly prompt: ApprovalPrompt;
+    readonly recency?: () => number;
     readonly secrets?: readonly (string | undefined)[];
   }) => McpClientManager;
+  readonly createPluginLifecycle?: (workspace: string) => PluginLifecycleLike;
   readonly createCheckpointStore?: (
     workspace: string,
   ) => Promise<CheckpointStore>;

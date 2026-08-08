@@ -1,4 +1,6 @@
 import type { ApprovalPrompt } from "../approvals/approval-types.js";
+import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
+import type { ContextItemInput } from "../context/context-item.js";
 import type { PermissionEngineLike } from "../permissions/permission-types.js";
 import { redactSensitiveText } from "../security/redact.js";
 import { toolError } from "../tools/tool-errors.js";
@@ -22,6 +24,9 @@ import { createMcpToolAdapter } from "./mcp-tool-adapter.js";
 import { discoverMcpTools, type DiscoveredMcpCatalog } from "./mcp-tool-discovery.js";
 import { MCP_RESULT_MAPPER_VERSION, mapMcpTextResult } from "./mcp-result-mapper.js";
 import type { McpServerLauncher, StartedMcpServer } from "./mcp-server-launcher.js";
+import { McpPrimitiveRuntime } from "./mcp-primitive-runtime.js";
+import { createMcpPrimitiveTools } from "./mcp-primitive-tools.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
 
 interface ManagedServer {
   activeCallId: string | null;
@@ -36,22 +41,49 @@ export class McpClientManager {
   private readonly approval: McpApprovalGate;
   private readonly managed = new Map<string, ManagedServer>();
   private stopping = false;
+  private readonly primitives: McpPrimitiveRuntime;
 
   public constructor(
     private readonly options: {
       readonly events: McpEventAppender;
+      readonly artifacts?: ArtifactSessionRuntimeLike;
       readonly launcher: McpServerLauncher;
+      readonly hooks?: EffectHookPipeline;
       readonly permissionEngine: PermissionEngineLike;
       readonly prompt: ApprovalPrompt;
       readonly randomUUID: () => string;
+      readonly recency?: () => number;
       readonly secrets?: readonly (string | undefined)[];
     },
   ) {
     this.approval = new McpApprovalGate({
       events: options.events,
+      ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
       prompt: options.prompt,
       randomUUID: options.randomUUID,
     });
+    this.primitives = new McpPrimitiveRuntime({
+      ...(options.artifacts === undefined ? {} : { artifacts: options.artifacts }),
+      events: options.events,
+      ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+      permissionEngine: options.permissionEngine,
+      prompt: options.prompt,
+      randomUUID: options.randomUUID,
+      ...(options.recency === undefined ? {} : { recency: options.recency }),
+      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
+    });
+  }
+
+  public contextItems(): readonly ContextItemInput[] {
+    return this.primitives.contextItems();
+  }
+
+  public listPrompts(serverId?: string): readonly Readonly<Record<string, unknown>>[] {
+    return this.primitives.listPrompts(serverId);
+  }
+
+  public getPrompt(input: Parameters<McpPrimitiveRuntime["getPrompt"]>[0]) {
+    return this.primitives.getPrompt(input);
   }
 
   public async startSelected(input: {
@@ -66,10 +98,16 @@ export class McpClientManager {
     ) {
       throw new McpCoreError("mcp_config_invalid", "a run may enable at most four unique MCP servers");
     }
-    const reserved = [...input.reservedModelNames];
+    const reserved = [
+      ...input.reservedModelNames,
+      "list_mcp_resources",
+      "read_mcp_resource",
+    ];
     try {
       for (const config of input.configs) {
         let notification = false;
+        let resourceNotification = false;
+        let promptNotification = false;
         const server = await this.options.launcher.start(
           config,
           input.workspaceRealPath,
@@ -81,6 +119,14 @@ export class McpClientManager {
               managed.catalogChangedNotification = true;
               this.scheduleCatalogRefresh(managed, input.signal, reserved);
             }
+          },
+          () => {
+            resourceNotification = true;
+            this.primitives.markStale(config.serverId, "resource");
+          },
+          () => {
+            promptNotification = true;
+            this.primitives.markStale(config.serverId, "prompt");
           },
         );
         const discovery = await discoverMcpTools({
@@ -97,6 +143,9 @@ export class McpClientManager {
           server,
         };
         this.managed.set(config.serverId, managed);
+        await this.primitives.discover(server, input.signal);
+        if (resourceNotification) this.primitives.markStale(config.serverId, "resource");
+        if (promptNotification) this.primitives.markStale(config.serverId, "prompt");
         await this.options.events.append("mcp.catalog.discovered", {
           catalog_sha256: discovery.catalog.catalogSha256,
           process_identity_sha256: server.processIdentity.processIdentitySha256,
@@ -116,8 +165,7 @@ export class McpClientManager {
       await this.stopAll();
       throw error;
     }
-    return Object.freeze(
-      [...this.managed.values()].flatMap((managed) =>
+    const tools = [...this.managed.values()].flatMap((managed) =>
         managed.discovery.catalog.tools.map((tool) =>
           createMcpToolAdapter({
             caller: this,
@@ -127,8 +175,11 @@ export class McpClientManager {
             validator: managed.discovery.validators.get(tool.modelName)!,
           }),
         ),
-      ),
-    );
+      );
+    return Object.freeze([
+      ...tools,
+      ...(this.primitives.hasResources() ? createMcpPrimitiveTools(this.primitives) : []),
+    ]);
   }
 
   public async call(
@@ -167,7 +218,7 @@ export class McpClientManager {
       serverId,
     });
     const permission = this.options.permissionEngine.evaluate(action, {
-      reviewedOfflineMcpServerIds: [serverId],
+      startedMcpServerIds: [serverId],
     });
     await this.options.events.append("mcp.permission.evaluated", {
       action_kind: action.actionKind,
@@ -206,6 +257,28 @@ export class McpClientManager {
     if (approval.decision !== "approved") {
       return {
         error: toolError("permission", "mcp_call_not_approved", "MCP tool call was not approved"),
+        ok: false,
+      };
+    }
+    const hookDecision = await this.options.hooks?.run(
+      "tool.before_effect",
+      {
+        action: {
+          actionKind: "mcp.tool.call",
+          capabilityIds: [serverId],
+          originalActionSha256: action.actionSha256,
+          toolName: modelToolName,
+        },
+      },
+      context.signal,
+    );
+    if (hookDecision?.decision === "deny") {
+      return {
+        error: toolError(
+          "permission",
+          hookDecision.code ?? "hook_gate_denied",
+          hookDecision.message ?? "MCP tool call was denied by a lifecycle Hook",
+        ),
         ok: false,
       };
     }
@@ -274,6 +347,23 @@ export class McpClientManager {
       });
       const parsed = JSON.parse(mapped.observation) as Readonly<Record<string, unknown>>;
       managed.activeCallId = null;
+      await this.options.hooks?.run(
+        "tool.after_result",
+        {
+          action: {
+            actionKind: "mcp.tool.call",
+            capabilityIds: [serverId],
+            originalActionSha256: action.actionSha256,
+            terminalState: mapped.status === "success" ? "completed" : "failed",
+            toolName: modelToolName,
+          },
+          result: {
+            observation_sha256: mapped.observationSha256,
+            status: mapped.status,
+          },
+        },
+        context.signal,
+      );
       return mapped.status === "success"
         ? {
             ok: true,

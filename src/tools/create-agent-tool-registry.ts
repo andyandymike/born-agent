@@ -41,15 +41,16 @@ import type { VerifiedGoalChangeSeed } from "../coordination/goal-change-seed.js
 import { createReadonlyToolDefinitions } from "./create-readonly-tool-registry.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { createRunCommandTool } from "./run-command-tool.js";
-import type { RegisteredTool, ToolDefinition, ToolRegistration } from "./tool-types.js";
+import type { ToolDefinition, ToolRegistration } from "./tool-types.js";
 import type { SandboxEventAppender } from "../execution/docker/sandbox-event-schema.js";
 import type { UpdatePlanInput } from "../plans/update-plan-input-schema.js";
 import type { RepositoryRuleScopeResolver } from "../repository-rules/repository-rule-scope.js";
 import type { RepositoryRuleObservationTracker } from "../repository-rules/repository-rule-observation-binding.js";
 import type { RepositoryNavigationService } from "../repository-intelligence/navigation-service.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
 
 export interface AgentToolRegistryOptions {
-  readonly additionalTools?: readonly RegisteredTool[];
+  readonly additionalTools?: readonly ToolRegistration<unknown>[];
   readonly artifactRuntime?: ArtifactSessionRuntimeLike;
   readonly approvalMode: EditApprovalMode;
   readonly approvalPrompt: ApprovalPrompt;
@@ -68,6 +69,7 @@ export interface AgentToolRegistryOptions {
     readonly goalRevision: number;
     readonly seed: VerifiedGoalChangeSeed;
   };
+  readonly hooks?: EffectHookPipeline;
   readonly now: () => number;
   readonly publisher: EventPublisher;
   readonly randomUUID: () => string;
@@ -185,6 +187,7 @@ export async function createAgentToolRegistry(
           }),
       planner,
       publisher: options.publisher,
+      ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
       ...(options.repositoryRules === undefined
         ? {}
         : { repositoryRules: options.repositoryRules }),
@@ -198,6 +201,7 @@ export async function createAgentToolRegistry(
       defaultTimeoutMs: options.commandTimeoutMs,
       executor: options.executor,
       maxOutputBytes: options.maxCommandOutputBytes,
+      ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
       permissionContext: options.permissionContext,
       permissionEngine: options.permissionEngine,
       preparer: options.executionPreparer,
@@ -210,6 +214,7 @@ export async function createAgentToolRegistry(
       ? []
       : [
           createFinishTaskTool({
+            ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
              policy:
                options.goalChange?.completionPolicy ??
                new VerifiedCompletionPolicy(),

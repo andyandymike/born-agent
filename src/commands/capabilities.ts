@@ -213,11 +213,15 @@ export async function executeCapabilitiesDoctor(
   try {
     const workspace = selectedWorkspace(runtime, options.workspace);
     const registry = await requirePlatform(runtime, workspace).buildRegistry();
+    const pluginLifecycle = runtime.createPluginLifecycle === undefined
+      ? null
+      : await runtime.createPluginLifecycle(workspace).doctor();
     const value = {
       componentCount: registry.list(undefined, true).length,
       diagnostics: registry.catalog.diagnostics,
       eligiblePluginCount: registry.catalog.plugins.filter((plugin) => plugin.enabled).length,
       enablementRevision: registry.catalog.enablementRevision,
+      pluginLifecycle,
       schemaVersion: 1,
       sourceRevisions: registry.catalog.sourceRevisions,
       status: "valid",

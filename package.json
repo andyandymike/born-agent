@@ -8,6 +8,7 @@
   "files": [
     "dist",
     "capabilities",
+    "fixtures/capability-platform/m9-review-pack",
     "evals",
     "policies",
     "docker/artifacts"

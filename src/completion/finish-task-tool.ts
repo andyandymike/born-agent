@@ -30,6 +30,7 @@ import {
   createIncompleteEvidence,
   EvidenceLedger,
 } from "./evidence-ledger.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
 
 export const finishTaskInputSchema = z
   .object({
@@ -47,6 +48,7 @@ export const finishTaskInputSchema = z
   .strict();
 
 export interface FinishTaskToolOptions {
+  readonly hooks?: EffectHookPipeline;
   readonly policy: CompletionPolicy;
   readonly publisher: EventPublisher;
   readonly state: () => Promise<CompletionState>;
@@ -132,7 +134,27 @@ export function createFinishTaskTool(
 
       try {
         const state = await options.state();
-        const decision = await options.policy.evaluate(candidate, state);
+        let decision = await options.policy.evaluate(candidate, state);
+        if (decision.effect === "accept" && options.hooks !== undefined) {
+          const hookDecision = await options.hooks.run(
+            "completion.before_commit",
+            {
+              action: {
+                actionKind: "finish_task",
+                originalActionSha256: candidateSha256,
+                toolName: "finish_task",
+              },
+              completion: {
+                changed_paths: state.changedByRun.map((change) => change.path),
+                verification_count: state.verifications.length,
+              },
+            },
+            context.signal,
+          );
+          if (hookDecision.decision === "deny") {
+            decision = { effect: "incomplete", reason: "task_blocked" };
+          }
+        }
         if (decision.effect === "continue") {
           await publishCompletionBoundary(
             options.publisher,

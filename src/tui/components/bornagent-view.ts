@@ -93,6 +93,9 @@ export class BornAgentViewComponent implements Component {
         : [];
     return [
       this.#line(this.#renderStatus(), width),
+      ...(this.#view.run?.capabilitySnapshot === undefined
+        ? []
+        : [this.#line(this.#renderCapabilityStatus(), width)]),
       this.#line(this.#renderRepositoryStatus(), width),
       ...phase16,
       ...this.#renderTranscript(width),
@@ -131,6 +134,12 @@ export class BornAgentViewComponent implements Component {
     const repository = this.#view.repository;
     const phase = repository.buildPhase === null ? "" : `:${repository.buildPhase}`;
     return `REPO | engine=${repository.engineId ?? "none"} | gen=${repository.generationSha256?.slice(0, 8) ?? "none"} | coverage=${repository.coverage ?? "none"} | index=${repository.indexState}${phase}`;
+  }
+
+  #renderCapabilityStatus(): string {
+    const frozen = this.#view.run?.capabilitySnapshot;
+    if (frozen === undefined) throw new Error("capability status requires a frozen run snapshot");
+    return `CAPABILITIES | current-run=frozen | plugins=${String(frozen.eligiblePluginCount)} | components=${String(frozen.componentCount)} | enablement-rev=${String(frozen.enablementRevision)} | snapshot=${frozen.snapshotId.slice(0, 28)}...`;
   }
 
   #renderTranscript(width: number): string[] {

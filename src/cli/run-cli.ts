@@ -16,7 +16,12 @@ import {
 } from "../commands/sessions.js";
 import type { CliIO, CliRuntime } from "./types.js";
 import { executeTui } from "../tui/run-tui.js";
-import { executeMcpInspect, executeMcpList } from "../commands/mcp.js";
+import {
+  executeMcpInspect,
+  executeMcpList,
+  executeMcpPromptGet,
+  executeMcpPromptsList,
+} from "../commands/mcp.js";
 import { executeSandboxDoctor } from "../commands/sandbox-doctor.js";
 import { executeEvalCompare, executeEvalList, executeEvalRun, executeEvalShow } from "../evals/eval-cli.js";
 import { executeDockerPrepare, executeDockerStatus } from "../commands/docker.js";
@@ -45,6 +50,17 @@ import {
   executeCapabilitiesList,
   executeCapabilitiesShow,
 } from "../commands/capabilities.js";
+import { executeSkillsList, executeSkillsShow } from "../commands/skills.js";
+import {
+  executePluginsDisable,
+  executePluginsEnable,
+  executePluginsInspect,
+  executePluginsInstall,
+  executePluginsList,
+  executePluginsRemove,
+  executePluginsShow,
+} from "../commands/plugins.js";
+import { executeHooksExplain, executeHooksList } from "../commands/hooks.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -68,9 +84,93 @@ export async function runCli(
 
   let commandExitCode = 0;
 
+  const plugins = program
+    .command("plugins")
+    .description("Inspect and manage immutable local Plugin packages without executing them.");
+
+  plugins
+    .command("inspect")
+    .argument("<local-directory>", "local Plugin directory; URLs, archives, and UNC paths are unsupported")
+    .option("--json", "write versioned JSON", false)
+    .action(async (source: string, options: { json: boolean }) => {
+      commandExitCode = await executePluginsInspect(source, options, runtime, io);
+    });
+
+  plugins
+    .command("install")
+    .argument("<local-directory>", "local Plugin directory")
+    .option("--expect-sha256 <digest>", "require one exact package digest")
+    .option("--json", "write versioned JSON", false)
+    .action(async (source: string, options: { expectSha256?: string; json: boolean }) => {
+      commandExitCode = await executePluginsInstall(source, options, runtime, io);
+    });
+
+  plugins
+    .command("list")
+    .option("--installed", "show installed packages", false)
+    .option("--enabled", "show only packages enabled for a new run", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { enabled: boolean; installed: boolean; json: boolean }) => {
+      commandExitCode = await executePluginsList(options, runtime, io);
+    });
+
+  plugins
+    .command("show")
+    .argument("<exact-selector>", "user_install:<id>@<version>#sha256:<full-digest>")
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean }) => {
+      commandExitCode = await executePluginsShow(selector, options, runtime, io);
+    });
+
+  plugins
+    .command("enable")
+    .argument("<exact-selector>", "exact installed Plugin selector")
+    .requiredOption("--yes", "confirm enablement for future runs")
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean; yes: boolean }) => {
+      commandExitCode = await executePluginsEnable(selector, options, runtime, io);
+    });
+
+  plugins
+    .command("disable")
+    .argument("<exact-selector>", "exact enabled Plugin selector")
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean }) => {
+      commandExitCode = await executePluginsDisable(selector, options, runtime, io);
+    });
+
+  plugins
+    .command("remove")
+    .argument("<exact-selector>", "exact disabled Plugin selector")
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean }) => {
+      commandExitCode = await executePluginsRemove(selector, options, runtime, io);
+    });
+
   const capabilities = program
     .command("capabilities")
     .description("Inspect the exact local capability catalog without executing components.");
+
+  const hooks = program
+    .command("hooks")
+    .description("Inspect enabled lifecycle Hooks without executing them.");
+
+  hooks
+    .command("list")
+    .option("--event <event>", "filter one exact lifecycle event")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { event?: string; json: boolean }) => {
+      commandExitCode = await executeHooksList(options, runtime, io);
+    });
+
+  hooks
+    .command("explain")
+    .argument("<action-kind>", "exact action kind")
+    .option("--path <relative-path>", "optional normalized path for matcher simulation")
+    .option("--json", "write versioned JSON", false)
+    .action(async (actionKind: string, options: { json: boolean; path?: string }) => {
+      commandExitCode = await executeHooksExplain(actionKind, options, runtime, io);
+    });
 
   capabilities
     .command("list")
@@ -101,6 +201,27 @@ export async function runCli(
     .option("--json", "write versioned JSON", false)
     .action(async (options: { json: boolean; workspace?: string }) => {
       commandExitCode = await executeCapabilitiesDoctor(options, runtime, io);
+    });
+
+  const skills = program
+    .command("skills")
+    .description("Inspect enabled inert Skills without loading their content.");
+
+  skills
+    .command("list")
+    .option("--model-allowed", "show only Skills visible to the model", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean; modelAllowed: boolean }) => {
+      commandExitCode = await executeSkillsList(options, runtime, io);
+    });
+
+  skills
+    .command("show")
+    .argument("<selector>", "exact or unique Skill selector")
+    .option("--resources", "include the declared resource catalog", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (selector: string, options: { json: boolean; resources: boolean }) => {
+      commandExitCode = await executeSkillsShow(selector, options, runtime, io);
     });
 
   const repo = program
@@ -207,6 +328,10 @@ export async function runCli(
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
     .option("--policy-config <absolute-path>", "trusted user runtime policy config")
     .option("--mcp <server-id>", "enable one local stdio MCP server", collectOption, [])
+    .option("--skill <selector>", "activate one exact or unique Skill", collectOption, [])
+    .option("--skill-args <text>", "opaque arguments for one explicitly selected Skill")
+    .option("--mcp-prompt <server-id:prompt-name>", "inject one explicit frozen MCP prompt")
+    .option("--mcp-prompt-args <json>", "JSON object with string values for --mcp-prompt")
     .option("--executor <executor>", "command executor: local or docker")
     .option("--docker-image <name@sha256:digest>", "trusted local digest-pinned Docker image")
     .option("--sandbox-memory-mib <mib>", "Docker memory limit (256..8192 MiB)")
@@ -298,6 +423,8 @@ export async function runCli(
           maxTokens?: string;
           maxToolOutputBytes?: string;
           mcp: string[];
+          mcpPrompt?: string;
+          mcpPromptArgs?: string;
           mode?: string;
           model?: string;
           policyConfig?: string;
@@ -310,6 +437,8 @@ export async function runCli(
           sandboxMemoryMib?: string;
           sandboxPids?: string;
           sandboxTmpMib?: string;
+          skill: string[];
+          skillArgs?: string;
           taskProfile?: string;
           verbose: boolean;
         },
@@ -332,6 +461,8 @@ export async function runCli(
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
             mcpServerIds: options.mcp,
+            mcpPromptArgumentsJson: options.mcpPromptArgs,
+            mcpPromptSelection: options.mcpPrompt,
             mode: options.mode,
             model: options.model,
             policyConfig: options.policyConfig,
@@ -344,6 +475,8 @@ export async function runCli(
             sandboxMemoryMiB: options.sandboxMemoryMib,
             sandboxPids: options.sandboxPids,
             sandboxTmpMiB: options.sandboxTmpMib,
+            skillArguments: options.skillArgs,
+            skillSelections: options.skill,
             task,
             taskProfile: options.taskProfile,
             verbose: options.verbose,
@@ -890,6 +1023,39 @@ export async function runCli(
     .description("List and validate local MCP config without spawning a process.")
     .action(async () => {
       commandExitCode = await executeMcpList(runtime, io);
+    });
+
+  const mcpPrompts = mcp
+    .command("prompts")
+    .description("List or explicitly get user-controlled MCP prompts.");
+
+  mcpPrompts
+    .command("list")
+    .option("--server <id>", "start only this configured MCP server")
+    .option("--json", "emit machine-readable JSON", false)
+    .action(async (options: { json: boolean; server?: string }) => {
+      commandExitCode = await executeMcpPromptsList(
+        { json: options.json, ...(options.server === undefined ? {} : { serverId: options.server }) },
+        runtime,
+        io,
+      );
+    });
+
+  mcpPrompts
+    .command("get")
+    .argument("<selector>", "exact <server-id>:<prompt-name>")
+    .option("--arg <key=value>", "opaque prompt string argument", collectOption, [])
+    .option("--json", "emit machine-readable JSON", false)
+    .action(async (
+      selector: string,
+      options: { arg: string[]; json: boolean },
+    ) => {
+      commandExitCode = await executeMcpPromptGet(
+        selector,
+        { arguments: options.arg, json: options.json },
+        runtime,
+        io,
+      );
     });
 
   mcp

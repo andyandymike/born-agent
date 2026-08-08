@@ -39,6 +39,7 @@ export interface AgentContextRuntimeOptions {
   readonly repositoryRules?: RepositoryRuleSet;
   readonly repositoryRulesEventId?: string;
   readonly repositoryRuleContext?: () => readonly ContextItemInput[];
+  readonly capabilityContext?: () => readonly ContextItemInput[];
   readonly systemInstructions: string;
   readonly taskContext?: () => FrozenTaskContextInput;
 }
@@ -113,6 +114,7 @@ export class AgentContextRuntime {
   readonly #projector: ContextProjector;
   readonly #repositoryRules: FrozenRepositoryRulesInput | null;
   readonly #repositoryRuleContext: (() => readonly ContextItemInput[]) | undefined;
+  readonly #capabilityContext: (() => readonly ContextItemInput[]) | undefined;
   readonly #systemInstructions: string;
   readonly #taskContext: (() => FrozenTaskContextInput) | undefined;
 
@@ -130,6 +132,7 @@ export class AgentContextRuntime {
       options.repositoryRulesEventId,
     );
     this.#repositoryRuleContext = options.repositoryRuleContext;
+    this.#capabilityContext = options.capabilityContext;
     this.#systemInstructions = options.systemInstructions;
     this.#taskContext = options.taskContext;
   }
@@ -172,9 +175,13 @@ export class AgentContextRuntime {
     const selectedRepositoryRules = (this.#repositoryRuleContext?.() ?? []).map(
       (item) => createContextItem(item, this.#estimator),
     );
+    const selectedCapabilities = (this.#capabilityContext?.() ?? []).map(
+      (item) => createContextItem(item, this.#estimator),
+    );
     const additionalItems = [
       ...(input.additionalItems ?? []),
       ...selectedRepositoryRules,
+      ...selectedCapabilities,
       ...(taskContextItem === undefined ? [] : [taskContextItem]),
     ];
     const state = this.#projector.project({

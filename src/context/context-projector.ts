@@ -127,12 +127,20 @@ function layer(item: ContextItem): number {
       return 1;
     case "repository_rules":
       return 2;
+    case "skill_arguments":
+    case "skill_entry":
+      return 3;
+    case "mcp_prompt":
+      return 4;
+    case "skill_resource":
+    case "mcp_resource":
+      return 5;
     case "approval_history":
     case "mutation_fact":
     case "state_fact":
-      return 3;
+      return 6;
     default:
-      return 4;
+      return 7;
   }
 }
 

@@ -37,6 +37,14 @@ export interface AgentCommandOptions {
   readonly maxTokens: string | undefined;
   readonly maxToolOutputBytes: string | undefined;
   readonly mcpServerIds?: readonly string[] | undefined;
+  /** Explicit user-only prompt selection from a frozen MCP catalog. */
+  readonly mcpPromptSelection?: string | undefined;
+  /** JSON object with string values for the explicit MCP prompt. */
+  readonly mcpPromptArgumentsJson?: string | undefined;
+  /** Explicit user-selected frozen Skills for this run. */
+  readonly skillSelections?: readonly string[] | undefined;
+  /** Opaque text associated with the sole CLI Skill selection. */
+  readonly skillArguments?: string | undefined;
   readonly model: string | undefined;
   readonly policyConfig?: string | undefined;
   readonly policyProfile?: string | undefined;

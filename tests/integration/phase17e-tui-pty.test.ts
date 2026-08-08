@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DefaultRepositoryNavigationService } from "../../src/repository-intelligence/navigation-service.js";
+import { withRealPtyTestLock } from "../pty-test-lock.js";
 
 const execFileAsync = promisify(execFile);
 const workspaces: string[] = [];
@@ -36,16 +37,18 @@ describe("Phase 17E real PTY repository lifecycle", () => {
     const driver = fileURLToPath(new URL("../fixtures/phase16f-tui-pty-driver.ts", import.meta.url));
     const app = fileURLToPath(new URL("../fixtures/phase16f-tui-pty-app.ts", import.meta.url));
 
-    const result = await execFileAsync(
-      process.execPath,
-      ["--import", import.meta.resolve("tsx"), driver, workspace, app, "repository"],
-      {
-        cwd: workspace,
-        env: { ...process.env },
-        maxBuffer: 4 * 1024 * 1024,
-        timeout: 45_000,
-        windowsHide: true,
-      },
+    const result = await withRealPtyTestLock(() =>
+      execFileAsync(
+        process.execPath,
+        ["--import", import.meta.resolve("tsx"), driver, workspace, app, "repository"],
+        {
+          cwd: workspace,
+          env: { ...process.env },
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 45_000,
+          windowsHide: true,
+        },
+      ),
     );
     const evidence = JSON.parse(result.stdout.trim()) as PtyEvidence;
     const raw = Buffer.from(evidence.outputBase64, "base64").toString("utf8");

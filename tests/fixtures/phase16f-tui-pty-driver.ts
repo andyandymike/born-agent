@@ -11,6 +11,7 @@ if (workspace === undefined || appEntry === undefined) {
 const workspacePath = workspace;
 const appEntryPath = appEntry;
 const repositoryLifecycle = process.argv[4] === "repository";
+const capabilityLifecycle = process.argv[4] === "capability";
 
 const MAX_OUTPUT_BYTES = 2_000_000;
 
@@ -112,6 +113,7 @@ function shellLaunch(): {
     import.meta.resolve("tsx"),
     appEntryPath,
     workspacePath,
+    ...(capabilityLifecycle ? ["capability"] : []),
   ]
     .map(quoteCommandArgument)
     .join(" ");
@@ -200,6 +202,55 @@ async function main(): Promise<void> {
   try {
     await delay(100);
     terminal.write(`${launch.appCommand}\r`);
+    if (capabilityLifecycle) {
+      await waitFor(
+        (plain) => plain.includes("STATUS") && plain.includes("run=idle"),
+        "capability TUI idle",
+      );
+      terminal.resize(103, 31);
+      const resized = terminal.cols === 103 && terminal.rows === 31;
+      terminal.write("/plugins\r");
+      await waitFor(
+        (plain) => plain.includes("bornagent.m9-review-pack@1.0.0") && plain.includes("enabled-next-run"),
+        "Plugin panel",
+      );
+      terminal.write("/skill review-change PTY_OPAQUE_ARGUMENT\r");
+      await waitFor(
+        (plain) => plain.includes("Skill selected for the next run:"),
+        "Skill selection",
+      );
+      terminal.write('/mcp-prompt offline-docs:review {"topic":"PTY_SAFE"}\r');
+      await waitFor(
+        (plain) => plain.includes("MCP prompt selected for the next run: offline-docs:review"),
+        "MCP prompt selection",
+      );
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "capability app exit");
+      terminal.write(`${launch.proofCommand}\r`);
+      await waitFor(
+        (plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        "restored parent shell",
+      );
+      terminal.write(`${launch.exitCommand}\r`);
+      const terminalExit = await Promise.race([
+        exitPromise,
+        delay(12_000).then(() => {
+          throw new Error("capability PTY app did not exit");
+        }),
+      ]);
+      process.stdout.write(JSON.stringify({
+        appExitCode: 0,
+        mcpPromptSelected: visibleText(raw).includes("MCP prompt selected for the next run"),
+        outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+        pluginVisible: visibleText(raw).includes("bornagent.m9-review-pack@1.0.0"),
+        resized,
+        shellExitCode: terminalExit.exitCode,
+        shellRestored: visibleText(raw).split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        signal: terminalExit.signal ?? null,
+        skillSelected: visibleText(raw).includes("Skill selected for the next run"),
+      }), () => process.exit(0));
+      return;
+    }
     await waitFor((plain) => plain.includes("PTY_ACTIVE"), "first run active");
     terminal.resize(103, 31);
     const resized = terminal.cols === 103 && terminal.rows === 31;

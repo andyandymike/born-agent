@@ -128,6 +128,26 @@ try {
   ) {
     throw new Error("packed Phase 18A built-in capability index is not exact");
   }
+  const requiredPhase18ReviewPackAssets = [
+    "fixtures/capability-platform/m9-review-pack/bornagent.plugin.json",
+    "fixtures/capability-platform/m9-review-pack/hooks/protect-generated/hook.json",
+    "fixtures/capability-platform/m9-review-pack/hooks/record-outcome/hook.json",
+    "fixtures/capability-platform/m9-review-pack/hooks/record-outcome/observer.mjs",
+    "fixtures/capability-platform/m9-review-pack/mcp/docs/server.json",
+    "fixtures/capability-platform/m9-review-pack/mcp/docs/server.mjs",
+    "fixtures/capability-platform/m9-review-pack/mcp/docs/resources/guide.md",
+    "fixtures/capability-platform/m9-review-pack/skills/explain-evidence/skill.json",
+    "fixtures/capability-platform/m9-review-pack/skills/explain-evidence/SKILL.md",
+    "fixtures/capability-platform/m9-review-pack/skills/review-change/skill.json",
+    "fixtures/capability-platform/m9-review-pack/skills/review-change/SKILL.md",
+    "fixtures/capability-platform/m9-review-pack/skills/review-change/references/checklist.md",
+  ];
+  for (const relativePath of requiredPhase18ReviewPackAssets) {
+    const bytes = await readFile(join(packageRoot, ...relativePath.split("/")));
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 18 M9 review-pack asset is empty: ${relativePath}`);
+    }
+  }
   const repositoryEngine = JSON.parse(
     await readFile(
       join(packageRoot, "policies", "repository-intelligence", "engine-v1.json"),
@@ -347,11 +367,62 @@ try {
         capabilityDoctor.stderr,
       ]
         .filter(Boolean)
+      .join("\n"),
+    );
+  }
+
+  const reviewPackRoot = join(
+    packageRoot,
+    "fixtures",
+    "capability-platform",
+    "m9-review-pack",
+  );
+  const pluginInspect = spawnSync(
+    process.execPath,
+    [binaryPath, "plugins", "inspect", reviewPackRoot, "--json"],
+    {
+      cwd: installRoot,
+      encoding: "utf8",
+      env: {
+        LOCALAPPDATA: join(temporaryRoot, "state"),
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        TEMP: temporaryRoot,
+        TMP: temporaryRoot,
+        XDG_STATE_HOME: join(temporaryRoot, "state"),
+      },
+      shell: false,
+    },
+  );
+  let pluginDocument;
+  try {
+    pluginDocument = JSON.parse(pluginInspect.stdout);
+  } catch {
+    pluginDocument = null;
+  }
+  if (
+    pluginInspect.status !== 0 ||
+    pluginDocument?.status !== "valid_schema" ||
+    pluginDocument?.pluginId !== "bornagent.m9-review-pack" ||
+    pluginDocument?.pluginVersion !== "1.0.0" ||
+    pluginDocument?.pluginSha256 !==
+      "431500c152a4e6a654818b1fef513c4c5335133adcab1c00b90a4f90ec66c65d" ||
+    pluginDocument?.sourceSnapshotSha256 !== pluginDocument?.pluginSha256 ||
+    pluginDocument?.components?.length !== 5
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} plugins inspect M9 review pack --json failed`,
+        pluginInspect.error?.message,
+        pluginInspect.stdout,
+        pluginInspect.stderr,
+      ]
+        .filter(Boolean)
         .join("\n"),
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, and the Phase 18A built-in capability index; ran born --help and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, and the exact Phase 18 M9 review pack; ran born --help, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

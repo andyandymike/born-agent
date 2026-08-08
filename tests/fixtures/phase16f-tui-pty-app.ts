@@ -3,6 +3,7 @@ import { runCli } from "../../src/cli/run-cli.js";
 import type { CliRuntime } from "../../src/cli/types.js";
 import { BundledFakeModelQualificationGate } from "../../src/model/model-qualification-gate.js";
 import { createPiTuiRenderer } from "../../src/tui/pi-tui-renderer.js";
+import { fileURLToPath } from "node:url";
 import {
   FakeStreamingChatClient,
   fixedStream,
@@ -13,6 +14,7 @@ const workspace = process.argv[2];
 if (workspace === undefined) {
   throw new Error("PTY fixture requires a workspace path");
 }
+const capabilityLifecycle = process.argv[3] === "capability";
 
 const waiting = waitForAbort();
 const firstBackend = new FakeStreamingChatClient(
@@ -65,18 +67,38 @@ const runtime: CliRuntime = {
   modelQualificationGate: new BundledFakeModelQualificationGate(true),
 };
 
+if (capabilityLifecycle) {
+  const source = fileURLToPath(
+    new URL("../../fixtures/capability-platform/m9-review-pack", import.meta.url),
+  );
+  const lifecycle = node.createPluginLifecycle!(workspace);
+  const inspection = await lifecycle.inspect(source);
+  const installed = await lifecycle.install(source, inspection.pluginSha256);
+  await lifecycle.enable(installed.exactSelector);
+}
+
 const exitCode = await runCli(
-  [
-    "tui",
-    "First PTY run",
-    "--allow-degraded-resume",
-    "--provider",
-    "ollama",
-    "--model",
-    "qwen3:1.7b",
-    "--max-steps",
-    "4",
-  ],
+  capabilityLifecycle
+    ? [
+        "tui",
+        "--mcp",
+        "offline-docs",
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+      ]
+    : [
+        "tui",
+        "First PTY run",
+        "--allow-degraded-resume",
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+        "--max-steps",
+        "4",
+      ],
   { stderr: process.stderr, stdout: process.stdout },
   runtime,
 );

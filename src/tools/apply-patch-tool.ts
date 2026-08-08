@@ -33,6 +33,8 @@ import {
   type ToolDefinition,
   type ToolRawResult,
 } from "./tool-types.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
+import { sha256Canonical } from "../completion/canonical-json.js";
 
 export const applyPatchInputSchema = z
   .object({
@@ -76,6 +78,7 @@ export interface ApplyPatchToolOptions {
     readonly goalId: string;
     readonly goalRevision: number;
   };
+  readonly hooks?: EffectHookPipeline;
   readonly secrets?: readonly (string | undefined)[];
 }
 
@@ -356,6 +359,37 @@ export function createApplyPatchTool(
         };
       }
 
+      const actionSha256 = ruleScope === undefined
+        ? plan.planId
+        : sha256Canonical({
+            actionKind: "apply_patch",
+            manifestSha256: ruleScope.manifestSha256,
+            planId: plan.planId,
+            ruleScopeSetSha256: ruleScope.ruleScopeSetSha256,
+          });
+      const hookDecision = await options.hooks?.run(
+        "tool.before_effect",
+        {
+          action: {
+            actionKind: "apply_patch",
+            originalActionSha256: actionSha256,
+            paths: plan.files.map((file) => file.relativePath),
+            toolName: "apply_patch",
+          },
+        },
+        context.signal,
+      );
+      if (hookDecision?.decision === "deny") {
+        return {
+          error: toolError(
+            "permission",
+            hookDecision.code ?? "hook_gate_denied",
+            hookDecision.message ?? "patch was denied by a lifecycle Hook",
+          ),
+          ok: false,
+        };
+      }
+
       const approvedRulesFailure = await repositoryRulesStale(
         options.repositoryRules,
       );
@@ -530,6 +564,23 @@ export function createApplyPatchTool(
           { cause: error, workspaceMayHaveChanged: true },
         );
       }
+      await options.hooks?.run(
+        "tool.after_result",
+        {
+          action: {
+            actionKind: "apply_patch",
+            originalActionSha256: actionSha256,
+            paths: result.files.map((file) => file.path),
+            terminalState: "completed",
+            toolName: "apply_patch",
+          },
+          result: {
+            journal_sha256: resultJournalSha256(result),
+            plan_id: result.planId,
+          },
+        },
+        context.signal,
+      );
 
       return {
         ok: true,

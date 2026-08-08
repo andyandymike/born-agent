@@ -45,6 +45,8 @@ import { DockerArtifactAcquirer } from "../execution/docker/acquisition/docker-a
 import { NodeDockerAcquisitionPort } from "../execution/docker/acquisition/node-docker-acquisition-port.js";
 import { UserStateModelQualificationGate } from "../model/user-state-model-qualification-gate.js";
 import { DefaultCapabilityPlatform } from "../capabilities/capability-platform.js";
+import { resolveCapabilityUserStateRoot } from "../capabilities/capability-source.js";
+import { PluginLifecycle } from "../plugins/plugin-lifecycle.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalInput: ApprovalLineReader;
@@ -98,6 +100,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     options.capabilityAssetsRoot ??
       resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "capabilities", "builtin"),
   );
+  const capabilityUserStateRoot = options.capabilityUserStateRoot ??
+    resolveCapabilityUserStateRoot({ env: options.env, platform: options.platform });
+  const createPluginLifecycle = (workspace: string) => new PluginLifecycle({
+    isProcessAlive,
+    now: () => new Date().toISOString(),
+    randomUUID,
+    root: capabilityUserStateRoot,
+    workspace,
+  });
   return {
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
@@ -115,16 +126,17 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         builtinRoot: capabilityAssetsRoot,
         env: options.env,
         platform: options.platform,
-        ...(options.capabilityUserStateRoot === undefined
-          ? {}
-          : { userStateRoot: options.capabilityUserStateRoot }),
+        pluginLifecycle: createPluginLifecycle(workspace),
+        userStateRoot: capabilityUserStateRoot,
         workspace,
       }),
-    createMcpClientManager: ({ events, prompt, secrets = [] }) => {
+    createPluginLifecycle,
+    createMcpClientManager: ({ artifacts, events, hooks, prompt, recency, secrets = [] }) => {
       const launcher = new McpServerLauncher({
         cleanup: createCleanup(),
         environment: options.env,
         events,
+        ...(hooks === undefined ? {} : { hooks }),
         now: () => performance.now(),
         permissionEngine,
         platform: options.platform,
@@ -133,11 +145,14 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         workspace: options.cwd,
       });
       return new McpClientManager({
+        ...(artifacts === undefined ? {} : { artifacts }),
         events,
+        ...(hooks === undefined ? {} : { hooks }),
         launcher,
         permissionEngine,
         prompt,
         randomUUID,
+        ...(recency === undefined ? {} : { recency }),
         secrets,
       });
     },
@@ -156,6 +171,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                   tracker: registryOptions.repositoryRules.tracker,
                 },
             registryOptions.repositoryNavigation,
+            registryOptions.additionalTools ?? [],
           );
         }
         return createReadonlyToolRegistry(

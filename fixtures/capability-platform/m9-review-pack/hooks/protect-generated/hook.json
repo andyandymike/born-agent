@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "hook",
+  "component_id": "protect-generated",
+  "display_name": "Protect Generated Output",
+  "description": "Deny exact effects that target the protected generated fixture path.",
+  "event": "tool.before_effect",
+  "mode": "gate",
+  "matcher": {
+    "action_kinds": ["apply_patch"],
+    "path_prefixes": ["generated"]
+  },
+  "handler": {
+    "type": "declarative_gate",
+    "predicate": {
+      "type": "deny_path_prefixes",
+      "prefixes": ["generated/protected.txt"]
+    },
+    "message": "generated/protected.txt is protected by the exact M9 fixture Hook."
+  },
+  "failure_policy": "fail_closed",
+  "requested_effects": []
+}

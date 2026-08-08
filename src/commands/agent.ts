@@ -40,7 +40,7 @@ import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
   FatalToolExecutionError,
-  type RegisteredTool,
+  type ToolRegistration,
 } from "../tools/tool-types.js";
 import { McpConfigLoader } from "../mcp/mcp-config-loader.js";
 import { McpCoreError } from "../mcp/mcp-errors.js";
@@ -141,6 +141,25 @@ import {
   prepareCapabilityRunSnapshot,
   type PreparedCapabilityRunSnapshot,
 } from "../capabilities/capability-run-snapshot.js";
+import type { CapabilityPlatformLike } from "../capabilities/capability-platform.js";
+import { SkillRuntime } from "../skills/skill-runtime.js";
+import { createSkillTools } from "../skills/skill-tools.js";
+import { SkillError } from "../skills/skill-errors.js";
+import { FrozenSkillCatalog } from "../skills/skill-catalog.js";
+import type {
+  Phase18SkillRunEventData,
+  Phase18SkillRunEventType,
+} from "../skills/skill-event-schema.js";
+import { HookRuntime } from "../hooks/hook-runtime.js";
+import { HookError } from "../hooks/hook-errors.js";
+import type {
+  Phase18HookRunEventData,
+  Phase18HookRunEventType,
+} from "../hooks/hook-event-schema.js";
+import { projectHookDurableFacts } from "../hooks/hook-durable-facts.js";
+import type { CapabilityContentLease } from "../plugins/plugin-lifecycle.js";
+import { createFrozenCapabilityMcpConfig } from "../mcp/mcp-capability-config.js";
+import { parseExplicitMcpPromptSelection } from "../mcp/mcp-prompt-selection.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
@@ -266,6 +285,20 @@ export async function executeAgent(
   ) {
     renderer.renderDiagnostic(
       `usage/config error: ${selectedAgentMode.mode} mode requires task profile ${modeTaskProfile}`,
+    );
+    await closeInputWriter(resumedExecution, freshTaskExecution);
+    return 2;
+  }
+  let explicitMcpPrompt;
+  try {
+    explicitMcpPrompt = parseExplicitMcpPromptSelection({
+      argumentsJson: options.mcpPromptArgumentsJson,
+      selectedServerIds: options.mcpServerIds ?? [],
+      selector: options.mcpPromptSelection,
+    });
+  } catch (error) {
+    renderer.renderDiagnostic(
+      `usage/config error: ${error instanceof McpCoreError ? error.message : "invalid MCP prompt selection"}`,
     );
     await closeInputWriter(resumedExecution, freshTaskExecution);
     return 2;
@@ -410,6 +443,7 @@ export async function executeAgent(
   }
 
   let capabilitySnapshot = resumedExecution?.capabilitySnapshot;
+  let capabilityPlatform: CapabilityPlatformLike | undefined;
   let preparedCapabilitySnapshot: PreparedCapabilityRunSnapshot | undefined;
   if (runtime.createCapabilityPlatform !== undefined || capabilitySnapshot !== undefined) {
     try {
@@ -422,9 +456,27 @@ export async function executeAgent(
           "Phase 18 runtime requires a full artifact-aware session writer",
         );
       }
-      capabilitySnapshot ??= await runtime
-        .createCapabilityPlatform!(runtime.cwd)
-        .createSnapshot(runtime.timestamp());
+      capabilityPlatform = runtime.createCapabilityPlatform?.(runtime.cwd);
+      if (capabilitySnapshot === undefined) {
+        if (capabilityPlatform === undefined) {
+          throw new CapabilityError(
+            "capability_state_invalid",
+            "runtime cannot create the required capability snapshot",
+            1,
+          );
+        }
+        capabilitySnapshot = await capabilityPlatform.createSnapshot(runtime.timestamp());
+      }
+      const selectedSkills = options.skillSelections ?? [];
+      if (options.skillArguments !== undefined && selectedSkills.length !== 1) {
+        throw new SkillError(
+          "skill_entry_invalid",
+          "--skill-args requires exactly one --skill selection",
+          2,
+        );
+      }
+      const skillCatalog = new FrozenSkillCatalog(capabilitySnapshot, () => new Set());
+      for (const selector of selectedSkills) skillCatalog.resolveUserSelector(selector);
       preparedCapabilitySnapshot = await prepareCapabilityRunSnapshot({
         existingEvents: writer.readDecodedEvents?.() ?? [],
         runId,
@@ -434,12 +486,14 @@ export async function executeAgent(
       });
     } catch (error) {
       renderer.renderDiagnostic(
-        error instanceof CapabilityError
+        error instanceof CapabilityError || error instanceof SkillError
           ? `${error.code}: ${error.message}`
           : "capability snapshot preflight failed",
       );
       await writer.close().catch(() => undefined);
-      return error instanceof CapabilityError ? error.exitCode : 1;
+      return error instanceof CapabilityError || error instanceof SkillError
+        ? error.exitCode
+        : 1;
     }
   }
 
@@ -721,8 +775,18 @@ export async function executeAgent(
   const stopListening = runtime.onCancel(() => userController.abort());
   let exitCode: AgentExitCode;
   let mcpManager: McpClientManager | undefined;
+  let capabilityContentLeases: readonly CapabilityContentLease[] = [];
 
   try {
+    if (
+      capabilityPlatform?.acquireContentLeases !== undefined &&
+      preparedCapabilitySnapshot !== undefined
+    ) {
+      capabilityContentLeases = await capabilityPlatform.acquireContentLeases(
+        preparedCapabilitySnapshot.snapshot,
+        runId,
+      );
+    }
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
     const runStartedData: Extract<
       RunEvent,
@@ -956,6 +1020,112 @@ export async function executeAgent(
             sessionId,
             workspace: runtime.cwd,
           });
+    let skillRuntime: SkillRuntime | undefined;
+    const hasFrozenSkills = preparedCapabilitySnapshot?.snapshot.plugins.some(
+      (plugin) => plugin.components.some((component) => component.identity.kind === "skill"),
+    ) ?? false;
+    if (hasFrozenSkills && preparedCapabilitySnapshot !== undefined && capabilityPlatform !== undefined) {
+      if (
+        artifactRuntime === undefined ||
+        writer.appendRunEventWithId === undefined
+      ) {
+        throw new TypeError("Phase 18 Skill runtime requires frozen content, artifacts, and durable event IDs");
+      }
+      skillRuntime = new SkillRuntime({
+        artifacts: artifactRuntime,
+        content: capabilityPlatform.createContentSource(preparedCapabilitySnapshot.snapshot),
+        events: {
+          append: async <TType extends Phase18SkillRunEventType>(
+            type: TType,
+            data: Phase18SkillRunEventData<TType>,
+            eventId = runtime.randomUUID(),
+          ): Promise<void> => {
+            try {
+              await writer.appendRunEventWithId!(runId, eventId, type, data);
+            } catch (error) {
+              throw new EventPersistenceError(error);
+            }
+          },
+        },
+        randomUUID: runtime.randomUUID,
+        recency: () => {
+          const latest = writer.readDecodedEvents?.().at(-1);
+          return latest?.sessionSeq ?? 0;
+        },
+        snapshot: preparedCapabilitySnapshot.snapshot,
+      });
+      const selectedSkills = options.skillSelections ?? [];
+      if (options.skillArguments !== undefined && selectedSkills.length !== 1) {
+        throw new SkillError(
+          "skill_entry_invalid",
+          "--skill-args requires exactly one --skill selection",
+          2,
+        );
+      }
+      for (const [index, selector] of selectedSkills.entries()) {
+        await skillRuntime.activateUser(
+          selector,
+          index === 0 ? options.skillArguments ?? "" : "",
+        );
+      }
+    }
+    let hookRuntime: HookRuntime | undefined;
+    const hasFrozenHooks = preparedCapabilitySnapshot?.snapshot.plugins.some(
+      (plugin) => plugin.components.some((component) => component.identity.kind === "hook"),
+    ) ?? false;
+    if (hasFrozenHooks) {
+      if (
+        preparedCapabilitySnapshot === undefined ||
+        artifactRuntime === undefined ||
+        writer.appendRunEventWithId === undefined ||
+        writer.readDecodedEvents === undefined
+      ) {
+        throw new TypeError(
+          "Phase 18 Hook runtime requires a frozen snapshot, artifacts, and durable event IDs",
+        );
+      }
+      hookRuntime = new HookRuntime({
+        artifacts: artifactRuntime,
+        events: {
+          append: async <TType extends Phase18HookRunEventType>(
+            type: TType,
+            data: Phase18HookRunEventData<TType>,
+            eventId = runtime.randomUUID(),
+          ): Promise<void> => {
+            try {
+              await writer.appendRunEventWithId!(runId, eventId, type, data);
+            } catch (error) {
+              throw new EventPersistenceError(error);
+            }
+          },
+        },
+        facts: () => projectHookDurableFacts({
+          events: writer.readDecodedEvents!(),
+          runId,
+          ...(phase16TaskState === undefined
+            ? {}
+            : { taskState: phase16TaskState() }),
+          verifications: publisher.currentVerificationCommandFacts(),
+        }),
+        randomUUID: runtime.randomUUID,
+        runId,
+        sessionId,
+        snapshot: preparedCapabilitySnapshot.snapshot,
+        timestamp: runtime.timestamp,
+        workspaceLogicalId: `sha256:${sha256Canonical({ workspace: runtime.cwd })}`,
+      });
+      const startedHookDecision = await hookRuntime.run(
+        "run.started",
+        {},
+        userController.signal,
+      );
+      if (startedHookDecision.decision === "deny") {
+        throw new HookError(
+          "hook_gate_denied",
+          `${startedHookDecision.code ?? "hook_gate_denied"}: ${startedHookDecision.message ?? "run start was denied by a lifecycle Hook"}`,
+        );
+      }
+    }
     const goalChangeSeed =
       phase16Binding?.agent_mode !== "build" || artifactRuntime === undefined
         ? undefined
@@ -1233,6 +1403,10 @@ export async function executeAgent(
       runtime: new AgentContextRuntime({
         budget: contextRuntimeResult.value.budget,
         estimator: contextRuntimeResult.value.estimator,
+        capabilityContext: () => Object.freeze([
+          ...(skillRuntime?.contextItems() ?? []),
+          ...(mcpManager?.contextItems() ?? []),
+        ]),
         ...(nestedRepositoryRules !== undefined &&
         repositoryRulesManifestEventId !== undefined &&
         repositoryRuleScopeResolver !== undefined &&
@@ -1304,7 +1478,8 @@ export async function executeAgent(
             }),
       }),
     });
-    let additionalTools: readonly RegisteredTool[] = [];
+    let additionalTools: readonly ToolRegistration<unknown>[] =
+      skillRuntime === undefined ? [] : createSkillTools(skillRuntime);
     const mcpServerIds = config.mcpServerIds ?? [];
     if (mcpServerIds.length > 0) {
       if (
@@ -1317,35 +1492,58 @@ export async function executeAgent(
         );
       }
       const loadedMcp = await new McpConfigLoader({ workspace: runtime.cwd }).load();
-      if (loadedMcp.status === "missing") {
-        throw new McpCoreError("mcp_config_missing", "local MCP config is missing");
-      }
-      const selected = mcpServerIds.map((serverId) => {
-        const server = loadedMcp.servers[serverId];
-        if (server === undefined) {
-          throw new McpCoreError("mcp_config_invalid", `unknown MCP server id: ${serverId}`);
+      const capabilityContent =
+        capabilityPlatform === undefined || preparedCapabilitySnapshot === undefined
+          ? undefined
+          : capabilityPlatform.createContentSource(preparedCapabilitySnapshot.snapshot);
+      const selected = await Promise.all(mcpServerIds.map(async (serverId) => {
+        const configured = loadedMcp.status === "loaded"
+          ? loadedMcp.servers[serverId]
+          : undefined;
+        if (configured !== undefined) return configured;
+        const frozen = capabilityContent === undefined || preparedCapabilitySnapshot === undefined
+          ? undefined
+          : await createFrozenCapabilityMcpConfig({
+              content: capabilityContent,
+              hostExecutable: runtime.execPath,
+              selector: serverId,
+              snapshot: preparedCapabilitySnapshot.snapshot,
+              workspace: runtime.cwd,
+            });
+        if (frozen === undefined) {
+          throw new McpCoreError("mcp_config_invalid", `unknown MCP server id or frozen capability: ${serverId}`);
         }
-        return server;
-      });
+        return frozen;
+      }));
       const prompt = runtime.createApprovalPrompt(io);
       mcpManager = runtime.createMcpClientManager({
+        ...(artifactRuntime === undefined ? {} : { artifacts: artifactRuntime }),
         events: {
-          append: async (type, data) => {
+          append: async (type, data, eventId) => {
             try {
-              await writer.appendRunEvent!(runId, type, data);
+              if (eventId !== undefined && writer.appendRunEventWithId !== undefined) {
+                await writer.appendRunEventWithId(runId, eventId, type, data);
+              } else {
+                await writer.appendRunEvent!(runId, type, data);
+              }
             } catch (error) {
               throw new EventPersistenceError(error);
             }
           },
         },
+        ...(hookRuntime === undefined ? {} : { hooks: hookRuntime }),
         prompt,
+        recency: () => {
+          const event = decodedEvents().at(-1);
+          return event === undefined ? 0 : "sessionSeq" in event ? event.sessionSeq : event.seq;
+        },
         secrets,
       });
-      additionalTools = await mcpManager.startSelected({
+      const mcpTools = await mcpManager.startSelected({
         configs: selected,
         reservedModelNames:
           config.taskProfile === "read-only"
-            ? ["list_files", "read_artifact", "read_file", "search"]
+            ? ["list_files", "read_artifact", "read_file", "search", ...additionalTools.map((tool) => tool.name)]
             : [
                 "apply_patch",
                 "finish_task",
@@ -1355,10 +1553,53 @@ export async function executeAgent(
                 "run_command",
                 "search",
                 ...(phase16Binding === undefined ? [] : ["update_plan"]),
+                ...additionalTools.map((tool) => tool.name),
               ],
         signal: userController.signal,
-        workspaceRealPath: loadedMcp.workspaceRealPath,
+        workspaceRealPath:
+          loadedMcp.status === "loaded" ? loadedMcp.workspaceRealPath : runtime.cwd,
       });
+      additionalTools = Object.freeze([...additionalTools, ...mcpTools]);
+      if (explicitMcpPrompt !== undefined) {
+        if (writer.appendRunEventWithId === undefined) {
+          throw new TypeError("Explicit MCP prompts require durable event IDs");
+        }
+        const promptRecord = mcpManager
+          .listPrompts(explicitMcpPrompt.serverId)
+          .find(
+            (candidate) =>
+              candidate.server_id === explicitMcpPrompt.serverId &&
+              candidate.name === explicitMcpPrompt.promptName,
+          );
+        if (
+          promptRecord === undefined ||
+          typeof promptRecord.prompt_id !== "string"
+        ) {
+          throw new McpCoreError(
+            "mcp_prompt_not_found",
+            "MCP prompt selector has no exact frozen match",
+          );
+        }
+        const invocationEventId = runtime.randomUUID();
+        await writer.appendRunEventWithId(
+          runId,
+          invocationEventId,
+          "mcp.prompt.user.invoked",
+          {
+            arguments_sha256: sha256Canonical(explicitMcpPrompt.argumentsValue),
+            invocation_id: invocationEventId,
+            selector: explicitMcpPrompt.selector,
+            source: options.inputSurface === "tui" ? "tui" : "cli",
+          },
+        );
+        await mcpManager.getPrompt({
+          argumentsValue: explicitMcpPrompt.argumentsValue,
+          invocationEventId,
+          invocationSource: "explicit_user",
+          promptId: promptRecord.prompt_id,
+          signal: userController.signal,
+        });
+      }
     }
     const sandboxEvents: SandboxEventAppender | undefined =
       config.executor === "docker"
@@ -1454,6 +1695,7 @@ export async function executeAgent(
         : { dockerSandbox: config.dockerSandbox }),
       executorKind: config.executor,
       maxCommandOutputBytes: config.maxCommandOutputBytes,
+      ...(hookRuntime === undefined ? {} : { hooks: hookRuntime }),
       ...(phase16Binding?.agent_mode !== "build" ||
         artifactRuntime === undefined ||
         goalChangeSeed === undefined ||
@@ -1561,6 +1803,36 @@ export async function executeAgent(
           ? {}
           : { agentMode: phase16Binding.agent_mode }),
         budget,
+        ...(hookRuntime === undefined
+          ? {}
+          : {
+              beforeRunTerminal: async (candidate) => {
+                if (userController.signal.aborted) return;
+                // PHASE18: run terminal Hooks observe the final Host projection
+                // immediately before the terminal event because the durable run
+                // grammar requires that terminal event to remain last.
+                await hookRuntime.run(
+                  "run.terminal",
+                  {
+                    action: {
+                      terminalState:
+                        candidate.type === "completed"
+                          ? "completed"
+                          : candidate.type === "cancelled"
+                            ? "cancelled"
+                            : candidate.type === "failed"
+                              ? "failed"
+                              : "blocked",
+                    },
+                    result: {
+                      exit_code: candidate.exitCode,
+                      terminal_type: candidate.type,
+                    },
+                  },
+                  userController.signal,
+                );
+              },
+            }),
         ...(phase16Binding?.agent_mode !== "build" ||
         phase16TaskState === undefined ||
         writer.appendTaskEvent === undefined
@@ -1744,6 +2016,27 @@ export async function executeAgent(
         }
       }
       exitCode = 1;
+    } else if (error instanceof HookError) {
+      try {
+        const snapshot = budget.snapshot();
+        await publisher.publish({
+          data: {
+            duration_ms: snapshot.elapsedMs,
+            output_chars: publisher.outputLength,
+            reason: "task_blocked",
+            steps: snapshot.steps,
+            tool_calls: publisher.completedToolCalls,
+          },
+          type: "run.incomplete",
+        });
+        renderer.renderDiagnostic(`${error.code}: ${error.message}`);
+        exitCode = 8;
+      } catch (publishError) {
+        if (publishError instanceof EventPersistenceError) {
+          renderer.renderStorageError();
+        }
+        exitCode = 1;
+      }
     } else if (error instanceof McpCoreError) {
       try {
         const snapshot = budget.snapshot();
@@ -1826,6 +2119,12 @@ export async function executeAgent(
         renderer.renderDiagnostic("MCP process cleanup could not be verified");
         exitCode = 1;
       }
+    }
+    try {
+      await Promise.all(capabilityContentLeases.map((lease) => lease.release()));
+    } catch {
+      renderer.renderDiagnostic("capability content lease cleanup could not be verified");
+      exitCode = 1;
     }
   }
 

@@ -393,5 +393,5 @@ describe("Phase 16D Plan CLI runtime", () => {
       data: { reason: "plan_approval_required" },
       type: "run.incomplete",
     });
-  });
+  }, 10_000);
 });

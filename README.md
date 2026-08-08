@@ -62,3 +62,30 @@ written to session evidence. Do not put secrets in prompts.
 `models --refresh-local` performs opt-in metadata discovery only against the
 validated literal-loopback Ollama `/api/tags` endpoint. It never follows
 redirects, downloads a model, or turns discovery into live-verification evidence.
+
+## Local capability platform
+
+Phase 18 now has local Skills, stdio MCP resources/user prompts, declarative
+lifecycle Hooks, and an immutable local Plugin store. Useful read and lifecycle
+surfaces include:
+
+```powershell
+corepack pnpm dev capabilities doctor --json
+corepack pnpm dev plugins inspect fixtures/capability-platform/m9-review-pack --json
+corepack pnpm dev plugins install fixtures/capability-platform/m9-review-pack --expect-sha256 <full-digest> --json
+corepack pnpm dev skills list --json
+corepack pnpm dev mcp prompts list --json
+corepack pnpm dev hooks list --json
+```
+
+Install never executes package code and leaves the Plugin disabled. Enablement
+only makes exact frozen components eligible for future runs; MCP starts/calls,
+resource reads, prompts, Hooks, commands, and workspace effects remain separately
+gated. The TUI exposes `/plugins`, `/skill`, and `/mcp-prompt` for current-state
+inspection and explicit next-run selection.
+
+M9 is still in progress: command Hooks remain fail-closed unavailable until the
+Host can prove recursion suppression, process-tree cleanup, sandbox/journal, and
+revalidation together, and the full Plugin crash-prefix reconciliation table is
+not yet closed. There is no marketplace, network install, dependency resolver,
+signature trust claim, background Hook, worktree, or subagent support.

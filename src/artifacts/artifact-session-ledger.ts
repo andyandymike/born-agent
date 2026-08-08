@@ -165,13 +165,41 @@ function hasArtifactOriginAuthority(
   }
   if (
     origin.type === "tool.call.requested" ||
-    origin.type === "resume.pending_call.adopted"
+    origin.type === "resume.pending_call.adopted" ||
+    origin.type === "skill.activation.requested" ||
+    origin.type === "hook.invocation.requested" ||
+    origin.type === "mcp.resource.read.requested" ||
+    origin.type === "mcp.prompt.get.requested"
   ) {
     if (origin.sessionSeq >= event.sessionSeq) {
       fail(
         event,
         "artifact_origin_invalid",
         "tool artifact origin must be durable before artifact capture",
+      );
+    }
+    return true;
+  }
+  if (
+    origin.type === "skill.resource.read" ||
+    origin.type === "mcp.server.negotiated" ||
+    origin.type === "mcp.resource.cataloged" ||
+    origin.type === "mcp.prompt.cataloged"
+  ) {
+    const originData =
+      origin.data !== null && typeof origin.data === "object" && !Array.isArray(origin.data)
+        ? origin.data as Readonly<Record<string, unknown>>
+        : {};
+    const boundArtifactId = origin.type === "skill.resource.read"
+      ? originData.content_artifact_id
+      : origin.type === "mcp.server.negotiated"
+        ? originData.instructions_artifact_id
+        : originData.catalog_artifact_id;
+    if (origin.sessionSeq <= event.sessionSeq || boundArtifactId !== data.artifact_id) {
+      fail(
+        event,
+        "artifact_origin_invalid",
+        "forward capability artifact must match its later binding event",
       );
     }
     return true;

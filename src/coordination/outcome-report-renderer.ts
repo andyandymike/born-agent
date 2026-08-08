@@ -30,6 +30,9 @@ export function renderOutcomeReport(
         ? "none"
         : `${report.repository.coverage} ${report.repository.finalGenerationSha256} (outline=${String(report.repository.queries.outline)}, symbol=${String(report.repository.queries.symbol)}, references=${String(report.repository.queries.references)})`
     }`,
+    `Skills: ${String(report.skills.activations.length)} activations / ${String(report.skills.resourceReadCount)} resource reads`,
+    `Hooks: ${String(report.hooks.counts.matched)} matched / ${String(report.hooks.counts.executed)} executed / ${String(report.hooks.counts.denied)} denied / ${String(report.hooks.counts.degraded)} degraded`,
+    `MCP primitives: ${String(report.mcp.servers.length)} servers / ${String(report.mcp.resourceReads.length)} resource reads / ${String(report.mcp.promptGets.length)} prompts`,
     `Reasons: ${report.outcomeReasons.join(", ") || "none"}`,
   ];
   return `${lines.join("\n")}\n`;

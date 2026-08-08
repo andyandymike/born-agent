@@ -10,7 +10,7 @@ import type {
 
 export const LOCAL_FREE_PERMISSION_POLICY_ID =
   "bornagent.local-free-only-command-policy";
-export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "2";
+export const LOCAL_FREE_PERMISSION_POLICY_VERSION = "3";
 export const PHASE6_FIXTURE_CWD = "fixtures/phase-06-command-execution";
 export const PHASE7_FIXTURE_CWDS = Object.freeze([
   "fixtures/phase-07-fix-and-verify",
@@ -21,7 +21,9 @@ export const LOCAL_FREE_PERMISSION_RULE_IDS = Object.freeze({
   askDockerSandbox: "local-free.ask.docker-sandbox-command.v1",
   askReviewedFixture: "local-free.ask.reviewed-phase6-fixture.v1",
   askReviewedMcpCall: "local-free.ask.reviewed-offline-mcp-call.v1",
+  askReviewedMcpPrimitive: "local-free.ask.reviewed-offline-mcp-primitive.v1",
   askReviewedMcpStart: "local-free.ask.reviewed-offline-mcp-start.v1",
+  askFrozenCapabilityMcpStart: "local-free.ask.frozen-capability-mcp-start.v1",
   denyUnreviewedMcp: "local-free.deny.unreviewed-mcp.v1",
   denyUnreviewedAction: "local-free.deny.unreviewed-action.v1",
   denyUnsupportedShape: "local-free.deny.unsupported-command-shape.v1",
@@ -35,7 +37,12 @@ export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
     context: PermissionContext,
   ): PolicyDecision {
     if (action.actionKind === "mcp.server.start") {
-      if (!contains(context.reviewedOfflineMcpActionSha256, action.actionSha256)) {
+      const reviewed = contains(context.reviewedOfflineMcpActionSha256, action.actionSha256);
+      const frozenCapability = contains(
+        context.frozenCapabilityMcpActionSha256,
+        action.actionSha256,
+      );
+      if (!reviewed && !frozenCapability) {
         return {
           effect: "deny",
           reasonCode: "mcp_start_not_in_reviewed_offline_set",
@@ -44,12 +51,23 @@ export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
       }
       return {
         effect: "ask",
-        reasonCode: "reviewed_offline_mcp_start_requires_user_approval",
-        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpStart,
+        reasonCode: frozenCapability
+          ? "frozen_capability_mcp_start_requires_user_approval"
+          : "reviewed_offline_mcp_start_requires_user_approval",
+        ruleId: frozenCapability
+          ? LOCAL_FREE_PERMISSION_RULE_IDS.askFrozenCapabilityMcpStart
+          : LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpStart,
       };
     }
-    if (action.actionKind === "mcp.tool.call") {
-      if (!contains(context.reviewedOfflineMcpServerIds, action.serverId)) {
+    if (
+      action.actionKind === "mcp.tool.call" ||
+      action.actionKind === "mcp.resource.read" ||
+      action.actionKind === "mcp.prompt.get"
+    ) {
+      if (
+        !contains(context.reviewedOfflineMcpServerIds, action.serverId) &&
+        !contains(context.startedMcpServerIds, action.serverId)
+      ) {
         return {
           effect: "deny",
           reasonCode: "mcp_server_not_reviewed_offline",
@@ -60,8 +78,12 @@ export const localFreeOnlyPermissionPolicy: PermissionPolicy = Object.freeze({
       // authority. Every exact, locally validated argument digest remains ask.
       return {
         effect: "ask",
-        reasonCode: "reviewed_offline_mcp_call_requires_user_approval",
-        ruleId: LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpCall,
+        reasonCode: action.actionKind === "mcp.tool.call"
+          ? "reviewed_offline_mcp_call_requires_user_approval"
+          : "reviewed_offline_mcp_primitive_requires_user_approval",
+        ruleId: action.actionKind === "mcp.tool.call"
+          ? LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpCall
+          : LOCAL_FREE_PERMISSION_RULE_IDS.askReviewedMcpPrimitive,
       };
     }
     const hardDeny = evaluateHardDeny(action);

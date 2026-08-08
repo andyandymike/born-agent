@@ -18,6 +18,12 @@ export interface PackageInventoryEntry {
   readonly sha256: string;
 }
 
+export interface StableCapabilityPackageFile {
+  readonly bytes: Uint8Array;
+  readonly path: string;
+  readonly sha256: string;
+}
+
 export interface CapabilityComponentMetadata {
   readonly componentId: string;
   readonly componentPath: string;
@@ -33,6 +39,8 @@ export interface StableCapabilityPackage {
   readonly components: readonly CapabilityComponentMetadata[];
   readonly description: string;
   readonly displayName: string;
+  /** Exact bytes captured through the same stable handles used for the digest. */
+  readonly files: readonly StableCapabilityPackageFile[];
   readonly inventory: readonly PackageInventoryEntry[];
   readonly inventorySha256: string;
   readonly manifestBytes: Uint8Array;

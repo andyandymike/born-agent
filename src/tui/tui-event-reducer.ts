@@ -327,6 +327,18 @@ function reduceKnownEvent(
           acceptedCompletionCallId: null,
           acceptedCompletionStep: null,
           command: event.data.command,
+          ...(event.data.capability_snapshot === undefined
+            ? {}
+            : {
+                capabilitySnapshot: {
+                  componentCount: event.data.capability_snapshot.component_count,
+                  eligiblePluginCount:
+                    event.data.capability_snapshot.eligible_plugin_count,
+                  enablementRevision:
+                    event.data.capability_snapshot.enablement_revision,
+                  snapshotId: event.data.capability_snapshot.snapshot_id,
+                },
+              }),
           completionProof: "none",
           currentStep: 1,
           executionEnvironment:
@@ -1118,6 +1130,127 @@ function reduceKnownEvent(
     case "sandbox.container.inspected":
     case "sandbox.container.start.requested":
     case "sandbox.container.stopping":
+      return state;
+    case "skill.activation.requested":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Skill requested: ${event.data.skill_identity.componentId} (${event.data.selected_by})`,
+        runId: event.runId,
+      });
+    case "skill.activated":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Skill activated: ${event.data.activation_id.slice(0, 8)} (${String(event.data.byte_length)} bytes)`,
+        runId: event.runId,
+      });
+    case "skill.resource.read":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Skill resource: ${event.data.resource_id} (${String(event.data.byte_length)}/${String(event.data.total_bytes)} bytes)`,
+        runId: event.runId,
+      });
+    case "skill.activation.failed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Skill activation failed: ${event.data.code}`,
+        runId: event.runId,
+      });
+    case "mcp.server.negotiated":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP negotiated: ${event.data.server_id} (${event.data.protocol_version})`,
+        runId: event.runId,
+      });
+    case "mcp.resource.cataloged":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP resources: ${event.data.server_id} (${String(event.data.count)})`,
+        runId: event.runId,
+      });
+    case "mcp.prompt.cataloged":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP prompts: ${event.data.server_id} (${String(event.data.count)})`,
+        runId: event.runId,
+      });
+    case "mcp.resource.catalog.stale":
+    case "mcp.prompt.catalog.stale":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP catalog stale: ${event.data.server_id} (${event.data.reason})`,
+        runId: event.runId,
+      });
+    case "mcp.resource.read.completed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP resource read: ${event.data.resource_id.slice(0, 24)} (${String(event.data.byte_length)} bytes)`,
+        runId: event.runId,
+      });
+    case "mcp.prompt.get.completed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP prompt added: ${event.data.prompt_id.slice(0, 24)} (${String(event.data.message_count)} messages)`,
+        runId: event.runId,
+      });
+    case "mcp.resource.read.failed":
+    case "mcp.prompt.get.failed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP primitive failed: ${event.data.code}`,
+        runId: event.runId,
+      });
+    case "mcp.resource.read.requested":
+    case "mcp.prompt.get.requested":
+      return state;
+    case "mcp.prompt.user.invoked":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `MCP prompt requested by user: ${event.data.selector}`,
+        runId: event.runId,
+      });
+    case "hook.matched":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Hook matched: ${event.data.hook_identity.componentId} (${event.data.event})`,
+        runId: event.runId,
+      });
+    case "hook.invocation.decided":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Hook decision: ${event.data.decision}${event.data.code === undefined ? "" : ` (${event.data.code})`}`,
+        runId: event.runId,
+      });
+    case "hook.invocation.completed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Hook observer: ${event.data.status}`,
+        runId: event.runId,
+      });
+    case "hook.invocation.failed":
+      return appendItem(state, {
+        id: event.eventId,
+        kind: "session",
+        label: `Hook failed: ${event.data.code}`,
+        runId: event.runId,
+      });
+    case "hook.invocation.requested":
+    case "hook.invocation.started":
+      return state;
     case "goal.created":
     case "goal.revised":
     case "goal.status.changed":

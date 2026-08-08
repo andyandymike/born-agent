@@ -146,7 +146,55 @@ export const skillComponentSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.entry.toLowerCase().endsWith(".md")) {
+      context.addIssue({
+        code: "custom",
+        message: "Skill entry must be Markdown",
+        path: ["entry"],
+      });
+    }
+    const resources = value.resources ?? [];
+    const paths = [value.entry, ...resources.map((resource) => resource.path)];
+    if (new Set(paths.map((path) => path.toLowerCase())).size !== paths.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Skill entry and resource paths must be unique",
+        path: ["resources"],
+      });
+    }
+    const executable = /\.(?:bat|cmd|com|dll|exe|js|mjs|cjs|ps1|sh|so|ts)$/iu;
+    for (const [index, resource] of resources.entries()) {
+      if (executable.test(resource.path)) {
+        context.addIssue({
+          code: "custom",
+          message: "Skill resources cannot reference executable content",
+          path: ["resources", index, "path"],
+        });
+      }
+      const extension = resource.path.toLowerCase().slice(resource.path.lastIndexOf("."));
+      const expected = resource.media_type === "text/markdown"
+        ? ".md"
+        : resource.media_type === "text/plain"
+          ? ".txt"
+          : ".json";
+      if (extension !== expected) {
+        context.addIssue({
+          code: "custom",
+          message: "Skill resource extension must match its media type",
+          path: ["resources", index, "media_type"],
+        });
+      }
+    }
+    if (value.context.max_total_resource_bytes < value.context.max_resource_bytes) {
+      context.addIssue({
+        code: "custom",
+        message: "total Skill resource budget cannot be smaller than one resource budget",
+        path: ["context", "max_total_resource_bytes"],
+      });
+    }
+  });
 
 const hookMatcherSchema = z
   .object({

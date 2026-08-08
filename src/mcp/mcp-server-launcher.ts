@@ -35,7 +35,7 @@ export interface StartedMcpServer {
   readonly config: LoadedMcpServerConfig;
   readonly integrityManifest: McpIntegrityManifest;
   readonly processIdentity: McpProcessIdentity;
-  readonly reviewedOffline: true;
+  readonly authority: "frozen_capability" | "reviewed_offline_fixture";
   flushDiagnostics(): Promise<void>;
 }
 
@@ -74,13 +74,17 @@ export class McpServerLauncher {
     workspaceRealPath: string,
     signal: AbortSignal,
     onToolsChanged: () => void,
+    onResourcesChanged?: () => void,
+    onPromptsChanged?: () => void,
   ): Promise<StartedMcpServer> {
     const executable = await resolveMcpExecutable({
       environment: this.options.environment,
       executable: config.executable,
       platform: this.options.platform,
     });
-    const manifestBuilder = new McpIntegrityManifestBuilder({ workspaceRealPath });
+    const manifestBuilder = new McpIntegrityManifestBuilder({
+      workspaceRealPath: config.integrityRoot ?? workspaceRealPath,
+    });
     const integrityManifest = await manifestBuilder.build(config.integrityFiles);
     const action = createMcpServerStartActionIdentity({
       args: config.args,
@@ -98,12 +102,16 @@ export class McpServerLauncher {
       config,
       manifest: integrityManifest,
     });
+    const frozenCapability = config.origin === "capability_snapshot";
     const permission = this.options.permissionEngine.evaluate(action, {
       ...(reviewedOffline
         ? {
             reviewedOfflineMcpActionSha256: [action.actionSha256],
             reviewedOfflineMcpServerIds: [config.serverId],
           }
+        : {}),
+      ...(frozenCapability
+        ? { frozenCapabilityMcpActionSha256: [action.actionSha256] }
         : {}),
     });
     await this.options.events.append("mcp.permission.evaluated", {
@@ -115,10 +123,10 @@ export class McpServerLauncher {
       rule_id: permission.ruleId,
       server_id: config.serverId,
     });
-    if (permission.effect === "deny" || !reviewedOffline) {
+    if (permission.effect === "deny" || (!reviewedOffline && !frozenCapability)) {
       throw new McpCoreError(
         "mcp_permission_denied",
-        "MCP start is not an exact checked-in offline fixture action",
+        "MCP start is neither an exact reviewed fixture nor a run-frozen enabled capability action",
       );
     }
 
@@ -137,6 +145,9 @@ export class McpServerLauncher {
             integrityManifest.binding === "explicit"
               ? `server code integrity: ${integrityManifest.entries.length} explicit file(s)`
               : "server code integrity: not bound",
+            frozenCapability
+              ? "authority: user-enabled run-frozen Plugin (does not grant effects)"
+              : "authority: checked-in reviewed offline fixture",
           ],
           riskWarning: "approval and shell:false do not sandbox this host process",
           serverId: config.serverId,
@@ -173,9 +184,9 @@ export class McpServerLauncher {
     let stderrBytes = 0;
     const diagnosticTasks: Promise<void>[] = [];
     const client = new StdioMcpClient({
-      args: config.args,
+      args: config.spawnArgs ?? config.args,
       command: executable.canonicalPath,
-      cwd: path.resolve(workspaceRealPath, config.canonicalCwd),
+      cwd: config.executionCwd ?? path.resolve(workspaceRealPath, config.canonicalCwd),
       environment,
       onSpawned: async (pid) => {
         processIdentity = createMcpProcessIdentity({
@@ -215,6 +226,8 @@ export class McpServerLauncher {
           }),
         );
       },
+      ...(onPromptsChanged === undefined ? {} : { onPromptsChanged }),
+      ...(onResourcesChanged === undefined ? {} : { onResourcesChanged }),
       onToolsChanged,
     });
 
@@ -239,6 +252,7 @@ export class McpServerLauncher {
     }
     return Object.freeze({
       action,
+      authority: frozenCapability ? "frozen_capability" as const : "reviewed_offline_fixture" as const,
       client,
       config,
       flushDiagnostics: async () => {
@@ -246,7 +260,6 @@ export class McpServerLauncher {
       },
       integrityManifest,
       processIdentity,
-      reviewedOffline: true as const,
     });
   }
 
@@ -285,6 +298,18 @@ export class McpServerLauncher {
     manifest: McpIntegrityManifest,
     manifestBuilder: McpIntegrityManifestBuilder,
   ): Promise<void> {
+    if (config.origin === "capability_snapshot") {
+      await Promise.all([
+        config.revalidate?.(),
+        manifestBuilder.recheck(manifest),
+        recheckMcpExecutable(executable, {
+          environment: this.options.environment,
+          executable: config.executable,
+          platform: this.options.platform,
+        }),
+      ]);
+      return;
+    }
     const loaded = await new McpConfigLoader({ workspace: this.options.workspace }).load();
     const current = loaded.status === "loaded" ? loaded.servers[config.serverId] : undefined;
     if (current?.configSha256 !== config.configSha256) {

@@ -22,6 +22,12 @@ export interface RunView {
   readonly acceptedCompletionCallId: string | null;
   readonly acceptedCompletionStep: number | null;
   readonly command: "agent" | "chat";
+  readonly capabilitySnapshot?: {
+    readonly componentCount: number;
+    readonly eligiblePluginCount: number;
+    readonly enablementRevision: number;
+    readonly snapshotId: string;
+  };
   readonly completionProof: "accepted" | "candidate" | "none" | "rejected";
   readonly currentStep: number | null;
   readonly executionEnvironment?: string;
@@ -57,6 +63,8 @@ export interface ApprovalView {
     | "apply_patch"
     | "mcp.server.start"
     | "mcp.tool.call"
+    | "mcp.resource.read"
+    | "mcp.prompt.get"
     | "run_command";
   readonly actionSha256: string;
   readonly callId: string;

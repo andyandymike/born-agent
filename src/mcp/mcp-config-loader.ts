@@ -33,7 +33,12 @@ export interface LoadedMcpServerConfig {
   readonly configSha256: string;
   readonly env: readonly Readonly<{ source: string; target: string }>[];
   readonly executable: string;
+  readonly executionCwd?: string;
+  readonly integrityRoot?: string;
   readonly integrityFiles: readonly string[];
+  readonly origin?: "capability_snapshot" | "workspace_config";
+  readonly spawnArgs?: readonly string[];
+  readonly revalidate?: () => Promise<void>;
   readonly serverId: string;
   readonly startupTimeoutMs: number;
   readonly transport: "stdio";
@@ -125,6 +130,7 @@ function freezeServer(
     serverId,
     startupTimeoutMs: normalized.startup_timeout_ms,
     transport: "stdio",
+    origin: "workspace_config",
   });
 }
 

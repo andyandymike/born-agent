@@ -29,6 +29,7 @@ import {
   type ToolError,
   type ToolRawResult,
 } from "./tool-types.js";
+import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
 
 export const MAX_COMMAND_TOOL_OUTPUT_BYTES = 1_114_112;
 const MAX_EVENT_CHUNK_BYTES = 32 * 1024;
@@ -58,6 +59,7 @@ export interface RunCommandToolOptions {
   readonly defaultTimeoutMs: number;
   readonly executor: Executor;
   readonly maxOutputBytes: number;
+  readonly hooks?: EffectHookPipeline;
   readonly permissionContext: (
     prepared: PreparedExecution,
   ) => PermissionContext;
@@ -456,6 +458,28 @@ export function createRunCommandTool(
         }
       }
 
+      const hookDecision = await options.hooks?.run(
+        "tool.before_effect",
+        {
+          action: {
+            actionKind: "run_command",
+            originalActionSha256: prepared.actionSha256,
+            toolName: "run_command",
+          },
+        },
+        context.signal,
+      );
+      if (hookDecision?.decision === "deny") {
+        return {
+          error: toolError(
+            "permission",
+            hookDecision.code ?? "hook_gate_denied",
+            hookDecision.message ?? "command was denied by a lifecycle Hook",
+          ),
+          ok: false,
+        };
+      }
+
       if ((await prepared.revalidate()) !== "current") {
         return {
           error: toolError(
@@ -686,6 +710,24 @@ export function createRunCommandTool(
           );
         }
       }
+
+      await options.hooks?.run(
+        "tool.after_result",
+        {
+          action: {
+            actionKind: "run_command",
+            originalActionSha256: prepared.actionSha256,
+            terminalState: completed.exitCode === 0 ? "completed" : "failed",
+            toolName: "run_command",
+          },
+          result: {
+            cleanup_verified: completed.cleanupVerified,
+            exit_code: completed.exitCode,
+            termination: completed.termination,
+          },
+        },
+        context.signal,
+      );
 
       const error = resultError(completed);
       const fitted = fitObservation(commandObservation(completed), error);

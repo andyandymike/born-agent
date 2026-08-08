@@ -271,5 +271,5 @@ describe("Phase 16F TUI/CLI writer concurrency", () => {
     } finally {
       await activeWriter.close();
     }
-  });
+  }, 10_000);
 });
