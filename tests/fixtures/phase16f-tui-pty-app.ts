@@ -77,6 +77,7 @@ let backendIndex = 0;
 
 const node = createNodeRuntime({
   approvalInput: { interactive: false, readLine: async () => null },
+  capabilityUserStateRoot: join(workspace, "user-state", "capabilities"),
   cwd: workspace,
   env: process.env,
   execPath: process.execPath,
