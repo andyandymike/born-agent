@@ -19,6 +19,7 @@ import type {
 import { StablePackageReader } from "./stable-package-reader.js";
 import type {
   CapabilityContentLease,
+  CapabilityContentLeaseOwner,
   PluginLifecycleLike,
 } from "../plugins/plugin-lifecycle.js";
 
@@ -41,7 +42,7 @@ export interface FrozenCapabilityContentSource {
 export interface CapabilityPlatformLike {
   acquireContentLeases?(
     snapshot: CapabilitySnapshotV1,
-    runId: string,
+    owner: CapabilityContentLeaseOwner,
   ): Promise<readonly CapabilityContentLease[]>;
   buildRegistry(): Promise<FrozenCapabilityRegistry>;
   createContentSource(snapshot: CapabilitySnapshotV1): FrozenCapabilityContentSource;
@@ -132,12 +133,12 @@ export class DefaultCapabilityPlatform implements CapabilityPlatformLike {
 
   async acquireContentLeases(
     snapshot: CapabilitySnapshotV1,
-    runId: string,
+    owner: CapabilityContentLeaseOwner,
   ): Promise<readonly CapabilityContentLease[]> {
     const digests = snapshot.plugins
       .filter((plugin) => plugin.source === "user_install")
       .map((plugin) => plugin.pluginSha256);
-    return this.options.pluginLifecycle?.acquireLeases(digests, runId) ?? [];
+    return this.options.pluginLifecycle?.acquireLeases(digests, owner) ?? [];
   }
 
   async buildRegistry(): Promise<FrozenCapabilityRegistry> {

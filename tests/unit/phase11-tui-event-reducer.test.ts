@@ -730,4 +730,46 @@ describe("Phase 11 durable TUI reducer", () => {
     expect(approval.session.fatalReason).toContain("approval request");
     expect(terminal.session.fatalReason).toContain("terminal");
   });
+
+  it("projects an independently bound command Hook approval and rejects stale decisions", () => {
+    const requestId = "33333333-3333-4333-8333-333333333333";
+    const invocationId = "44444444-4444-4444-8444-444444444444";
+    const requested = reducePersistedEvent(
+      reducePersistedEvent(createInitialTuiViewState(), started()),
+      persisted("hook.approval.requested", {
+        action_sha256: HASH_B,
+        approval_request_id: requestId,
+        invocation_id: invocationId,
+        preview: "Hook: user_install:fixture/hook:gate",
+        truncated: false,
+      }, 2),
+    );
+
+    expect(requested.approval).toMatchObject({
+      actionKind: "run_command",
+      actionSha256: HASH_B,
+      callId: `hook:${invocationId}`,
+      expiresState: { status: "active" },
+      requestId,
+    });
+
+    const decided = reducePersistedEvent(requested, persisted("hook.approval.decided", {
+      action_sha256: HASH_B,
+      approval_request_id: requestId,
+      decision: "denied",
+      invocation_id: invocationId,
+    }, 3));
+    expect(decided.approval).toMatchObject({
+      decision: "denied",
+      expiresState: { reason: "decided", status: "expired" },
+    });
+
+    const stale = reducePersistedEvent(requested, persisted("hook.approval.decided", {
+      action_sha256: HASH_B,
+      approval_request_id: requestId,
+      decision: "approved",
+      invocation_id: "55555555-5555-4555-8555-555555555555",
+    }, 3));
+    expect(stale.session.fatalReason).toContain("Hook approval decision identity is stale");
+  });
 });

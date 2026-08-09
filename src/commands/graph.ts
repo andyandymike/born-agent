@@ -524,26 +524,50 @@ export async function executeGraphResume(options: GraphResumeOptions, runtime: C
     if (options.background === options.foreground) {
       throw new TaskGraphError("task_graph_schema_invalid", "resume requires exactly one of --foreground or --background");
     }
-    if (options.takeover) {
-      throw new BackgroundError("worker_owner_unknown", "takeover requires a completed process-start and effect reconciliation proof");
-    }
     const revision = positive(options.revision, "revision");
     const graphSha256 = sha(options.sha256);
-    const before = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-    if (
-      before.taskExecution === null || before.taskExecution.status !== "waiting_for_user" ||
-      before.taskExecution.graph.revision !== revision || before.taskExecution.graph.graphSha256 !== graphSha256 ||
-      before.background.current !== null
-    ) {
-      throw new BackgroundError("worker_waiting_for_user", "resume requires one exact waiting Graph with no active worker owner");
+    if (options.takeover) {
+      if (!options.background) {
+        throw new BackgroundError("worker_control_stale", "v1 takeover may only launch a fresh background owner");
+      }
+      const reconcile = runtime.reconcileBackgroundWorkerTakeover;
+      if (reconcile === undefined) {
+        throw new BackgroundError("background_executable_unsealed", "runtime has no bounded takeover reconciler");
+      }
+      await reconcile({ graphRevision: revision, graphSha256, sessionId: options.sessionId });
     }
-    const enqueued = await new TaskExecutionControlPlane(taskWriterFactory(runtime)).enqueue({
-      context: taskMutationContext(runtime, options.sessionId),
-      requestedExecution: options.background ? "background" : "foreground",
-      revision,
-      runtimeProfileId: before.taskExecution.enqueue.runtimeProfileId,
-      sha256: graphSha256,
-    });
+    const before = await new SessionCatalog(runtime.cwd).read(options.sessionId);
+    const enqueued = options.takeover
+      ? (() => {
+          if (
+            before.taskExecution === null ||
+            before.taskExecution.status !== "queued" ||
+            before.taskExecution.activeAttempt !== null ||
+            before.taskExecution.enqueue.requestedExecution !== "background" ||
+            before.taskExecution.graph.revision !== revision ||
+            before.taskExecution.graph.graphSha256 !== graphSha256 ||
+            before.background.current !== null
+          ) {
+            throw new BackgroundError("worker_reconciliation_required", "takeover did not produce one clean queued Graph");
+          }
+          return { execution: before.taskExecution, graph: before.taskExecution.graph };
+        })()
+      : await (async () => {
+          if (
+            before.taskExecution === null || before.taskExecution.status !== "waiting_for_user" ||
+            before.taskExecution.graph.revision !== revision || before.taskExecution.graph.graphSha256 !== graphSha256 ||
+            before.background.current !== null
+          ) {
+            throw new BackgroundError("worker_waiting_for_user", "resume requires one exact waiting Graph with no active worker owner");
+          }
+          return new TaskExecutionControlPlane(taskWriterFactory(runtime)).enqueue({
+            context: taskMutationContext(runtime, options.sessionId),
+            requestedExecution: options.background ? "background" : "foreground",
+            revision,
+            runtimeProfileId: before.taskExecution.enqueue.runtimeProfileId,
+            sha256: graphSha256,
+          });
+        })();
     if (options.background) {
       const launcher = runtime.createBackgroundWorkerLauncher?.({ sessionId: options.sessionId });
       if (launcher === undefined) throw new BackgroundError("background_executable_unsealed", "runtime has no sealed background worker launcher");

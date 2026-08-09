@@ -1,45 +1,30 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { z } from "zod";
 
-import type { ApprovalPrompt } from "../approvals/approval-types.js";
+import type { ApprovalPrompt, CommandApprovalPreview } from "../approvals/approval-types.js";
 import type { FrozenCapabilityContentSource } from "../capabilities/capability-platform.js";
 import type { FrozenCapabilityRecord } from "../capabilities/capability-types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import type { ProcessTreeCleanup } from "../execution/process-tree-cleanup.js";
 import { sanitizeChildEnvironment } from "../security/child-environment.js";
-import { redactSensitiveText } from "../security/redact.js";
-import { parseStrictJson } from "../system/strict-json.js";
+import {
+  appendBoundedHookOutput,
+  HookCommandResultError,
+  MAX_HOOK_OUTPUT_BYTES,
+  parseHookCommandResult,
+  type HookCommandRunnerResult,
+} from "./hook-command-result.js";
+import { HookCommandOperationStore } from "./hook-command-operation-store.js";
+import {
+  hookCommandSupervisorBootstrapSchema,
+  hookCommandSupervisorMessageSchema,
+  type HookCommandSupervisorMessageV1,
+} from "./hook-command-supervisor-schema.js";
 import { HookError } from "./hook-errors.js";
 
-const MAX_HOOK_OUTPUT_BYTES = 64 * 1024;
-const SENSITIVE_ENVIRONMENT_NAME = /(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|COOKIE)/iu;
-
-const gateOutputSchema = z.object({
-  schemaVersion: z.literal(1),
-  decision: z.enum(["deny", "no_objection"]),
-  code: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/u).optional(),
-  evidence: z.array(z.string().min(1).max(512)).max(32).optional(),
-  message: z.string().min(1).max(1024).optional(),
-}).strict().superRefine((value, context) => {
-  if (value.decision === "deny" && (value.code === undefined || value.message === undefined)) {
-    context.addIssue({ code: "custom", message: "deny requires code and message" });
-  }
-  if (value.decision === "no_objection" && (value.code !== undefined || value.message !== undefined)) {
-    context.addIssue({ code: "custom", message: "no_objection cannot carry deny fields" });
-  }
-});
-
-const observerOutputSchema = z.union([
-  z.object({}).strict(),
-  z.object({
-    schemaVersion: z.literal(1),
-    status: z.literal("observed"),
-    message: z.string().min(1).max(1024).optional(),
-  }).strict(),
-]);
+const FORBIDDEN_ENVIRONMENT_NAME = /(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|COOKIE|PROXY)|^(?:ALL_PROXY|BORN_|COMSPEC|GIT_|HTTP_PROXY|HTTPS_PROXY|LD_PRELOAD|NODE_|NPM_|NO_PROXY|PATH|SSH_|SYSTEMROOT|TEMP|TMP|WINDIR|DYLD_)/iu;
 
 export interface HookCommandRunnerEventSink {
   approvalDecided(input: {
@@ -51,7 +36,9 @@ export interface HookCommandRunnerEventSink {
   approvalRequested(input: {
     readonly actionSha256: string;
     readonly invocationId: string;
+    readonly preview: string;
     readonly requestId: string;
+    readonly truncated: boolean;
   }): Promise<void>;
   permissionEvaluated(input: {
     readonly actionSha256: string;
@@ -67,24 +54,16 @@ export interface HookCommandRunnerEventSink {
   }): Promise<void>;
 }
 
-export type HookCommandRunnerResult =
-  | {
-      readonly actionSha256: string;
-      readonly decision: "deny" | "no_objection";
-      readonly evidence: readonly string[];
-      readonly kind: "gate";
-      readonly code?: string;
-      readonly message?: string;
-      readonly stderr: string;
-      readonly stdout: string;
-    }
-  | {
-      readonly actionSha256: string;
-      readonly kind: "observer";
-      readonly message?: string;
-      readonly stderr: string;
-      readonly stdout: string;
-    };
+export type { HookCommandRunnerResult } from "./hook-command-result.js";
+
+export interface HookCommandOperationContext {
+  readonly failurePolicy: "fail_closed" | "record_degraded";
+  readonly requestedEventId: string;
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly sessionLockNonceSha256: string;
+  readonly terminalEventId: string;
+}
 
 export interface HookCommandRunnerInput {
   readonly events: HookCommandRunnerEventSink;
@@ -92,11 +71,16 @@ export interface HookCommandRunnerInput {
   readonly inputBytes: Buffer;
   readonly inputSha256: string;
   readonly invocationId: string;
+  readonly operation?: HookCommandOperationContext;
   readonly signal: AbortSignal;
 }
 
 export interface HookCommandRunnerLike {
   run(input: HookCommandRunnerInput): Promise<HookCommandRunnerResult>;
+  terminalCommitted?(input: HookCommandOperationContext & {
+    readonly invocationId: string;
+    readonly terminalType: "hook.invocation.completed" | "hook.invocation.decided" | "hook.invocation.failed";
+  }): Promise<void>;
 }
 
 export class HookCommandExecutionError extends HookError {
@@ -108,17 +92,6 @@ export class HookCommandExecutionError extends HookError {
   ) {
     super(code, message, code === "hook_invocation_cancelled" ? 130 : 8, options);
   }
-}
-
-function boundedAppend(current: Buffer[], size: number, chunk: Buffer): { readonly exceeded: boolean; readonly size: number } {
-  const next = size + chunk.byteLength;
-  if (next <= MAX_HOOK_OUTPUT_BYTES) {
-    current.push(Buffer.from(chunk));
-    return { exceeded: false, size: next };
-  }
-  const remaining = Math.max(0, MAX_HOOK_OUTPUT_BYTES - size);
-  if (remaining > 0) current.push(Buffer.from(chunk.subarray(0, remaining)));
-  return { exceeded: true, size: MAX_HOOK_OUTPUT_BYTES };
 }
 
 function waitForSpawn(child: ChildProcessWithoutNullStreams): Promise<number> {
@@ -148,6 +121,75 @@ function closeResult(child: ChildProcessWithoutNullStreams): Promise<{ readonly 
   });
 }
 
+function truncateUtf8(value: string, limit: number): string {
+  if (Buffer.byteLength(value, "utf8") <= limit) return value;
+  let output = "";
+  let bytes = 0;
+  for (const character of value) {
+    const next = Buffer.byteLength(character, "utf8");
+    if (bytes + next > limit) break;
+    output += character;
+    bytes += next;
+  }
+  return output;
+}
+
+class SupervisorReceiptQueue {
+  readonly #queued: HookCommandSupervisorMessageV1[] = [];
+  readonly #waiters: {
+    readonly reject: (error: Error) => void;
+    readonly resolve: (message: HookCommandSupervisorMessageV1) => void;
+  }[] = [];
+  #terminalError: Error | undefined;
+
+  constructor(child: ChildProcess) {
+    child.on("message", (value: unknown) => {
+      try {
+        this.#push(hookCommandSupervisorMessageSchema.parse(value));
+      } catch (error) {
+        this.#end(new Error("Hook supervisor sent an invalid receipt", { cause: error }));
+      }
+    });
+    child.once("error", (error) => this.#end(new Error("Hook supervisor process failed", { cause: error })));
+    child.once("exit", (code, signal) => this.#end(new Error(
+      `Hook supervisor exited before its next receipt (code=${String(code)}, signal=${String(signal)})`,
+    )));
+  }
+
+  next(): Promise<HookCommandSupervisorMessageV1> {
+    const queued = this.#queued.shift();
+    if (queued !== undefined) return Promise.resolve(queued);
+    if (this.#terminalError !== undefined) return Promise.reject(this.#terminalError);
+    return new Promise((resolve, reject) => this.#waiters.push({ reject, resolve }));
+  }
+
+  #push(message: HookCommandSupervisorMessageV1): void {
+    if (this.#terminalError !== undefined) return;
+    const waiter = this.#waiters.shift();
+    if (waiter === undefined) this.#queued.push(message);
+    else waiter.resolve(message);
+  }
+
+  #end(error: Error): void {
+    if (this.#terminalError !== undefined) return;
+    this.#terminalError = error;
+    for (const waiter of this.#waiters.splice(0)) waiter.reject(error);
+  }
+}
+
+function supervisorFailureMessage(code: string): string {
+  switch (code) {
+    case "hook_gate_output_invalid":
+      return "Hook supervisor captured invalid command output";
+    case "hook_invocation_cancelled":
+      return "Hook supervisor captured cancellation";
+    case "hook_invocation_timeout":
+      return "Hook supervisor captured a timeout";
+    default:
+      return "Hook supervisor captured an execution failure";
+  }
+}
+
 async function readStableRegularFile(path: string, label: string): Promise<Buffer> {
   const before = await lstat(path);
   if (!before.isFile() || before.isSymbolicLink()) {
@@ -169,30 +211,18 @@ async function readStableRegularFile(path: string, label: string): Promise<Buffe
   return bytes;
 }
 
-function decodeHookOutput(chunks: readonly Buffer[], label: string): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
-  } catch (error) {
-    throw new Error(`${label} is not valid UTF-8`, { cause: error });
-  }
-}
-
-function containsTerminalControl(value: string): boolean {
-  return [...value].some((character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint === 0x1b || codePoint === 0x9b;
-  });
-}
-
 export class HookCommandRunner implements HookCommandRunnerLike {
   constructor(private readonly options: {
     readonly cleanup: ProcessTreeCleanup;
     readonly content: FrozenCapabilityContentSource;
     readonly environment: Readonly<Record<string, string | undefined>>;
     readonly executable: string;
+    readonly operationRoot?: string;
     readonly prompt: ApprovalPrompt;
     readonly randomUUID: () => string;
     readonly secrets: readonly (string | undefined)[];
+    readonly supervisorCliEntryPath?: string;
+    readonly timestamp?: () => string;
     readonly workspace: string;
   }) {}
 
@@ -234,8 +264,8 @@ export class HookCommandRunner implements HookCommandRunnerLike {
       throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable must be a frozen JavaScript module", "none");
     }
     for (const name of Object.keys(handler.environment ?? {})) {
-      if (SENSITIVE_ENVIRONMENT_NAME.test(name)) {
-        throw new HookCommandExecutionError("hook_invocation_failed", "Hook environment cannot declare credential-like names", "none");
+      if (FORBIDDEN_ENVIRONMENT_NAME.test(name)) {
+        throw new HookCommandExecutionError("hook_invocation_failed", "Hook environment cannot declare credential, proxy, runtime-injection, or Host-reserved names", "none");
       }
     }
     const script = await this.options.content.readComponentFile(input.hook.identity, handler.executable)
@@ -271,8 +301,7 @@ export class HookCommandRunner implements HookCommandRunnerLike {
       reasonCode: "frozen_command_hook_requires_user_approval",
     });
     const requestId = this.options.randomUUID();
-    await input.events.approvalRequested({ actionSha256, invocationId: input.invocationId, requestId });
-    const decision = await this.options.prompt.request({
+    const approvalPreview: CommandApprovalPreview = {
       actionKind: "run_command",
       actionSha256,
       args: [`capability:${input.hook.identity.qualifiedId}/${handler.executable}`, ...handler.argv],
@@ -287,7 +316,25 @@ export class HookCommandRunner implements HookCommandRunnerLike {
         "input: canonical JSON over one closed stdin stream",
       ],
       riskWarning: "The Hook is argv-only and bounded, but policy_selected local execution is not an OS sandbox.",
-    }, input.signal);
+    };
+    const previewSource = [
+      ...approvalPreview.reviewLines,
+      `cwd: ${approvalPreview.cwd}`,
+      `executor: ${approvalPreview.executor ?? "local"}`,
+      `executable: ${approvalPreview.executable}`,
+      ...approvalPreview.args.map((argument, index) => `argv[${String(index)}]: ${argument}`),
+      `purpose: ${approvalPreview.purpose}`,
+      `WARNING: ${approvalPreview.riskWarning}`,
+    ].join("\n");
+    const persistedPreview = truncateUtf8(previewSource, 32 * 1024);
+    await input.events.approvalRequested({
+      actionSha256,
+      invocationId: input.invocationId,
+      preview: persistedPreview,
+      requestId,
+      truncated: persistedPreview !== previewSource,
+    });
+    const decision = await this.options.prompt.request(approvalPreview, input.signal);
     await input.events.approvalDecided({ actionSha256, decision, invocationId: input.invocationId, requestId });
     if (decision !== "approved") {
       throw new HookCommandExecutionError("hook_approval_denied", "Hook command was not approved", "none");
@@ -316,12 +363,33 @@ export class HookCommandRunner implements HookCommandRunnerLike {
     const childEnvironment = sanitizeChildEnvironment({
       BORN_HOOK_PROTOCOL: "1",
       BORN_HOOK_ACTION_SHA256: actionSha256,
+      BORN_HOOK_DEPTH: "1",
+      BORN_HOOK_SUPPRESSED: "1",
       SystemRoot: this.options.environment.SystemRoot,
       TEMP: this.options.environment.TEMP,
       TMP: this.options.environment.TMP,
       WINDIR: this.options.environment.WINDIR,
       ...(handler.environment ?? {}),
     });
+    const operation = input.operation;
+    if (
+      operation !== undefined &&
+      this.options.operationRoot !== undefined &&
+      this.options.supervisorCliEntryPath !== undefined
+    ) {
+      return this.#runSupervised({ ...input, operation }, {
+        actionSha256,
+        argv: handler.argv,
+        cwd: handler.cwd === "workspace_root" ? resolve(this.options.workspace) : resolve(script.packageRoot),
+        environment: childEnvironment,
+        executableSha256: nodeSha256,
+        hookIdentitySha256: sha256Canonical(input.hook.identity),
+        mode: metadata.mode,
+        scriptPath: script.absolutePath,
+        scriptSha256: script.sha256,
+        timeoutMs: metadata.timeout_ms ?? 10_000,
+      });
+    }
     const child = spawn(this.options.executable, [script.absolutePath, ...handler.argv], {
       cwd: handler.cwd === "workspace_root" ? resolve(this.options.workspace) : resolve(script.packageRoot),
       detached: process.platform !== "win32",
@@ -360,12 +428,12 @@ export class HookCommandRunner implements HookCommandRunnerLike {
     let stderrBytes = 0;
     let outputExceeded = false;
     child.stdout.on("data", (chunk: Buffer) => {
-      const result = boundedAppend(stdout, stdoutBytes, chunk);
+      const result = appendBoundedHookOutput(stdout, stdoutBytes, chunk);
       stdoutBytes = result.size;
       outputExceeded ||= result.exceeded || stdoutBytes + stderrBytes > MAX_HOOK_OUTPUT_BYTES;
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      const result = boundedAppend(stderr, stderrBytes, chunk);
+      const result = appendBoundedHookOutput(stderr, stderrBytes, chunk);
       stderrBytes = result.size;
       outputExceeded ||= result.exceeded || stdoutBytes + stderrBytes > MAX_HOOK_OUTPUT_BYTES;
     });
@@ -432,55 +500,300 @@ export class HookCommandRunner implements HookCommandRunnerLike {
     ) {
       throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable bytes changed during execution", "unknown");
     }
-    let stdoutRaw: string;
-    let stderrRaw: string;
     try {
-      stdoutRaw = decodeHookOutput(stdout, "Hook stdout");
-      stderrRaw = decodeHookOutput(stderr, "Hook stderr");
-    } catch (error) {
-      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook output is not valid UTF-8", "unknown", { cause: error });
-    }
-    if (containsTerminalControl(stdoutRaw) || containsTerminalControl(stderrRaw)) {
-      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook output contains terminal control sequences", "unknown");
-    }
-    const stdoutText = redactSensitiveText(stdoutRaw, this.options.secrets);
-    const stderrText = redactSensitiveText(stderrRaw, this.options.secrets);
-    let parsed: unknown;
-    try {
-      parsed = parseStrictJson(stdoutText.trim());
-    } catch (error) {
-      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook stdout is not one strict JSON document", "unknown", { cause: error });
-    }
-    if (metadata.mode === "gate") {
-      let result: z.infer<typeof gateOutputSchema>;
-      try {
-        result = gateOutputSchema.parse(parsed);
-      } catch (error) {
-        throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook gate output failed the strict protocol", "unknown", { cause: error });
-      }
-      return Object.freeze({
+      return parseHookCommandResult({
         actionSha256,
-        ...(result.code === undefined ? {} : { code: result.code }),
-        decision: result.decision,
-        evidence: Object.freeze([...(result.evidence ?? [])]),
-        kind: "gate" as const,
-        ...(result.message === undefined ? {} : { message: result.message }),
-        stderr: stderrText,
-        stdout: stdoutText,
+        mode: metadata.mode,
+        secrets: this.options.secrets,
+        stderr,
+        stdout,
+      });
+    } catch (error) {
+      throw new HookCommandExecutionError(
+        "hook_gate_output_invalid",
+        error instanceof HookCommandResultError ? error.message : "Hook output failed validation",
+        "unknown",
+        { cause: error },
+      );
+    }
+  }
+
+  async terminalCommitted(input: HookCommandOperationContext & {
+    readonly invocationId: string;
+    readonly terminalType: "hook.invocation.completed" | "hook.invocation.decided" | "hook.invocation.failed";
+  }): Promise<void> {
+    if (this.options.operationRoot === undefined) return;
+    const store = await HookCommandOperationStore.create({
+      invocationId: input.invocationId,
+      root: this.options.operationRoot,
+      runId: input.runId,
+      sessionId: input.sessionId,
+    });
+    if (await store.read() === null) return;
+    await store.markTerminal({
+      committedAt: (this.options.timestamp ?? (() => new Date().toISOString()))(),
+      nonce: this.options.randomUUID(),
+      terminalEventId: input.terminalEventId,
+      terminalType: input.terminalType,
+    });
+  }
+
+  async #runSupervised(
+    input: HookCommandRunnerInput & { readonly operation: HookCommandOperationContext },
+    execution: {
+      readonly actionSha256: string;
+      readonly argv: readonly string[];
+      readonly cwd: string;
+      readonly environment: Readonly<Record<string, string>>;
+      readonly executableSha256: string;
+      readonly hookIdentitySha256: string;
+      readonly mode: "gate" | "observe";
+      readonly scriptPath: string;
+      readonly scriptSha256: string;
+      readonly timeoutMs: number;
+    },
+  ): Promise<HookCommandRunnerResult> {
+    const operationRoot = this.options.operationRoot!;
+    const timestamp = this.options.timestamp ?? (() => new Date().toISOString());
+    const rawNonce = randomBytes(32).toString("base64url");
+    const store = await HookCommandOperationStore.create({
+      invocationId: input.invocationId,
+      root: operationRoot,
+      runId: input.operation.runId,
+      sessionId: input.operation.sessionId,
+    });
+    await store.createRequested({
+      actionSha256: execution.actionSha256,
+      createdAt: timestamp(),
+      failurePolicy: input.operation.failurePolicy,
+      hookIdentitySha256: execution.hookIdentitySha256,
+      inputSha256: input.inputSha256,
+      invocationId: input.invocationId,
+      mode: execution.mode,
+      nonceSha256: createHash("sha256").update(rawNonce).digest("hex"),
+      requestedEventId: input.operation.requestedEventId,
+      runId: input.operation.runId,
+      schemaVersion: 1,
+      sessionId: input.operation.sessionId,
+      sessionLockNonceSha256: input.operation.sessionLockNonceSha256,
+      state: "requested",
+      terminalEventId: input.operation.terminalEventId,
+    });
+    const supervisorEnvironment = sanitizeChildEnvironment({
+      BORN_HOOK_SUPERVISOR: "1",
+      LANG: this.options.environment.LANG,
+      LC_ALL: this.options.environment.LC_ALL,
+      LOCALAPPDATA: this.options.environment.LOCALAPPDATA,
+      SystemRoot: this.options.environment.SystemRoot,
+      TEMP: this.options.environment.TEMP,
+      TMP: this.options.environment.TMP,
+      WINDIR: this.options.environment.WINDIR,
+      XDG_STATE_HOME: this.options.environment.XDG_STATE_HOME,
+    });
+    let child: ChildProcess;
+    try {
+      child = spawn(this.options.executable, [
+        this.options.supervisorCliEntryPath!,
+        "internal",
+        "hook-command-supervisor",
+        "--session",
+        input.operation.sessionId,
+        "--run",
+        input.operation.runId,
+        "--invocation",
+        input.invocationId,
+      ], {
+        cwd: this.options.workspace,
+        detached: false,
+        env: supervisorEnvironment,
+        shell: false,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      await store.markNotStartedCaptured({
+        capturedAt: timestamp(),
+        code: "hook_invocation_failed",
+        nonce: this.options.randomUUID(),
+      });
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook supervisor could not be spawned", "none", { cause: error });
+    }
+    const receipts = new SupervisorReceiptQueue(child);
+    const bootstrap = hookCommandSupervisorBootstrapSchema.parse({
+      actionSha256: execution.actionSha256,
+      argv: [...execution.argv],
+      cwd: execution.cwd,
+      environment: { ...execution.environment },
+      executablePath: this.options.executable,
+      executableSha256: execution.executableSha256,
+      hookIdentitySha256: execution.hookIdentitySha256,
+      inputBase64: input.inputBytes.toString("base64"),
+      inputSha256: input.inputSha256,
+      invocationId: input.invocationId,
+      mode: execution.mode,
+      protocolVersion: 1,
+      rawNonce,
+      scriptPath: execution.scriptPath,
+      scriptSha256: execution.scriptSha256,
+      secrets: this.options.secrets.filter((value): value is string => value !== undefined),
+      timeoutMs: execution.timeoutMs,
+    });
+    try {
+      await new Promise<void>((resolveSend, reject) => {
+        if (child.send === undefined || !child.connected) {
+          reject(new Error("Hook supervisor IPC is unavailable"));
+          return;
+        }
+        child.send(bootstrap, (error) => {
+          if (error == null) resolveSend();
+          else reject(error);
+        });
+      });
+    } catch (error) {
+      if (child.connected) child.disconnect();
+      child.kill();
+      await store.markNotStartedCaptured({
+        capturedAt: timestamp(),
+        code: "hook_invocation_failed",
+        nonce: this.options.randomUUID(),
+      });
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook supervisor bootstrap failed", "none", { cause: error });
+    }
+
+    let abortListener: (() => void) | undefined;
+    const aborted = new Promise<"aborted">((resolveAbort) => {
+      abortListener = () => resolveAbort("aborted");
+      if (input.signal.aborted) resolveAbort("aborted");
+      else input.signal.addEventListener("abort", abortListener, { once: true });
+    });
+    try {
+      let startedPersisted = false;
+      for (;;) {
+        let receipt: HookCommandSupervisorMessageV1;
+        try {
+          const next = await Promise.race([
+            receipts.next().then((value) => ({ kind: "receipt" as const, value })),
+            aborted.then(() => ({ kind: "abort" as const })),
+          ]);
+          if (next.kind === "abort") {
+            if (child.connected) child.disconnect();
+            await new Promise<void>((resolveExit) => {
+              let settled = false;
+              const finish = (): void => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                child.off("exit", finish);
+                resolveExit();
+              };
+              const timer = setTimeout(finish, Math.min(execution.timeoutMs + 2_000, 12_000));
+              if (child.exitCode !== null || child.signalCode !== null) finish();
+              else child.once("exit", finish);
+            });
+            return await this.#readSupervisedCapture(store, "hook_invocation_cancelled");
+          }
+          receipt = next.value;
+        } catch (error) {
+          return await this.#readSupervisedCapture(store, "hook_invocation_failed", error);
+        }
+        if (receipt.invocationId !== input.invocationId) {
+          if (child.connected) child.disconnect();
+          throw new HookCommandExecutionError("hook_invocation_failed", "Hook supervisor receipt identity is stale", "unknown");
+        }
+        if (receipt.kind === "started") {
+          if (startedPersisted) {
+            if (child.connected) child.disconnect();
+            throw new HookCommandExecutionError("hook_invocation_failed", "Hook supervisor duplicated its start receipt", "unknown");
+          }
+          const operation = await store.read();
+          if (
+            operation?.state !== "started" ||
+            operation.process.hookPid !== receipt.hookPid ||
+            operation.process.processIdentitySha256 !== receipt.processIdentitySha256 ||
+            operation.process.supervisorPid !== receipt.supervisorPid ||
+            operation.process.supervisorStartIdentity !== receipt.supervisorStartIdentity
+          ) {
+            if (child.connected) child.disconnect();
+            throw new HookCommandExecutionError("hook_invocation_failed", "Hook supervisor start receipt lacks an exact durable identity", "unknown");
+          }
+          try {
+            await input.events.started({
+              actionSha256: execution.actionSha256,
+              invocationId: input.invocationId,
+              pid: receipt.hookPid,
+              processIdentitySha256: receipt.processIdentitySha256,
+            });
+          } catch (error) {
+            if (child.connected) child.disconnect();
+            throw new HookCommandExecutionError("hook_invocation_failed", "Hook start fact could not be persisted", "unknown", { cause: error });
+          }
+          startedPersisted = true;
+          continue;
+        }
+        if (child.connected) child.disconnect();
+        child.unref();
+        return await this.#readSupervisedCapture(store, "hook_invocation_failed");
+      }
+    } finally {
+      if (abortListener !== undefined) input.signal.removeEventListener("abort", abortListener);
+    }
+  }
+
+  async #readSupervisedCapture(
+    store: HookCommandOperationStore,
+    fallbackCode: "hook_invocation_cancelled" | "hook_invocation_failed",
+    cause?: unknown,
+  ): Promise<HookCommandRunnerResult> {
+    let operation = await store.read();
+    if (operation?.state === "requested") {
+      operation = await store.markNotStartedCaptured({
+        capturedAt: (this.options.timestamp ?? (() => new Date().toISOString()))(),
+        code: fallbackCode,
+        nonce: this.options.randomUUID(),
       });
     }
-    let result: z.infer<typeof observerOutputSchema>;
-    try {
-      result = observerOutputSchema.parse(parsed);
-    } catch (error) {
-      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook observer output failed the strict protocol", "unknown", { cause: error });
+    if (operation?.state === "started") {
+      await this.options.cleanup.terminate(operation.process.hookPid);
+      operation = await store.markCaptured({
+        capture: { code: fallbackCode, effectState: "unknown", kind: "failure" },
+        capturedAt: (this.options.timestamp ?? (() => new Date().toISOString()))(),
+        nonce: this.options.randomUUID(),
+      });
+    }
+    if (operation?.state !== "captured" && operation?.state !== "terminal") {
+      throw new HookCommandExecutionError(
+        "hook_invocation_failed",
+        "Hook supervisor stopped without a provable terminal capture",
+        "unknown",
+        cause === undefined ? {} : { cause },
+      );
+    }
+    if (operation.capture.kind === "failure") {
+      throw new HookCommandExecutionError(
+        operation.capture.code,
+        supervisorFailureMessage(operation.capture.code),
+        operation.capture.effectState,
+        cause === undefined ? {} : { cause },
+      );
+    }
+    if (operation.capture.kind === "gate") {
+      return Object.freeze({
+        actionSha256: operation.capture.actionSha256,
+        ...(operation.capture.code === undefined ? {} : { code: operation.capture.code }),
+        decision: operation.capture.decision,
+        evidence: Object.freeze([...operation.capture.evidence]),
+        kind: "gate" as const,
+        ...(operation.capture.message === undefined ? {} : { message: operation.capture.message }),
+        stderr: operation.capture.stderr,
+        stdout: operation.capture.stdout,
+      });
     }
     return Object.freeze({
-      actionSha256,
+      actionSha256: operation.capture.actionSha256,
       kind: "observer" as const,
-      ...(Object.hasOwn(result, "message") && typeof result.message === "string" ? { message: result.message } : {}),
-      stderr: stderrText,
-      stdout: stdoutText,
+      ...(operation.capture.message === undefined ? {} : { message: operation.capture.message }),
+      stderr: operation.capture.stderr,
+      stdout: operation.capture.stdout,
     });
   }
 }

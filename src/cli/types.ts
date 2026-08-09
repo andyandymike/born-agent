@@ -39,6 +39,10 @@ import type { BackgroundWorkerRuntimeResultV1 } from "../background/background-w
 import type { BackgroundWorkerLiveObservationV1 } from "../background/background-worker-live-status.js";
 import type { BackgroundExecutableDescriptorV1 } from "../background/background-schema.js";
 import type { TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
+import type { HookCommandOperationReconciliationResult } from "../hooks/hook-command-operation-reconciler.js";
+import type { PluginLeaseReconciliationResultV1 } from "../plugins/plugin-lifecycle.js";
+import type { BackgroundWorkerTakeoverResultV1 } from "../background/background-worker-takeover.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -50,6 +54,7 @@ export interface CliIO {
 }
 
 export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
+  readonly hooksSuppressed?: boolean;
   agentModelEvidence(provider: ChatProvider): ModelEvidence | null;
   createAgentToolRegistry(
     options: AgentToolRegistryOptions,
@@ -69,6 +74,24 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly secrets: readonly (string | undefined)[];
     readonly workspace: string;
   }) => HookCommandRunnerLike;
+  readonly runInternalHookCommandSupervisor?: (input: {
+    readonly invocationId: string;
+    readonly runId: string;
+    readonly sessionId: string;
+  }) => Promise<void>;
+  readonly reconcileHookCommandOperations?: (input: {
+    readonly sessionId: string;
+    readonly writer: V2SessionWriter;
+  }) => Promise<HookCommandOperationReconciliationResult>;
+  readonly reconcilePluginLeases?: (input: {
+    readonly sessionId: string;
+    readonly writer: V2SessionWriter;
+  }) => Promise<PluginLeaseReconciliationResultV1>;
+  readonly reconcileBackgroundWorkerTakeover?: (input: {
+    readonly graphRevision: number;
+    readonly graphSha256: string;
+    readonly sessionId: string;
+  }) => Promise<BackgroundWorkerTakeoverResultV1>;
   readonly createTaskAttemptExecutor?: (options: {
     readonly approvalMode?: "defer" | "interactive";
     readonly io: CliIO;

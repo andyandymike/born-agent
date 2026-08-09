@@ -23,6 +23,7 @@ import type {
 } from "../task-graph/task-graph-event-schema.js";
 
 export interface SessionWriter {
+  readonly lockNonceSha256?: string;
   readonly path: string;
   readonly persistenceProfile?: "phase10_full";
   appendArtifactEvent?(

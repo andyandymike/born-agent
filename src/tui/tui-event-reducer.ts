@@ -681,6 +681,74 @@ function reduceKnownEvent(
             : item,
       );
     }
+    case "hook.approval.requested": {
+      if (state.run?.id !== event.runId || state.run.status !== "running") {
+        return failClosed(state, event, "Hook approval request is outside the active run");
+      }
+      const previous = expireApproval(state.approval, "new_request");
+      const preview = sanitize(event.data.preview);
+      let next: TuiViewState = {
+        ...state,
+        approval: {
+          actionKind: "run_command",
+          actionSha256: event.data.action_sha256,
+          callId: `hook:${event.data.invocation_id}`,
+          decision: null,
+          expiresState: { status: "active" },
+          preview,
+          previewSha256: sha256(preview),
+          previewTruncated: event.data.truncated,
+          requestId: event.data.approval_request_id,
+          runId: event.runId,
+          sessionId: event.sessionId,
+        },
+      };
+      if (previous !== null) {
+        next = replaceItems(next, (item) =>
+          item.kind === "approval" &&
+          item.requestId === previous.requestId &&
+          item.status === "requested"
+            ? { ...item, status: "expired" }
+            : item,
+        );
+      }
+      return appendItem(next, {
+        actionKind: "run_command",
+        id: event.eventId,
+        kind: "approval",
+        requestId: event.data.approval_request_id,
+        runId: event.runId,
+        status: "requested",
+      });
+    }
+    case "hook.approval.decided": {
+      const approval = state.approval;
+      if (
+        approval === null ||
+        approval.expiresState.status !== "active" ||
+        approval.requestId !== event.data.approval_request_id ||
+        approval.actionSha256 !== event.data.action_sha256 ||
+        approval.actionKind !== "run_command" ||
+        approval.callId !== `hook:${event.data.invocation_id}` ||
+        approval.runId !== event.runId
+      ) {
+        return failClosed(state, event, "Hook approval decision identity is stale");
+      }
+      return replaceItems(
+        {
+          ...state,
+          approval: {
+            ...approval,
+            decision: event.data.decision,
+            expiresState: { reason: "decided", status: "expired" },
+          },
+        },
+        (item) =>
+          item.kind === "approval" && item.requestId === approval.requestId
+            ? { ...item, status: event.data.decision }
+            : item,
+      );
+    }
     case "approval.expired": {
       if (state.approval?.requestId !== event.data.approval_request_id) {
         return state;
@@ -1318,8 +1386,6 @@ function reduceKnownEvent(
     case "hook.invocation.requested":
     case "hook.invocation.started":
     case "hook.permission.evaluated":
-    case "hook.approval.requested":
-    case "hook.approval.decided":
       return state;
     case "goal.created":
     case "goal.revised":

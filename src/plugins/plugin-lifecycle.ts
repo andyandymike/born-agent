@@ -18,6 +18,7 @@ import {
 } from "../capabilities/stable-package-reader.js";
 import type { StableCapabilityPackage } from "../capabilities/capability-types.js";
 import { parseStrictJson } from "../system/strict-json.js";
+import type { DecodedStoredEvent } from "../events/event-decoder-registry.js";
 import { PluginLifecycleError } from "./plugin-errors.js";
 import {
   capabilityLeaseRecordSchema,
@@ -251,11 +252,26 @@ export interface CapabilityContentLease {
   readonly leaseId: string;
   readonly pluginSha256: string;
   readonly runId: string;
+  readonly sessionId: string;
   release(): Promise<void>;
 }
 
+export interface CapabilityContentLeaseOwner {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly sessionLockNonceSha256: string;
+}
+
+export interface PluginLeaseReconciliationResultV1 {
+  readonly inspected: number;
+  readonly legacyRetained: number;
+  readonly released: number;
+  readonly retained: number;
+  readonly schemaVersion: 1;
+}
+
 export interface PluginLifecycleLike {
-  acquireLeases(pluginSha256s: readonly string[], runId: string): Promise<readonly CapabilityContentLease[]>;
+  acquireLeases(pluginSha256s: readonly string[], owner: CapabilityContentLeaseOwner): Promise<readonly CapabilityContentLease[]>;
   disable(selector: string): Promise<PluginMutationResultV1>;
   doctor(): Promise<Readonly<Record<string, unknown>>>;
   enable(selector: string): Promise<PluginMutationResultV1>;
@@ -263,6 +279,7 @@ export interface PluginLifecycleLike {
   install(source: string, expectedSha256?: string): Promise<PluginMutationResultV1>;
   list(filter?: "all" | "enabled" | "installed"): Promise<readonly PluginListEntryV1[]>;
   remove(selector: string): Promise<PluginMutationResultV1>;
+  reconcileLeases(sessionId: string, events: readonly DecodedStoredEvent[]): Promise<PluginLeaseReconciliationResultV1>;
   show(selector: string): Promise<PluginListEntryV1>;
 }
 
@@ -877,7 +894,13 @@ export class PluginLifecycle implements PluginLifecycleLike {
         throw new PluginLifecycleError("plugin_store_corrupt", "operation journal failed strict validation", 1, { cause: error });
       }
     }
-    const activeLeaseCount = (await this.#leaseRecords()).length;
+    const leaseRecords = await this.#leaseRecords();
+    const activeLeaseCount = leaseRecords.length;
+    const legacyLeaseCount = leaseRecords.filter((record) => record.schema_version === 1).length;
+    const warnings = [
+      ...incompleteOperations.map((operationId) => `incomplete_operation:${operationId}`),
+      ...(legacyLeaseCount === 0 ? [] : [`legacy_unreconciled_leases:${String(legacyLeaseCount)}`]),
+    ];
     return deepFreeze({
       activeLeaseCount,
       auditEventCount: auditEvents.length,
@@ -886,10 +909,11 @@ export class PluginLifecycle implements PluginLifecycleLike {
       incompleteOperationCount: incompleteOperations.length,
       installedIndexRevision: states.installed.revision,
       installedPluginCount: states.installed.plugins.length,
+      legacyLeaseCount,
       reconciledOperationCount,
       schemaVersion: 1,
-      status: incompleteOperations.length === 0 ? "valid" : "degraded",
-      warnings: incompleteOperations.map((operationId) => `incomplete_operation:${operationId}`),
+      status: warnings.length === 0 ? "valid" : "degraded",
+      warnings,
     });
   }
 
@@ -1251,9 +1275,63 @@ export class PluginLifecycle implements PluginLifecycleLike {
     });
   }
 
+  async reconcileLeases(
+    sessionId: string,
+    events: readonly DecodedStoredEvent[],
+  ): Promise<PluginLeaseReconciliationResultV1> {
+    if (events.some((event) => event.sessionId !== sessionId)) {
+      throw new PluginLifecycleError("plugin_active_lease", "lease reconciliation received events from another session");
+    }
+    const terminalTypes = new Set([
+      "run.budget_exceeded",
+      "run.cancelled",
+      "run.completed",
+      "run.failed",
+      "run.incomplete",
+    ]);
+    const terminalRunIds = new Set(events.flatMap((event) =>
+      event.scope === "run" && terminalTypes.has(event.type) ? [event.runId] : []
+    ));
+    const recoveredLockNonces = new Set(events.flatMap((event) =>
+      event.scope === "session" &&
+      event.type === "session.lock.recovered" &&
+      event.data.reason === "owner_confirmed_dead"
+        ? [event.data.previous_nonce_sha256]
+        : []
+    ));
+    const lock = await this.#acquireLock();
+    try {
+      await this.#reconcileOperationsLocked();
+      const records = await this.#leaseRecords();
+      let legacyRetained = 0;
+      let released = 0;
+      for (const record of records) {
+        if (record.schema_version === 1) {
+          legacyRetained += 1;
+          continue;
+        }
+        if (record.session_id !== sessionId) continue;
+        const runTerminal = terminalRunIds.has(record.run_id);
+        const ownerConfirmedDead = recoveredLockNonces.has(record.session_lock_nonce_sha256);
+        if (!runTerminal && !ownerConfirmedDead) continue;
+        await unlink(join(this.#paths().leases, `${record.lease_id}.json`));
+        released += 1;
+      }
+      return deepFreeze({
+        inspected: records.length,
+        legacyRetained,
+        released,
+        retained: records.length - released,
+        schemaVersion: 1,
+      });
+    } finally {
+      await lock.release();
+    }
+  }
+
   async acquireLeases(
     pluginSha256s: readonly string[],
-    runId: string,
+    owner: CapabilityContentLeaseOwner,
   ): Promise<readonly CapabilityContentLease[]> {
     const unique = [...new Set(pluginSha256s)].sort();
     if (unique.length === 0) return Object.freeze([]);
@@ -1274,8 +1352,10 @@ export class PluginLifecycle implements PluginLifecycleLike {
           acquired_at: this.options.now(),
           lease_id: leaseId,
           plugin_sha256: digest,
-          run_id: runId,
-          schema_version: 1,
+          run_id: owner.runId,
+          schema_version: 2,
+          session_id: owner.sessionId,
+          session_lock_nonce_sha256: owner.sessionLockNonceSha256,
         });
         await atomicJson(path, record, this.options.randomUUID());
         created.push(path);
@@ -1292,7 +1372,14 @@ export class PluginLifecycle implements PluginLifecycleLike {
                   await readStableBytes(path, MAX_STATE_BYTES, "Plugin lease record"),
                 ),
               ));
-              if (current.lease_id !== leaseId || current.plugin_sha256 !== digest || current.run_id !== runId) {
+              if (
+                current.schema_version !== 2 ||
+                current.lease_id !== leaseId ||
+                current.plugin_sha256 !== digest ||
+                current.run_id !== owner.runId ||
+                current.session_id !== owner.sessionId ||
+                current.session_lock_nonce_sha256 !== owner.sessionLockNonceSha256
+              ) {
                 throw new PluginLifecycleError("plugin_active_lease", "capability content lease identity changed");
               }
               await unlink(path);
@@ -1300,7 +1387,8 @@ export class PluginLifecycle implements PluginLifecycleLike {
               if (!isMissing(error)) throw error;
             }
           },
-          runId,
+          runId: owner.runId,
+          sessionId: owner.sessionId,
         }));
       }
       return Object.freeze(leases);

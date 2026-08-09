@@ -206,6 +206,7 @@ async function runCodingScenario(options: {
       interactive: false,
       readLine: async () => null,
     },
+    capabilityUserStateRoot: join(options.workspace, ".test-capabilities"),
     cwd: options.workspace,
     env: {},
     execPath: process.execPath,

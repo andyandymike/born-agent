@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DefaultCapabilityPlatform } from "../../src/capabilities/capability-platform.js";
 import { canonicalJson } from "../../src/completion/canonical-json.js";
+import { EventPublisher } from "../../src/events/event-publisher.js";
 import { PluginLifecycle } from "../../src/plugins/plugin-lifecycle.js";
+import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
 import { writeTestCapabilityPackage } from "../phase18a-test-helpers.js";
 
 const RUN_ID = "20000000-0000-4000-8000-000000000018";
@@ -87,7 +90,11 @@ describe("Phase 18E local Plugin lifecycle", () => {
     });
     const snapshot = await platform.createSnapshot("2026-08-08T00:00:00.000Z");
     expect(snapshot.plugins.some((plugin) => plugin.pluginSha256 === inspection.pluginSha256)).toBe(true);
-    const leases = await platform.acquireContentLeases(snapshot, RUN_ID);
+    const leases = await platform.acquireContentLeases(snapshot, {
+      runId: RUN_ID,
+      sessionId: "10000000-0000-4000-8000-000000000018",
+      sessionLockNonceSha256: "a".repeat(64),
+    });
     expect(leases).toHaveLength(1);
 
     await value.lifecycle.disable(installed.exactSelector);
@@ -166,6 +173,100 @@ describe("Phase 18E local Plugin lifecycle", () => {
     await expect(value.lifecycle.show(first.exactSelector)).rejects.toMatchObject({
       code: "plugin_tampered",
     });
+  });
+
+  it("reconciles durable leases only from an exact run terminal or dead session-lock owner", async () => {
+    const value = await fixture();
+    const installed = await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    await value.lifecycle.enable(installed.exactSelector);
+    const sessionId = "10000000-0000-4000-8000-000000000018";
+    const writer = await V2SessionWriter.createNew(value.workspace, sessionId);
+    const publisher = new EventPublisher({
+      randomUUID,
+      renderer: { render: () => undefined },
+      runId: RUN_ID,
+      sessionId,
+      timestamp: () => "2026-08-08T00:00:00.000Z",
+      writer,
+    });
+    await publisher.publish({
+      data: {
+        command: "chat",
+        input: { role: "user", text: "lease fixture" },
+        model: "local-fixture",
+        provider: "ollama",
+        timeout_ms: 1_000,
+        workspace: value.workspace,
+      },
+      type: "run.started",
+    });
+    await publisher.publish({
+      data: {
+        adapter: "pi-ai",
+        adapter_version: "0.80.7",
+        capabilities: {
+          cancellation: "abort_signal",
+          reasoning: "none",
+          streaming: true,
+          tools: "best_effort",
+          usage: "complete",
+        },
+        config_fingerprint: "1".repeat(64),
+        model: "local-fixture",
+        provider: "ollama",
+        resume_capability: "canonical_only",
+      },
+      type: "backend.selected",
+    });
+    const leases = await value.lifecycle.acquireLeases([installed.exactSelector.slice(-64)], {
+      runId: RUN_ID,
+      sessionId,
+      sessionLockNonceSha256: writer.lockNonceSha256,
+    });
+    await value.lifecycle.disable(installed.exactSelector);
+    await expect(value.lifecycle.reconcileLeases(sessionId, writer.events)).resolves.toMatchObject({
+      released: 0,
+      retained: 1,
+    });
+    await expect(value.lifecycle.remove(installed.exactSelector)).rejects.toMatchObject({ code: "plugin_active_lease" });
+    await publisher.publish({
+      data: {
+        category: "internal",
+        code: "fixture_terminal",
+        duration_ms: 1,
+        message: "fixture terminal",
+        retryable: false,
+      },
+      type: "run.failed",
+    });
+    await expect(value.lifecycle.reconcileLeases(sessionId, writer.events)).resolves.toMatchObject({
+      released: 1,
+      retained: 0,
+    });
+    await expect(value.lifecycle.remove(installed.exactSelector)).resolves.toMatchObject({ retainedContent: true });
+    await leases[0]!.release();
+    await writer.close();
+
+    const reinstalled = await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    await value.lifecycle.enable(reinstalled.exactSelector);
+    const deadOwnerNonce = "e".repeat(64);
+    await value.lifecycle.acquireLeases([reinstalled.exactSelector.slice(-64)], {
+      runId: "21000000-0000-4000-8000-000000000018",
+      sessionId,
+      sessionLockNonceSha256: deadOwnerNonce,
+    });
+    const resumed = await V2SessionWriter.openExisting(value.workspace, sessionId);
+    await resumed.appendSessionEvent("session.lock.recovered", {
+      previous_nonce_sha256: "f".repeat(64),
+      reason: "owner_confirmed_dead",
+    });
+    await expect(value.lifecycle.reconcileLeases(sessionId, resumed.events)).resolves.toMatchObject({ released: 0 });
+    await resumed.appendSessionEvent("session.lock.recovered", {
+      previous_nonce_sha256: deadOwnerNonce,
+      reason: "owner_confirmed_dead",
+    });
+    await expect(value.lifecycle.reconcileLeases(sessionId, resumed.events)).resolves.toMatchObject({ released: 1 });
+    await resumed.close();
   });
 
   it("reconciles applied and not-applied operation crash prefixes before later mutations", async () => {

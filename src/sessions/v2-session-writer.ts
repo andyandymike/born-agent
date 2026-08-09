@@ -81,6 +81,7 @@ function isCanonicalUuid(value: string): boolean {
 }
 
 export class V2SessionWriter implements SessionWriter {
+  readonly lockNonceSha256: string;
   readonly path: string;
   readonly persistenceProfile = "phase10_full" as const;
   readonly workspace: string;
@@ -104,6 +105,7 @@ export class V2SessionWriter implements SessionWriter {
     options: V2SessionWriterOptions,
     workspace: string,
   ) {
+    this.lockNonceSha256 = store.lockNonceSha256;
     this.path = store.path;
     this.workspace = workspace;
     this.rawValues = decoder.values;

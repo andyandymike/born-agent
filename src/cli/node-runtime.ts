@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
@@ -48,6 +48,8 @@ import { DefaultCapabilityPlatform } from "../capabilities/capability-platform.j
 import { resolveCapabilityUserStateRoot } from "../capabilities/capability-source.js";
 import { PluginLifecycle } from "../plugins/plugin-lifecycle.js";
 import { HookCommandRunner } from "../hooks/hook-command-runner.js";
+import { HookCommandSupervisor } from "../hooks/hook-command-supervisor.js";
+import { HookCommandOperationReconciler } from "../hooks/hook-command-operation-reconciler.js";
 import { executeAgent } from "../commands/agent.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { taskMutationBlocker } from "../coordination/task-control-plane.js";
@@ -66,6 +68,7 @@ import { resolveWorkerUserStateRoot } from "../background/background-operation-s
 import { observeBackgroundWorkerLive } from "../background/background-worker-live-status.js";
 import { queueBackgroundWorkerCancel } from "../background/background-worker-control.js";
 import { sealBackgroundExecutable } from "../background/background-executable-descriptor.js";
+import { BackgroundWorkerTakeoverReconciler } from "../background/background-worker-takeover.js";
 import { ExecutionPreparationError, type ExecutionResult } from "../execution/execution-types.js";
 import { SessionCatalog } from "../sessions/session-catalog.js";
 import { NodeProcessIdentityProbe } from "../sessions/process-identity.js";
@@ -212,6 +215,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   );
   const capabilityUserStateRoot = options.capabilityUserStateRoot ??
     resolveCapabilityUserStateRoot({ env: options.env, platform: options.platform });
+  const hookOperationRoot = join(capabilityUserStateRoot, "hooks", "operations", "v1");
   const worktreeUserStateRoot = () => options.worktreeUserStateRoot ??
     resolveWorktreeUserStateRoot({ env: options.env, platform: options.platform });
   const workerUserStateRoot = () => options.workerUserStateRoot ??
@@ -626,6 +630,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     // completion remains closed until a separate immutable Ollama evidence run
     // exists; read-only runs do not need to claim that stronger status.
     agentModelEvidence: () => null,
+    hooksSuppressed: options.env.BORN_HOOK_SUPPRESSED === "1",
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
     createApprovalPrompt: (io) => options.approvalPromptOverride ??
@@ -648,13 +653,37 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         content,
         environment: options.env,
         executable: options.execPath,
+        operationRoot: hookOperationRoot,
         prompt,
         randomUUID,
         secrets,
+        ...(options.cliEntryPath === undefined
+          ? {}
+          : { supervisorCliEntryPath: options.cliEntryPath }),
+        timestamp: () => new Date().toISOString(),
         workspace,
       }),
+    reconcileHookCommandOperations: ({ sessionId, writer }) =>
+      new HookCommandOperationReconciler({
+        operationRoot: hookOperationRoot,
+        randomUUID,
+        sessionId,
+        timestamp: () => new Date().toISOString(),
+        workspace: options.cwd,
+        writer,
+      }).reconcile(),
+    reconcilePluginLeases: ({ sessionId, writer }) =>
+      createPluginLifecycle(options.cwd).reconcileLeases(sessionId, writer.events),
     createTaskAttemptExecutor,
     ...(options.cliEntryPath === undefined ? {} : {
+      runInternalHookCommandSupervisor: async (input: {
+        readonly invocationId: string;
+        readonly runId: string;
+        readonly sessionId: string;
+      }): Promise<void> => new HookCommandSupervisor({
+        cleanup: createCleanup(),
+        operationRoot: hookOperationRoot,
+      }).run(input),
       doctorBackgroundWorker: async () => (await sealBackgroundExecutable({
         cliEntryPath: options.cliEntryPath!,
         nodeExecutablePath: options.execPath,
@@ -677,6 +706,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
           userStateRoot: workerUserStateRoot(),
         });
       },
+      reconcileBackgroundWorkerTakeover: ({ graphRevision, graphSha256, sessionId }: {
+        readonly graphRevision: number;
+        readonly graphSha256: string;
+        readonly sessionId: string;
+      }) => new BackgroundWorkerTakeoverReconciler({
+        context: taskContext(sessionId),
+        ownerProbe: new NodeProcessIdentityProbe(),
+        userStateRoot: workerUserStateRoot(),
+      }).reconcile({ graphRevision, graphSha256 }),
       queueBackgroundWorkerCancel: async (input: {
         readonly graphRevision: number;
         readonly graphSha256: string;

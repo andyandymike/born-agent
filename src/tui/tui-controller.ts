@@ -336,9 +336,9 @@ export class TuiController {
 
     const approval = this.viewState.approval;
     if (approval?.expiresState.status === "active") {
-      if (matchesKey(data, Key.left)) {
+      if (matchesKey(data, Key.left) || matchesKey(data, "n")) {
         this.ephemeralState = setApprovalFocus(this.ephemeralState, "deny");
-      } else if (matchesKey(data, Key.right)) {
+      } else if (matchesKey(data, Key.right) || matchesKey(data, "y")) {
         this.ephemeralState = setApprovalFocus(this.ephemeralState, "allow");
       } else if (matchesKey(data, Key.tab)) {
         this.ephemeralState = setApprovalFocus(

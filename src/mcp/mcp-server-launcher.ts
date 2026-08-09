@@ -39,6 +39,13 @@ export interface StartedMcpServer {
   flushDiagnostics(): Promise<void>;
 }
 
+const MCP_PROTOCOL_CLOSE_GRACE_MS = 250;
+const MCP_POST_CLEANUP_REAP_MS = 1_000;
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
+}
+
 function startIdentity(pid: number, randomUUID: () => string, now: () => number): string {
   return createHash("sha256")
     .update(`${currentHostFingerprint()}\0${pid}\0${now()}\0${randomUUID()}`, "utf8")
@@ -270,14 +277,25 @@ export class McpServerLauncher {
       process_identity_sha256: server.processIdentity.processIdentitySha256,
       server_id: server.config.serverId,
     });
-    try {
-      await server.client.close();
-    } catch {
-      // Process-tree verification below is authoritative.
-    }
+    let protocolCloseSettled = false;
+    const protocolClose = server.client.close().then(
+      () => { protocolCloseSettled = true; },
+      () => { protocolCloseSettled = true; },
+    );
+    // Give the SDK a bounded chance to close stdin and reap a cooperative
+    // server. A server-controlled close promise must never prevent the Host's
+    // authoritative process-tree cleanup from running.
+    await Promise.race([protocolClose, wait(MCP_PROTOCOL_CLOSE_GRACE_MS)]);
     const cleanup = await this.options.cleanup.terminate(server.processIdentity.pid);
     if (!cleanup.verified) {
       throw new McpCoreError("mcp_effect_unknown", "MCP process-tree cleanup could not be verified");
+    }
+    await Promise.race([protocolClose, wait(MCP_POST_CLEANUP_REAP_MS)]);
+    if (!protocolCloseSettled) {
+      throw new McpCoreError(
+        "mcp_effect_unknown",
+        "MCP transport did not release its process handle after verified cleanup",
+      );
     }
     // PHASE12: SDK close only requests protocol shutdown. Completion is durable
     // only after the recorded process identity and its tree are confirmed gone.

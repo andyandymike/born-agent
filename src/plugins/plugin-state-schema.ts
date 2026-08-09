@@ -140,13 +140,28 @@ export const pluginOperationRecordSchema = z.object({
 
 export type PluginOperationRecordV1 = z.infer<typeof pluginOperationRecordSchema>;
 
-export const capabilityLeaseRecordSchema = z.object({
+const legacyCapabilityLeaseRecordSchema = z.object({
   acquired_at: timestamp,
   lease_id: uuid,
   plugin_sha256: sha256,
   run_id: uuid,
   schema_version: z.literal(1),
 }).strict();
+
+const durableCapabilityLeaseRecordSchema = z.object({
+  acquired_at: timestamp,
+  lease_id: uuid,
+  plugin_sha256: sha256,
+  run_id: uuid,
+  schema_version: z.literal(2),
+  session_id: uuid,
+  session_lock_nonce_sha256: sha256,
+}).strict();
+
+export const capabilityLeaseRecordSchema = z.discriminatedUnion("schema_version", [
+  legacyCapabilityLeaseRecordSchema,
+  durableCapabilityLeaseRecordSchema,
+]);
 
 export type CapabilityLeaseRecordV1 = z.infer<typeof capabilityLeaseRecordSchema>;
 

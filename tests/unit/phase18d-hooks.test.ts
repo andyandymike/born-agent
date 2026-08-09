@@ -509,7 +509,8 @@ describe("Phase 18D lifecycle Hooks", () => {
     const value = await hookFixture(commandGate(), baseFacts(), {
       script: [
         "const forbidden = Object.keys(process.env).filter((name) => /KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|COOKIE|PROXY/i.test(name));",
-        "process.stdout.write(JSON.stringify({schemaVersion:1,decision:forbidden.length===0?'no_objection':'deny',...(forbidden.length===0?{evidence:['ambient-env:none']}:{code:'ambient_env_exposed',message:forbidden.join(',')})}));",
+        "const suppressed = process.env.BORN_HOOK_SUPPRESSED === '1' && process.env.BORN_HOOK_DEPTH === '1';",
+        "process.stdout.write(JSON.stringify({schemaVersion:1,decision:forbidden.length===0&&suppressed?'no_objection':'deny',...(forbidden.length===0&&suppressed?{evidence:['ambient-env:none','nested-hooks:suppressed']}:{code:'ambient_env_exposed',message:forbidden.join(',')||'nested Hook suppression missing'})}));",
       ].join("\n"),
     });
     await expect(value.runtime.run(
@@ -519,6 +520,28 @@ describe("Phase 18D lifecycle Hooks", () => {
         revalidateOriginalAction: async () => true,
       },
       new AbortController().signal,
-    )).resolves.toMatchObject({ decision: "no_objection", evidence: expect.arrayContaining(["ambient-env:none"]) });
+    )).resolves.toMatchObject({ decision: "no_objection", evidence: expect.arrayContaining(["ambient-env:none", "nested-hooks:suppressed"]) });
+  });
+
+  it("rejects manifest runtime injection and Host-reserved environment names before spawn", async () => {
+    const hook = {
+      ...commandGate(),
+      handler: {
+        ...commandGate().handler,
+        environment: { NODE_OPTIONS: "--import=unreviewed.mjs" },
+      },
+    };
+    const value = await hookFixture(hook, baseFacts(), {
+      script: "throw new Error('must not spawn');",
+    });
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "7".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      new AbortController().signal,
+    )).resolves.toMatchObject({ decision: "deny", code: "hook_invocation_failed" });
+    expect(value.events.some((event) => event.type === "hook.invocation.started")).toBe(false);
   });
 });

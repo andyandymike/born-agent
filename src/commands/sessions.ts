@@ -61,6 +61,7 @@ import { CompletionTransitionReconciler } from "../coordination/completion-trans
 import { GoalChangeRecordReconciler } from "../coordination/goal-change-record-reconciler.js";
 import { OutcomeReportBuilder } from "../coordination/outcome-report.js";
 import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
+import { HookError } from "../hooks/hook-errors.js";
 
 const MAX_SHOW_ITEMS = 200;
 const MAX_SHOW_TEXT_BYTES = 128 * 1024;
@@ -902,6 +903,14 @@ export async function executeSessionsResume(
   try {
     writer = await V2SessionWriter.openExisting(runtime.cwd, options.sessionId);
     runtime.observeSessionWriter?.(writer);
+    await runtime.reconcilePluginLeases?.({
+      sessionId: options.sessionId,
+      writer,
+    });
+    await runtime.reconcileHookCommandOperations?.({
+      sessionId: options.sessionId,
+      writer,
+    });
     let session = reconstructMultiRunSession(writer.events);
     if (
       options.expectedSessionSeq !== undefined &&
@@ -1278,6 +1287,10 @@ export async function executeSessionsResume(
       return usageError(io, error.message);
     }
     if (error instanceof CapabilityError) {
+      io.stderr.write(`${error.code}: ${error.message}\n`);
+      return error.exitCode;
+    }
+    if (error instanceof HookError) {
       io.stderr.write(`${error.code}: ${error.message}\n`);
       return error.exitCode;
     }

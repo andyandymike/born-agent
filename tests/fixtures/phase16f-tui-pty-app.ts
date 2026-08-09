@@ -4,10 +4,13 @@ import type { CliRuntime } from "../../src/cli/types.js";
 import { BundledFakeModelQualificationGate } from "../../src/model/model-qualification-gate.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
 import { createPiTuiRenderer } from "../../src/tui/pi-tui-renderer.js";
-import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
+  FakeContinuation,
   FakeStreamingChatClient,
   fixedStream,
   waitForAbort,
@@ -22,12 +25,51 @@ if (workspaceArgument === undefined) {
 const workspace: string = workspaceArgument;
 const capabilityLifecycle = process.argv[3] === "capability";
 const graphLifecycle = process.argv[3] === "graph";
+const hookApprovalLifecycle = process.argv[3] === "hook-approval";
+const execFileAsync = promisify(execFile);
 
 const waiting = waitForAbort();
 const firstBackend = new FakeStreamingChatClient(
   async function* (request, signal) {
     yield { delta: "PTY_ACTIVE", type: "text_delta" };
     yield* waiting(request, signal);
+  },
+  { model: "qwen3:1.7b", provider: "ollama" },
+);
+let hookApprovalTurn = 0;
+const hookApprovalBackend = new FakeStreamingChatClient(
+  async function* () {
+    if (hookApprovalTurn === 0) {
+      hookApprovalTurn += 1;
+      yield {
+        call: {
+          argumentsJson: JSON.stringify({ text: "HOOK_PTY_ORIGINAL_ACTION" }),
+          callId: "hook-pty-mcp-call",
+          name: "mcp__offline_docs__echo",
+        },
+        type: "tool_call",
+      };
+      yield {
+        type: "usage",
+        usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+      };
+      yield {
+        continuation: new FakeContinuation("hook-pty-mcp-call"),
+        providerResponseId: "resp_hook_pty_call",
+        type: "turn_completed",
+      };
+      return;
+    }
+    yield { delta: "HOOK_PTY_DENIED", type: "text_delta" };
+    yield {
+      type: "usage",
+      usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+    };
+    yield {
+      continuation: new FakeContinuation("hook-pty-final"),
+      providerResponseId: "resp_hook_pty_final",
+      type: "turn_completed",
+    };
   },
   { model: "qwen3:1.7b", provider: "ollama" },
 );
@@ -61,6 +103,7 @@ const runtime: CliRuntime = {
     remoteBillableRequests: 0,
   }),
   createModelBackend: () => {
+    if (hookApprovalLifecycle) return hookApprovalBackend;
     const backend =
       backendIndex === 0
         ? firstBackend
@@ -73,6 +116,87 @@ const runtime: CliRuntime = {
   },
   modelQualificationGate: new BundledFakeModelQualificationGate(true),
 };
+
+async function seedHookApprovalPlugin(): Promise<void> {
+  await execFileAsync("git", ["init", "--quiet"], { cwd: workspace });
+  const source = join(workspace, "hook-approval-plugin");
+  await mkdir(join(source, "hooks", "command-gate"), { recursive: true });
+  await mkdir(join(source, "mcp"), { recursive: true });
+  await writeFile(join(source, "bornagent.plugin.json"), JSON.stringify({
+    schema_version: 1,
+    plugin_id: "bornagent.hook-pty",
+    plugin_version: "1.0.0",
+    display_name: "Hook PTY",
+    description: "Offline double-approval PTY fixture.",
+    components: {
+      hooks: ["hooks/command-gate/hook.json"],
+      mcp_servers: ["mcp/server.json"],
+    },
+  }), "utf8");
+  await writeFile(join(source, "hooks", "command-gate", "hook.json"), JSON.stringify({
+    schema_version: 1,
+    kind: "hook",
+    component_id: "command-gate",
+    display_name: "Command Gate",
+    description: "Require an independent command Hook approval after the original MCP approval.",
+    event: "tool.before_effect",
+    mode: "gate",
+    matcher: {
+      action_kinds: ["mcp.tool.call"],
+      capability_ids: ["offline-docs"],
+      tool_names: ["mcp__offline_docs__echo"],
+    },
+    handler: {
+      type: "command",
+      executable: "gate.mjs",
+      argv: [],
+      cwd: "workspace_root",
+      environment: {},
+      sandbox: "policy_selected",
+    },
+    timeout_ms: 2_000,
+    failure_policy: "fail_closed",
+    requested_effects: ["process_spawn"],
+  }), "utf8");
+  await writeFile(
+    join(source, "hooks", "command-gate", "gate.mjs"),
+    "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({schemaVersion:1,decision:'no_objection',evidence:['pty:hook-approved']})));\n",
+    "utf8",
+  );
+  await writeFile(join(source, "mcp", "server.json"), JSON.stringify({
+    schema_version: 1,
+    kind: "mcp_server",
+    component_id: "offline-docs",
+    display_name: "Offline Docs",
+    description: "Deterministic local MCP approval fixture.",
+    transport: "stdio",
+    executable: "server.mjs",
+    args: [],
+    cwd: "plugin_root",
+    integrity_files: ["server.mjs"],
+    env: [],
+    startup_timeout_ms: 2_000,
+    call_timeout_ms: 5_000,
+    requested_effects: ["process_spawn"],
+  }), "utf8");
+  await writeFile(join(source, "mcp", "server.mjs"), [
+    'import readline from "node:readline";',
+    'const reply = (id, result) => process.stdout.write(`${JSON.stringify({jsonrpc:"2.0",id,result})}\\n`);',
+    'const input = readline.createInterface({input:process.stdin}); input.on("close", () => process.exit(0));',
+    'for await (const line of input) {',
+    '  const request = JSON.parse(line); if (request.id === undefined) continue;',
+    '  if (request.method === "initialize") reply(request.id,{protocolVersion:request.params?.protocolVersion??"2025-06-18",capabilities:{tools:{}},serverInfo:{name:"hook-pty",version:"1.0.0"}});',
+    '  else if (request.method === "tools/list") reply(request.id,{tools:[{name:"echo",description:"Echo deterministic text.",inputSchema:{type:"object",properties:{text:{type:"string"}},required:["text"],additionalProperties:false}}]});',
+    '  else if (request.method === "tools/call") reply(request.id,{content:[{type:"text",text:`echo:${String(request.params?.arguments?.text??"")}`}]});',
+    '  else reply(request.id,{});',
+    '}',
+    "",
+  ].join("\n"), "utf8");
+  const lifecycle = node.createPluginLifecycle!(workspace);
+  const inspection = await lifecycle.inspect(source);
+  const installed = await lifecycle.install(source, inspection.pluginSha256);
+  await lifecycle.enable(installed.exactSelector);
+}
 
 async function seedGraph(): Promise<void> {
   await writeLegacySession(workspace);
@@ -151,6 +275,9 @@ async function seedGraph(): Promise<void> {
 }
 
 if (graphLifecycle) await seedGraph();
+if (hookApprovalLifecycle) {
+  await seedHookApprovalPlugin();
+}
 
 if (capabilityLifecycle) {
   const source = fileURLToPath(
@@ -173,6 +300,20 @@ const exitCode = await runCli(
         "ollama",
         "--model",
         "qwen3:1.7b",
+      ]
+    : hookApprovalLifecycle
+    ? [
+        "tui",
+        "--mode",
+        "build",
+        "--mcp",
+        "offline-docs",
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+        "--max-steps",
+        "3",
       ]
     : capabilityLifecycle
     ? [

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, open, type FileHandle } from "node:fs/promises";
 
 import {
@@ -157,6 +158,14 @@ export class DurableSessionStore<T> {
 
   get lockRecovery(): SessionLockRecovery | undefined {
     return this.lock.recovery;
+  }
+
+  /**
+   * A side-effect journal may bind ownership to this exact writer without
+   * exposing the raw session-lock nonce outside the storage boundary.
+   */
+  get lockNonceSha256(): string {
+    return createHash("sha256").update(this.lock.nonce, "utf8").digest("hex");
   }
 
   get nextPhysicalLine(): number {

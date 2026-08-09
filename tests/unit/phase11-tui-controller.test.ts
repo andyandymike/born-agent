@@ -306,6 +306,33 @@ describe("Phase 11 TUI controller", () => {
     ]);
   });
 
+  it("requires y plus Enter for an explicit approval", async () => {
+    const test = fixture();
+    test.controller.acceptPersistedEvent(started());
+    test.controller.acceptPersistedEvent(
+      event(
+        "approval.requested",
+        {
+          action: "run_command",
+          action_sha256: HASH,
+          approval_request_id: "33333333-3333-4333-8333-333333333334",
+          call_id: "command-2",
+          preview: "pnpm test",
+          truncated: false,
+        },
+        2,
+      ),
+    );
+    test.controller.handleRawInput("y");
+    expect(test.controller.ephemeral.approvalFocus).toBe("allow");
+    expect(test.approvalDecisions).toEqual([]);
+    test.controller.handleRawInput("\r");
+    await flush();
+    expect(test.approvalDecisions).toEqual([
+      expect.objectContaining({ actionSha256: HASH, decision: "approved" }),
+    ]);
+  });
+
   it("turns renderer exceptions into app fatal 1 after requesting cleanup", async () => {
     const test = fixture({
       rendererUpdate: () => {

@@ -38,6 +38,8 @@ export const phase18HookRunEventDataSchemas = {
     action_sha256: sha256,
     approval_request_id: uuid,
     invocation_id: uuid,
+    preview: bounded(32 * 1024),
+    truncated: z.boolean(),
   }).strict(),
   "hook.approval.decided": z.object({
     action_sha256: sha256,

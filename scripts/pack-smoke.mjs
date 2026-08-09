@@ -10,7 +10,9 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 const workspaceRoot = resolve(import.meta.dirname, "..");
 const cliPath = join(workspaceRoot, "dist", "cli.js");
@@ -68,6 +70,10 @@ function runCommand(executable, args, cwd, env = process.env) {
   }
 
   return result.stdout;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 try {
@@ -230,6 +236,12 @@ try {
   );
   if (internalWorkerBytes.byteLength === 0) {
     throw new Error("packed Phase 19 internal Graph worker is empty");
+  }
+  const internalHookSupervisorBytes = await readFile(
+    join(packageRoot, "dist", "commands", "internal-hook-command-supervisor.js"),
+  );
+  if (internalHookSupervisorBytes.byteLength === 0) {
+    throw new Error("packed Phase 18 internal Hook supervisor is empty");
   }
   const repositoryEngine = JSON.parse(
     await readFile(
@@ -475,6 +487,162 @@ try {
     );
   }
 
+  const hookStateBase = join(temporaryRoot, "hook-state");
+  const capabilityStateRoot = process.platform === "win32"
+    ? join(hookStateBase, "BornAgent", "capabilities")
+    : join(hookStateBase, "bornagent", "capabilities");
+  const hookOperationRoot = join(capabilityStateRoot, "hooks", "operations", "v1");
+  const hookScriptPath = join(temporaryRoot, "packed-hook.mjs");
+  const hookScript = "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({schemaVersion:1,decision:'no_objection',evidence:['packed-supervisor:captured']})));\n";
+  await writeFile(hookScriptPath, hookScript, "utf8");
+  const hookInput = Buffer.from('{"event":"pack-smoke"}', "utf8");
+  const hookRawNonce = "a".repeat(43);
+  const hookSessionId = randomUUID();
+  const hookRunId = randomUUID();
+  const hookInvocationId = randomUUID();
+  const hookActionSha256 = "1".repeat(64);
+  const hookIdentitySha256 = "2".repeat(64);
+  const { HookCommandOperationStore } = await import(pathToFileURL(
+    join(packageRoot, "dist", "hooks", "hook-command-operation-store.js"),
+  ).href);
+  const hookStore = await HookCommandOperationStore.create({
+    invocationId: hookInvocationId,
+    root: hookOperationRoot,
+    runId: hookRunId,
+    sessionId: hookSessionId,
+  });
+  await hookStore.createRequested({
+    actionSha256: hookActionSha256,
+    createdAt: new Date().toISOString(),
+    failurePolicy: "fail_closed",
+    hookIdentitySha256,
+    inputSha256: sha256(hookInput),
+    invocationId: hookInvocationId,
+    mode: "gate",
+    nonceSha256: sha256(hookRawNonce),
+    requestedEventId: randomUUID(),
+    runId: hookRunId,
+    schemaVersion: 1,
+    sessionId: hookSessionId,
+    sessionLockNonceSha256: "9".repeat(64),
+    state: "requested",
+    terminalEventId: randomUUID(),
+  });
+  const hookBootstrap = {
+    actionSha256: hookActionSha256,
+    argv: [],
+    cwd: temporaryRoot,
+    environment: {
+      BORN_HOOK_DEPTH: "1",
+      BORN_HOOK_PROTOCOL: "1",
+      BORN_HOOK_SUPPRESSED: "1",
+    },
+    executablePath: process.execPath,
+    executableSha256: sha256(await readFile(process.execPath)),
+    hookIdentitySha256,
+    inputBase64: hookInput.toString("base64"),
+    inputSha256: sha256(hookInput),
+    invocationId: hookInvocationId,
+    mode: "gate",
+    protocolVersion: 1,
+    rawNonce: hookRawNonce,
+    scriptPath: hookScriptPath,
+    scriptSha256: sha256(hookScript),
+    secrets: ["pack-smoke-secret-sentinel"],
+    timeoutMs: 5_000,
+  };
+  const hookSupervisorEnvironment = {
+    BORN_HOOK_SUPERVISOR: "1",
+    LOCALAPPDATA: hookStateBase,
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    TEMP: temporaryRoot,
+    TMP: temporaryRoot,
+    XDG_STATE_HOME: hookStateBase,
+  };
+  for (const key of Object.keys(hookSupervisorEnvironment)) {
+    if (hookSupervisorEnvironment[key] === undefined) delete hookSupervisorEnvironment[key];
+  }
+  const hookSupervisor = spawn(process.execPath, [
+    binaryPath,
+    "internal",
+    "hook-command-supervisor",
+    "--session",
+    hookSessionId,
+    "--run",
+    hookRunId,
+    "--invocation",
+    hookInvocationId,
+  ], {
+    cwd: packageRoot,
+    env: hookSupervisorEnvironment,
+    shell: false,
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+    windowsHide: true,
+  });
+  let hookSupervisorStderr = "";
+  hookSupervisor.stderr.on("data", (chunk) => {
+    hookSupervisorStderr += chunk.toString("utf8");
+  });
+  const hookReceipts = [];
+  const capturedReceipt = new Promise((resolveReceipt, rejectReceipt) => {
+    const timer = setTimeout(() => {
+      if (hookSupervisor.connected) hookSupervisor.disconnect();
+      rejectReceipt(new Error("packed Hook supervisor capture timed out"));
+    }, 15_000);
+    hookSupervisor.on("message", (message) => {
+      hookReceipts.push(message);
+      if (message?.kind !== "captured") return;
+      clearTimeout(timer);
+      resolveReceipt(message);
+    });
+    hookSupervisor.once("error", (error) => {
+      clearTimeout(timer);
+      rejectReceipt(error);
+    });
+    hookSupervisor.once("exit", (exitCode, signal) => {
+      if (hookReceipts.some((message) => message?.kind === "captured")) return;
+      clearTimeout(timer);
+      rejectReceipt(new Error(`packed Hook supervisor exited before capture (${String(exitCode)}/${String(signal)})`));
+    });
+  });
+  await new Promise((resolveSend, rejectSend) => {
+    hookSupervisor.send(hookBootstrap, (error) => {
+      if (error == null) resolveSend();
+      else rejectSend(error);
+    });
+  });
+  await capturedReceipt;
+  const hookSupervisorExit = await new Promise((resolveExit, rejectExit) => {
+    if (hookSupervisor.exitCode !== null || hookSupervisor.signalCode !== null) {
+      resolveExit({ exitCode: hookSupervisor.exitCode, signal: hookSupervisor.signalCode });
+      return;
+    }
+    const timer = setTimeout(() => rejectExit(new Error("packed Hook supervisor did not exit")), 15_000);
+    hookSupervisor.once("exit", (exitCode, signal) => {
+      clearTimeout(timer);
+      resolveExit({ exitCode, signal });
+    });
+  });
+  const packedHookRecord = await hookStore.read();
+  if (
+    hookSupervisorExit.exitCode !== 0 ||
+    hookSupervisorExit.signal !== null ||
+    hookSupervisorStderr.length !== 0 ||
+    hookReceipts.map((message) => message?.kind).join(",") !== "started,captured" ||
+    packedHookRecord?.state !== "captured" ||
+    packedHookRecord.capture?.kind !== "gate" ||
+    packedHookRecord.capture?.decision !== "no_objection" ||
+    JSON.stringify(packedHookRecord).includes("pack-smoke-secret-sentinel")
+  ) {
+    throw new Error([
+      "packed internal Hook supervisor did not produce one redacted durable capture",
+      hookSupervisorStderr,
+      JSON.stringify(hookReceipts),
+      JSON.stringify(packedHookRecord),
+    ].filter(Boolean).join("\n"));
+  }
+
   // PHASE15: execute from the extracted package so a source-checkout fallback
   // cannot hide a missing built-in policy or Docker artifact asset.
   const policyShow = spawnSync(
@@ -645,7 +813,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, and the Phase 19 M10 canonical Graph fixture; ran born --help, validated the packed Graph hash, initialized its offline Git repository, passed Graph/worker doctor, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, and the Phase 19 M10 canonical Graph fixture; ran born --help, executed the packed Hook supervisor with one redacted durable capture, validated the packed Graph hash, initialized its offline Git repository, passed Graph/worker doctor, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

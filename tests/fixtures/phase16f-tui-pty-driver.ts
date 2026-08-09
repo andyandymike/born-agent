@@ -13,6 +13,7 @@ const appEntryPath = appEntry;
 const repositoryLifecycle = process.argv[4] === "repository";
 const capabilityLifecycle = process.argv[4] === "capability";
 const graphLifecycle = process.argv[4] === "graph";
+const hookApprovalLifecycle = process.argv[4] === "hook-approval";
 
 const MAX_OUTPUT_BYTES = 2_000_000;
 
@@ -120,7 +121,13 @@ function shellLaunch(): {
     import.meta.resolve("tsx"),
     appEntryPath,
     workspacePath,
-    ...(capabilityLifecycle ? ["capability"] : graphLifecycle ? ["graph"] : []),
+    ...(capabilityLifecycle
+      ? ["capability"]
+      : graphLifecycle
+        ? ["graph"]
+        : hookApprovalLifecycle
+          ? ["hook-approval"]
+          : []),
   ]
     .map(quoteCommandArgument)
     .join(" ");
@@ -190,7 +197,7 @@ async function main(): Promise<void> {
         exitSubscription.dispose();
         reject(
           new Error(
-            `${label}: PTY exited early (${String(value.exitCode)}); tail=${visibleText(raw).slice(-800)}`,
+            `${label}: PTY exited early (${String(value.exitCode)}); tail=${visibleText(raw).slice(-4_000)}`,
           ),
         );
       });
@@ -199,16 +206,120 @@ async function main(): Promise<void> {
         exitSubscription.dispose();
         reject(
           new Error(
-            `${label}: timed out; tail=${visibleText(raw).slice(-800)}`,
+            `${label}: timed out; tail=${visibleText(raw).slice(-4_000)}`,
           ),
         );
       }, timeoutMs);
     });
   };
 
+  const submitTuiCommand = async (command: string, label: string): Promise<void> => {
+    // ConPTY may deliver a text payload and its trailing carriage return in one
+    // packet. The TUI intentionally rejects mixed printable/control packets, so
+    // model a real typist: wait until the draft is visibly accepted, then send
+    // Enter as its own key event.
+    terminal.write(command);
+    await waitFor((plain) => plain.includes(`> ${command}`), `${label} draft`);
+    terminal.write("\r");
+  };
+
+  const confirmRetainedDraftUntil = async (
+    predicate: (plain: string) => boolean,
+    label: string,
+  ): Promise<void> => {
+    // A watcher refresh deliberately keeps a command draft instead of rebinding
+    // its stale Enter intent. Repeated Enter here is an explicit PTY user
+    // confirmation of those same visible bytes; an empty draft is inert.
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      if (predicate(visibleText(raw))) return;
+      await delay(100);
+      if (predicate(visibleText(raw))) return;
+      terminal.write("\r");
+    }
+    await waitFor(predicate, label, 1);
+  };
+
   try {
     await delay(100);
     terminal.write(`${launch.appCommand}\r`);
+    if (hookApprovalLifecycle) {
+      const approve = async (actionKind: string, label: string): Promise<void> => {
+        await waitFor(
+          (plain) => plain.includes(`APPROVAL | ${actionKind}`),
+          `${label} request`,
+        );
+        const priorAllowFocus = visibleText(raw).split("[ALLOW]").length - 1;
+        await delay(300);
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          terminal.write("y");
+          await delay(200);
+          if (visibleText(raw).split("[ALLOW]").length - 1 > priorAllowFocus) break;
+        }
+        await waitFor(
+          (plain) => plain.split("[ALLOW]").length - 1 > priorAllowFocus,
+          `${label} allow focus`,
+        );
+        terminal.write("\r");
+      };
+      terminal.resize(111, 33);
+      const resized = terminal.cols === 111 && terminal.rows === 33;
+      await submitTuiCommand(
+        "Run the approved Hook PTY plan",
+        "Hook approval resume",
+      );
+      await approve("mcp.server.start", "MCP server start approval");
+      await approve("mcp.tool.call", "original MCP action approval");
+      await waitFor(
+        (plain) => plain.includes("APPROVAL | run_command") && plain.includes("Hook: user_install:bornagent.hook-pty@1.0.0/hook/command-gate#sha256:"),
+        "independent command Hook approval",
+      );
+      terminal.write("\r");
+      await waitFor(
+        (plain) => plain.includes("Hook failed: hook_approval_denied") ||
+          plain.includes("[approval:denied] run_command"),
+        "command Hook denial",
+      );
+      await waitFor(
+        (plain) =>
+          plain.includes("[model:accepted:user_visible] HOOK_PTY_DENIED") ||
+          plain.includes("[model:rejected:internal_candidate] HOOK_PTY_DENIED"),
+        "post-denial model terminal",
+      );
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "Hook approval app exit");
+      await delay(300);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        terminal.write(`${launch.proofCommand}\r`);
+        await delay(200);
+        if (visibleText(raw).split("PTY_SHELL_RESTORED").length - 1 >= 2) break;
+      }
+      await waitFor(
+        (plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        "restored parent shell",
+      );
+      terminal.write(`${launch.exitCommand}\r`);
+      const terminalExit = await Promise.race([
+        exitPromise,
+        delay(12_000).then(() => {
+          throw new Error("Hook approval PTY app did not exit");
+        }),
+      ]);
+      const plain = visibleText(raw);
+      process.stdout.write(JSON.stringify({
+        appExitCode: 0,
+        hookApprovalDenied: plain.includes("Hook failed: hook_approval_denied") ||
+          plain.includes("[approval:denied] run_command"),
+        hookApprovalVisible: plain.includes("APPROVAL | run_command"),
+        originalApprovalVisible: plain.includes("APPROVAL | mcp.tool.call"),
+        outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+        resized,
+        serverApprovalVisible: plain.includes("APPROVAL | mcp.server.start"),
+        shellExitCode: terminalExit.exitCode,
+        shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        signal: canonicalPtySignal(terminalExit.signal),
+      }), () => process.exit(0));
+      return;
+    }
     if (graphLifecycle) {
       await waitFor(
         (plain) => plain.includes("GRAPH |") && plain.includes("draft") && plain.includes("INPUT") &&
@@ -217,30 +328,24 @@ async function main(): Promise<void> {
       );
       terminal.resize(103, 31);
       const resized = terminal.cols === 103 && terminal.rows === 31;
-      terminal.write("/graph approve\r");
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await delay(100);
-        const plain = visibleText(raw);
-        if (plain.includes("status=approved") || (plain.includes("GRAPH |") && plain.includes("approved"))) break;
-        terminal.write("\r");
-      }
-      await waitFor(
+      await submitTuiCommand("/graph approve", "Graph approval command");
+      await confirmRetainedDraftUntil(
         (plain) => plain.includes("status=approved") || (plain.includes("GRAPH |") && plain.includes("approved")),
         "Graph TUI approval",
       );
-      terminal.write("/graph enqueue foreground\r");
-      await waitFor(
+      await submitTuiCommand("/graph enqueue foreground", "Graph enqueue command");
+      await confirmRetainedDraftUntil(
         (plain) => (plain.includes("Graph queued:") && plain.includes("Ready: inspect")) ||
           (plain.includes("| queued |") && plain.includes("GRAPH NODE | 1:inspect | ready")),
         "Graph TUI enqueue",
       );
-      terminal.write("/graph node inspect\r");
-      await waitFor(
+      await submitTuiCommand("/graph node inspect", "Graph node command");
+      await confirmRetainedDraftUntil(
         (plain) => plain.includes("Graph node inspect:"),
         "Graph TUI node projection",
       );
-      terminal.write("/graph cancel PTY_CANCEL\r");
-      await waitFor(
+      await submitTuiCommand("/graph cancel PTY_CANCEL", "Graph cancel command");
+      await confirmRetainedDraftUntil(
         (plain) => plain.includes("Graph cancel requested:") ||
           (plain.includes("GRAPH |") && plain.includes("| cancelled |")),
         "Graph TUI cancellation",
@@ -283,17 +388,20 @@ async function main(): Promise<void> {
       );
       terminal.resize(103, 31);
       const resized = terminal.cols === 103 && terminal.rows === 31;
-      terminal.write("/plugins\r");
+      await submitTuiCommand("/plugins", "Plugin inventory command");
       await waitFor(
         (plain) => plain.includes("bornagent.m9-review-pack@1.0.0") && plain.includes("enabled-next-run"),
         "Plugin panel",
       );
-      terminal.write("/skill review-change PTY_OPAQUE_ARGUMENT\r");
+      await submitTuiCommand("/skill review-change PTY_OPAQUE_ARGUMENT", "Skill command");
       await waitFor(
         (plain) => plain.includes("Skill selected for the next run:"),
         "Skill selection",
       );
-      terminal.write('/mcp-prompt offline-docs:review {"topic":"PTY_SAFE"}\r');
+      await submitTuiCommand(
+        '/mcp-prompt offline-docs:review {"topic":"PTY_SAFE"}',
+        "MCP prompt command",
+      );
       await waitFor(
         (plain) => plain.includes("MCP prompt selected for the next run: offline-docs:review"),
         "MCP prompt selection",

@@ -154,6 +154,7 @@ export class HookRuntime implements EffectHookPipeline {
     readonly randomUUID: () => string;
     readonly runId: string;
     readonly sessionId: string;
+    readonly sessionLockNonceSha256?: string;
     readonly snapshot: CapabilitySnapshotV1;
     readonly timestamp: () => string;
     readonly workspaceLogicalId: string;
@@ -246,6 +247,17 @@ export class HookRuntime implements EffectHookPipeline {
         continue;
       }
       if (hook.metadata.handler.type === "command") {
+        const terminalEventId = this.options.randomUUID();
+        const operation = this.options.sessionLockNonceSha256 === undefined
+          ? undefined
+          : {
+              failurePolicy: hook.metadata.failure_policy,
+              requestedEventId,
+              runId: this.options.runId,
+              sessionId: this.options.sessionId,
+              sessionLockNonceSha256: this.options.sessionLockNonceSha256,
+              terminalEventId,
+            } as const;
         if (this.options.commandRunner === undefined) {
           const code = hook.metadata.mode === "gate" ? "hook_event_unsupported" : "hook_observer_degraded";
           await this.options.events.append("hook.invocation.failed", {
@@ -273,6 +285,8 @@ export class HookRuntime implements EffectHookPipeline {
                 action_sha256: approval.actionSha256,
                 approval_request_id: approval.requestId,
                 invocation_id: approval.invocationId,
+                preview: approval.preview,
+                truncated: approval.truncated,
               }),
               permissionEvaluated: async (permission) => this.options.events.append("hook.permission.evaluated", {
                 action_sha256: permission.actionSha256,
@@ -291,6 +305,7 @@ export class HookRuntime implements EffectHookPipeline {
             inputBytes: Buffer.from(serialized, "utf8"),
             inputSha256,
             invocationId,
+            ...(operation === undefined ? {} : { operation }),
             signal,
           });
         } catch (error) {
@@ -300,7 +315,14 @@ export class HookRuntime implements EffectHookPipeline {
             effect_state: error.effectState,
             failure_policy: hook.metadata.failure_policy,
             invocation_id: invocationId,
-          });
+          }, terminalEventId);
+          if (operation !== undefined) {
+            await this.options.commandRunner.terminalCommitted?.({
+              ...operation,
+              invocationId,
+              terminalType: "hook.invocation.failed",
+            });
+          }
           if (error.effectState === "unknown") {
             throw new HookError("hook_effect_unknown", error.message, 1, { cause: error });
           }
@@ -328,7 +350,14 @@ export class HookRuntime implements EffectHookPipeline {
             effect_state: "none",
             failure_policy: hook.metadata.failure_policy,
             invocation_id: invocationId,
-          });
+          }, terminalEventId);
+          if (operation !== undefined) {
+            await this.options.commandRunner.terminalCommitted?.({
+              ...operation,
+              invocationId,
+              terminalType: "hook.invocation.failed",
+            });
+          }
           if (hook.metadata.mode === "gate") {
             denied = {
               code: "hook_original_action_stale",
@@ -343,7 +372,6 @@ export class HookRuntime implements EffectHookPipeline {
             "original action changed while its command Hook was running",
           );
         }
-        const terminalEventId = this.options.randomUUID();
         const outputBytes = Buffer.from(canonicalJson({
           action_sha256: result.actionSha256,
           kind: result.kind,
@@ -371,6 +399,13 @@ export class HookRuntime implements EffectHookPipeline {
             invocation_id: invocationId,
             ...(commandDecision.message === undefined ? {} : { message: commandDecision.message }),
           }, terminalEventId);
+          if (operation !== undefined) {
+            await this.options.commandRunner.terminalCommitted?.({
+              ...operation,
+              invocationId,
+              terminalType: "hook.invocation.decided",
+            });
+          }
           if (commandDecision.decision === "deny") denied = commandDecision;
         } else {
           await this.options.events.append("hook.invocation.completed", {
@@ -379,6 +414,13 @@ export class HookRuntime implements EffectHookPipeline {
             ...(result.message === undefined ? {} : { message: result.message }),
             status: "observed",
           }, terminalEventId);
+          if (operation !== undefined) {
+            await this.options.commandRunner.terminalCommitted?.({
+              ...operation,
+              invocationId,
+              terminalType: "hook.invocation.completed",
+            });
+          }
         }
         continue;
       }

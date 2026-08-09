@@ -83,6 +83,7 @@ import {
   executeGraphWorkerDoctor,
 } from "../commands/graph.js";
 import { executeInternalGraphWorker } from "../commands/internal-graph-worker.js";
+import { executeInternalHookCommandSupervisor } from "../commands/internal-hook-command-supervisor.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -107,6 +108,18 @@ export async function runCli(
   let commandExitCode = 0;
 
   const internal = program.command("internal", { hidden: true });
+  internal
+    .command("hook-command-supervisor", { hidden: true })
+    .requiredOption("--session <uuid>")
+    .requiredOption("--run <uuid>")
+    .requiredOption("--invocation <uuid>")
+    .action(async (options: { invocation: string; run: string; session: string }) => {
+      commandExitCode = await executeInternalHookCommandSupervisor({
+        invocationId: options.invocation,
+        runId: options.run,
+        sessionId: options.session,
+      }, runtime, io);
+    });
   internal
     .command("graph-worker", { hidden: true })
     .requiredOption("--operation <uuid>")

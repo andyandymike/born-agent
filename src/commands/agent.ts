@@ -779,16 +779,25 @@ export async function executeAgent(
   const stopListening = runtime.onCancel(() => userController.abort());
   let exitCode: AgentExitCode;
   let mcpManager: McpClientManager | undefined;
+  let mcpStopped = false;
   let capabilityContentLeases: readonly CapabilityContentLease[] = [];
 
   try {
     if (
       capabilityPlatform?.acquireContentLeases !== undefined &&
-      preparedCapabilitySnapshot !== undefined
+      preparedCapabilitySnapshot !== undefined &&
+      preparedCapabilitySnapshot.snapshot.plugins.some((plugin) => plugin.source === "user_install")
     ) {
+      if (writer.lockNonceSha256 === undefined) {
+        throw new TypeError("frozen Plugin leases require an exact durable session-lock owner");
+      }
       capabilityContentLeases = await capabilityPlatform.acquireContentLeases(
         preparedCapabilitySnapshot.snapshot,
-        runId,
+        {
+          runId,
+          sessionId,
+          sessionLockNonceSha256: writer.lockNonceSha256,
+        },
       );
     }
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
@@ -1100,9 +1109,11 @@ export async function executeAgent(
       }
     }
     let hookRuntime: HookRuntime | undefined;
-    const hasFrozenHooks = preparedCapabilitySnapshot?.snapshot.plugins.some(
-      (plugin) => plugin.components.some((component) => component.identity.kind === "hook"),
-    ) ?? false;
+    const hasFrozenHooks = runtime.hooksSuppressed !== true && (
+      preparedCapabilitySnapshot?.snapshot.plugins.some(
+        (plugin) => plugin.components.some((component) => component.identity.kind === "hook"),
+      ) ?? false
+    );
     if (hasFrozenHooks) {
       if (
         preparedCapabilitySnapshot === undefined ||
@@ -1150,6 +1161,9 @@ export async function executeAgent(
         randomUUID: runtime.randomUUID,
         runId,
         sessionId,
+        ...(writer.lockNonceSha256 === undefined
+          ? {}
+          : { sessionLockNonceSha256: writer.lockNonceSha256 }),
         snapshot: preparedCapabilitySnapshot.snapshot,
         timestamp: runtime.timestamp,
         workspaceLogicalId: `sha256:${sha256Canonical({ workspace: runtime.cwd })}`,
@@ -1846,15 +1860,19 @@ export async function executeAgent(
           ? {}
           : { agentMode: phase16Binding.agent_mode }),
         budget,
-        ...(hookRuntime === undefined
+        ...(hookRuntime === undefined && mcpManager === undefined
           ? {}
           : {
               beforeRunTerminal: async (candidate) => {
+                if (mcpManager !== undefined && !mcpStopped) {
+                  await mcpManager.stopAll();
+                  mcpStopped = true;
+                }
                 if (userController.signal.aborted) return;
                 // PHASE18: run terminal Hooks observe the final Host projection
                 // immediately before the terminal event because the durable run
                 // grammar requires that terminal event to remain last.
-                await hookRuntime.run(
+                await hookRuntime?.run(
                   "run.terminal",
                   {
                     action: {
@@ -2155,9 +2173,10 @@ export async function executeAgent(
     }
   } finally {
     stopListening();
-    if (mcpManager !== undefined) {
+    if (mcpManager !== undefined && !mcpStopped) {
       try {
         await mcpManager.stopAll();
+        mcpStopped = true;
       } catch {
         renderer.renderDiagnostic("MCP process cleanup could not be verified");
         exitCode = 1;
