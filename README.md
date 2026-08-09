@@ -70,8 +70,8 @@ redirects, downloads a model, or turns discovery into live-verification evidence
 ## Local capability platform
 
 Phase 18 now has local Skills, stdio MCP resources/user prompts, declarative
-lifecycle Hooks, and an immutable local Plugin store. Useful read and lifecycle
-surfaces include:
+and foreground command lifecycle Hooks, and an immutable local Plugin store.
+Useful read and lifecycle surfaces include:
 
 ```powershell
 corepack pnpm dev capabilities doctor --json
@@ -88,8 +88,36 @@ resource reads, prompts, Hooks, commands, and workspace effects remain separatel
 gated. The TUI exposes `/plugins`, `/skill`, and `/mcp-prompt` for current-state
 inspection and explicit next-run selection.
 
-M9 is still in progress: command Hooks remain fail-closed unavailable until the
-Host can prove recursion suppression, process-tree cleanup, sandbox/journal, and
-revalidation together, and the full Plugin crash-prefix reconciliation table is
-not yet closed. There is no marketplace, network install, dependency resolver,
-signature trust claim, background Hook, worktree, or subagent support.
+The M9 capability-platform gate is complete. Command Hooks use a separately
+approved, argv-only child with a minimal environment, strict bounded output,
+durable operation records, process-tree cleanup, crash reconciliation, and
+original-action revalidation. Plugin operations and active content leases are
+reconciled from exact state, audit, run-terminal, and recovered session-lock
+facts. A Hook can only deny or report no objection; it never approves the
+original action.
+
+There is still no marketplace, network install, dependency resolver, signature
+trust claim, background Hook, or third-party in-process runtime.
+
+## Durable task orchestration
+
+Phase 19 / M10 adds an exact durable Task Graph over an approved Goal and Plan,
+a deterministic single-active scheduler, managed Git worktrees, explicit
+content-addressed promotion into the origin, and a bounded local background
+worker with verified handoff, cancellation, recovery, and narrow takeover.
+
+Useful diagnostics and control surfaces include:
+
+```powershell
+corepack pnpm dev graph validate --file <graph.json> --json
+corepack pnpm dev graph doctor --json
+corepack pnpm dev graph show <session-id> --json
+corepack pnpm dev graph status <session-id> --live --json
+corepack pnpm dev graph worker doctor --json
+```
+
+Graph approval authorizes scheduling intent only. Node commands, patches, MCP
+calls, Hooks, worktree allocation, promotion, verification, and cleanup retain
+their independent policy and approval boundaries. Phase 19 remains a single
+Agent: it does not add subagents, parallel model loops, a daemon, remote workers,
+automatic commits/pushes/PRs, or unsafe worktree deletion.
