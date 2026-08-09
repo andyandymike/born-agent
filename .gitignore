@@ -1,16 +1,25 @@
-# Dependencies, build output, and caches
+# Dependencies and package-manager caches
 node_modules/
+.pnpm-store/
+.npm/
+.cache/
+
+# Build, test, and tool output
 dist/
 coverage/
-.cache/
-.pnpm-store/
+.nyc_output/
+test-results/
+playwright-report/
+.vitest/
+.eslintcache
+*.tsbuildinfo
 *.tgz
 
-# Local planning and learning material
+# Private/local planning and learning material (not public documentation)
 /spec/
 /docs/learning/
 /ROADMAP.md
-**/[Tt][Oo][Dd][Oo]*
+/TODO.local.md
 *.todo
 
 # Local agent state
@@ -22,10 +31,19 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # Logs, editor state, and operating-system files
 *.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
+Desktop.ini

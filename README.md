@@ -1,5 +1,9 @@
 # BornAgent
 
+[Project site](https://andyandymike.github.io/born-agent/) ·
+[Contributing](CONTRIBUTING.md) ·
+[Security](SECURITY.md)
+
 BornAgent is a learning-first local coding agent. Runtime authority comes from a
 versioned policy profile rather than scattered provider/Docker flags. With no
 policy option, every command uses the packaged `local-free-v1` profile:

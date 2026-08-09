@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a bounded capability or usability improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should BornAgent solve?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior rather than a specific implementation when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority and failure boundary
+      description: Which files, processes, networks, credentials, or persisted records would this feature need, and how should it fail closed?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any simpler workflow or existing capability you considered.
