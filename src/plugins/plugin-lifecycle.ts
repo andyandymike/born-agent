@@ -1,5 +1,4 @@
 import {
-  appendFile,
   lstat,
   mkdir,
   open,
@@ -28,6 +27,7 @@ import {
   pluginAuditEventSchema,
   pluginEnablementStateSchema,
   pluginOperationRecordSchema,
+  type CapabilityLeaseRecordV1,
   type InstalledPluginIndexV1,
   type InstalledPluginRecordV1,
   type PluginAuditEventV1,
@@ -72,27 +72,57 @@ interface PluginStates {
   readonly installed: InstalledPluginIndexV1;
 }
 
+interface PluginOperationTransition {
+  readonly after: PluginStates;
+  readonly before: PluginStates;
+}
+
+function pluginStateSha256(states: PluginStates): string {
+  return sha256Canonical({
+    enablement: states.enablement,
+    installed: states.installed,
+  });
+}
+
+async function readStableBytes(path: string, maxBytes: number, label: string): Promise<Buffer> {
+  const before = await lstat(path);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > maxBytes) {
+    throw new PluginLifecycleError("plugin_store_corrupt", `${label} is not a bounded unique regular file`);
+  }
+  const bytes = await readFile(path);
+  const after = await lstat(path);
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    bytes.byteLength !== after.size
+  ) {
+    throw new PluginLifecycleError("plugin_store_busy", `${label} changed while it was read`);
+  }
+  return bytes;
+}
+
+async function readPluginOperationRecord(path: string): Promise<PluginOperationRecordV1> {
+  try {
+    return pluginOperationRecordSchema.parse(parseStrictJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        await readStableBytes(path, MAX_STATE_BYTES, "Plugin operation journal record"),
+      ),
+    ));
+  } catch (error) {
+    if (error instanceof PluginLifecycleError) throw error;
+    throw new PluginLifecycleError("plugin_store_corrupt", "Plugin operation journal record failed strict validation", 1, { cause: error });
+  }
+}
+
 async function readJsonState<T>(
   path: string,
   parse: (value: unknown) => T,
   fallback: T,
 ): Promise<T> {
   try {
-    const before = await lstat(path);
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > MAX_STATE_BYTES) {
-      throw new PluginLifecycleError("plugin_store_corrupt", "plugin state is not a bounded unique regular file");
-    }
-    const bytes = await readFile(path);
-    const after = await lstat(path);
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      bytes.byteLength !== after.size
-    ) {
-      throw new PluginLifecycleError("plugin_store_busy", "plugin state changed while it was read");
-    }
+    const bytes = await readStableBytes(path, MAX_STATE_BYTES, "plugin state");
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     return deepFreeze(parse(parseStrictJson(text)));
   } catch (error) {
@@ -115,13 +145,49 @@ async function fsyncPath(path: string): Promise<void> {
   }
 }
 
+async function openAtomicTemporary(path: string) {
+  try {
+    return await open(path, "wx");
+  } catch (error) {
+    if (!isExists(error)) throw error;
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "atomic Plugin temporary target is not a unique regular file");
+    }
+    // The lifecycle lock proves there is no current writer. Reusing the exact
+    // operation/audit identity makes this one stale crash-prefix file safe to
+    // remove without scanning or deleting a broad temporary directory.
+    await unlink(path);
+    return await open(path, "wx");
+  }
+}
+
 async function atomicJson(path: string, value: unknown, operationId: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = join(dirname(path), `.${basename(path)}.${operationId}.tmp`);
   const bytes = `${canonicalJson(value)}\n`;
-  const handle = await open(temporary, "wx");
+  const handle = await openAtomicTemporary(temporary);
   try {
     await handle.writeFile(bytes, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(temporary, path);
+    await fsyncPath(dirname(path));
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function atomicText(path: string, value: string, operationId: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = join(dirname(path), `.${basename(path)}.${operationId}.tmp`);
+  const handle = await openAtomicTemporary(temporary);
+  try {
+    await handle.writeFile(value, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
@@ -414,25 +480,37 @@ export class PluginLifecycle implements PluginLifecycleLike {
 
   async #operation(
     operation: "install" | "enable" | "disable" | "remove",
-    pluginSha256?: string,
-  ): Promise<{ readonly id: string; complete(): Promise<void> }> {
+    pluginSha256: string,
+    transition: PluginOperationTransition,
+  ): Promise<{ readonly auditEventId: string; readonly id: string; complete(): Promise<void> }> {
     const id = this.options.randomUUID();
+    const auditEventId = this.options.randomUUID();
     const path = join(this.#paths().operations, `${id}.json`);
     await mkdir(dirname(path), { recursive: true });
     const base = {
+      audit_event_id: auditEventId,
       operation,
       operation_id: id,
-      ...(pluginSha256 === undefined ? {} : { plugin_sha256: pluginSha256 }),
+      plugin_sha256: pluginSha256,
       requested_at: this.options.now(),
       schema_version: 1 as const,
+      state_transition: {
+        after_enablement_revision: transition.after.enablement.revision,
+        after_installed_revision: transition.after.installed.revision,
+        after_state_sha256: pluginStateSha256(transition.after),
+        before_enablement_revision: transition.before.enablement.revision,
+        before_installed_revision: transition.before.installed.revision,
+        before_state_sha256: pluginStateSha256(transition.before),
+      },
     };
     await atomicJson(path, pluginOperationRecordSchema.parse({ ...base, state: "requested" }), id);
     return Object.freeze({
+      auditEventId,
       id,
       complete: async () => atomicJson(
         path,
         pluginOperationRecordSchema.parse({ ...base, state: "completed" }),
-        this.options.randomUUID(),
+        id,
       ),
     });
   }
@@ -440,17 +518,22 @@ export class PluginLifecycle implements PluginLifecycleLike {
   async #appendAudit(event: PluginAuditEventV1): Promise<void> {
     const parsed = pluginAuditEventSchema.parse(event);
     const path = this.#paths().audit;
-    await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${canonicalJson(parsed)}\n`, { encoding: "utf8", flag: "a" });
-    await fsyncPath(path);
+    const existing = await this.#auditEvents();
+    if (existing.some((candidate) => candidate.event_id === parsed.event_id || candidate.operation_id === parsed.operation_id)) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit identities must be unique");
+    }
+    const text = `${existing.map((candidate) => canonicalJson(candidate)).join("\n")}${existing.length === 0 ? "" : "\n"}${canonicalJson(parsed)}\n`;
+    if (Buffer.byteLength(text, "utf8") > 4 * 1024 * 1024) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit log exceeds its byte limit");
+    }
+    // PHASE18/M9: audit publication is an atomic whole-log replacement under
+    // the lifecycle lock, so a crash cannot leave a trusted partial JSON line.
+    await atomicText(path, text, parsed.event_id);
   }
 
   async #auditEvents(): Promise<readonly PluginAuditEventV1[]> {
     try {
-      const bytes = await readFile(this.#paths().audit);
-      if (bytes.byteLength > 4 * 1024 * 1024) {
-        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit log exceeds its byte limit");
-      }
+      const bytes = await readStableBytes(this.#paths().audit, 4 * 1024 * 1024, "Plugin audit log");
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       const events = text.split("\n")
         .filter((line) => line.length > 0)
@@ -489,85 +572,183 @@ export class PluginLifecycle implements PluginLifecycleLike {
 
   async #reconcileOperationsLocked(): Promise<number> {
     const paths = this.#paths();
-    const [states, audits] = await Promise.all([this.#states(), this.#auditEvents()]);
-    const auditByOperation = new Map(audits.map((event) => [event.operation_id, event]));
+    const audits = await this.#auditEvents();
     let entries;
     try {
       entries = await readdir(paths.operations, { withFileTypes: true });
     } catch (error) {
-      if (isMissing(error)) return 0;
+      if (isMissing(error)) {
+        if (audits.length > 0) {
+          throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit log has no operation journal authority");
+        }
+        return 0;
+      }
       throw error;
     }
-    let reconciled = 0;
+    const records: { readonly path: string; readonly value: PluginOperationRecordV1 }[] = [];
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) {
         throw new PluginLifecycleError("plugin_store_corrupt", "operation journal contains an unexpected entry");
       }
       const path = join(paths.operations, entry.name);
-      const operation = pluginOperationRecordSchema.parse(
-        parseStrictJson(await readFile(path, "utf8")),
-      );
-      if (operation.state === "completed") continue;
-      if (operation.plugin_sha256 === undefined) {
-        throw new PluginLifecycleError("plugin_store_corrupt", "requested Plugin operation is missing its exact digest");
+      const operation = await readPluginOperationRecord(path);
+      if (`${operation.operation_id}.json` !== entry.name) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin operation filename and identity disagree");
       }
-      const digest = operation.plugin_sha256;
-      const audit = auditByOperation.get(operation.operation_id);
-      if (audit !== undefined && audit.plugin.plugin_sha256 !== digest) {
-        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin operation and audit digest disagree");
+      records.push({ path, value: operation });
+    }
+    const operationById = new Map(records.map((record) => [record.value.operation_id, record.value]));
+    if (operationById.size !== records.length) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "Plugin operation identities must be unique");
+    }
+    for (const audit of audits) {
+      const operation = operationById.get(audit.operation_id);
+      const expectedAuditOperation = operation?.operation === "install" ? "installed"
+        : operation?.operation === "enable" ? "enabled"
+          : operation?.operation === "disable" ? "disabled"
+            : operation?.operation === "remove" ? "removed"
+              : undefined;
+      if (
+        operation === undefined ||
+        (operation.audit_event_id !== undefined && operation.audit_event_id !== audit.event_id) ||
+        operation.plugin_sha256 !== audit.plugin.plugin_sha256 ||
+        expectedAuditOperation !== audit.operation ||
+        audit.result !== "changed"
+      ) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit and operation authority disagree");
       }
-      const installed = states.installed.plugins.some((candidate) => candidate.record.pluginSha256 === digest);
-      const enabled = states.enablement.packages.some((candidate) => candidate.expected_plugin_sha256 === digest);
-      const applied = audit !== undefined || (
-        operation.operation === "install" ? installed
-          : operation.operation === "remove" ? !installed
-            : operation.operation === "enable" ? enabled
-              : !enabled
-      );
+      if (operation.state_transition !== undefined && (
+        audit.previous_enablement_revision !== operation.state_transition.before_enablement_revision ||
+        audit.next_enablement_revision !== operation.state_transition.after_enablement_revision
+      )) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit revisions disagree with its operation transition");
+      }
+    }
+    for (const { value: operation } of records) {
+      if (operation.state !== "completed") continue;
+      const audit = audits.find((event) => event.operation_id === operation.operation_id);
+      if (
+        (audit === undefined && operation.reconciliation?.observed !== "not_applied") ||
+        (audit !== undefined && operation.reconciliation?.observed === "not_applied")
+      ) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "completed Plugin operation and audit terminal disagree");
+      }
+    }
+    const requested = records.filter((record) => record.value.state === "requested");
+    if (requested.length === 0) return 0;
+    if (requested.length !== 1) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "multiple incomplete Plugin mutations cannot share one serialized store");
+    }
+    const { path, value: operation } = requested[0]!;
+    if (
+      operation.audit_event_id === undefined ||
+      operation.plugin_sha256 === undefined ||
+      operation.state_transition === undefined
+    ) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "requested Plugin operation is missing exact audit or transition evidence");
+    }
+    const digest = operation.plugin_sha256;
+    const transition = operation.state_transition;
+    let states = await this.#states();
+    let currentSha256 = pluginStateSha256(states);
+    let applied = currentSha256 === transition.after_state_sha256;
+    const before = currentSha256 === transition.before_state_sha256;
+    let audit = audits.find((event) => event.operation_id === operation.operation_id);
+    if (audit !== undefined && !applied) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit claims an operation whose exact target state is absent");
+    }
+
+    if (!applied && before && operation.operation === "install") {
       const record = await this.#recordForDigest(digest, states);
-      if (applied && audit === undefined) {
-        if (record === undefined) {
-          throw new PluginLifecycleError("plugin_store_corrupt", "applied Plugin operation has no immutable identity record");
+      if (record !== undefined) {
+        const entry = {
+          record,
+          store_relative_path: `store/v1/sha256/${digest}`,
+        };
+        await this.#verifyStore(entry);
+        const installed = installedPluginIndexSchema.parse({
+          plugins: [...states.installed.plugins, entry]
+            .sort((left, right) => left.record.pluginSha256.localeCompare(right.record.pluginSha256)),
+          revision: states.installed.revision + 1,
+          schema_version: 1,
+        });
+        const adopted = { enablement: states.enablement, installed };
+        if (pluginStateSha256(adopted) !== transition.after_state_sha256) {
+          throw new PluginLifecycleError("plugin_store_corrupt", "orphaned Plugin bytes do not match the requested target state");
         }
-        const changesEnablement = operation.operation === "enable" || operation.operation === "disable";
-        if (changesEnablement && states.enablement.revision === 0) {
-          throw new PluginLifecycleError("plugin_store_corrupt", "applied enablement operation has no revision evidence");
-        }
-        await this.#appendAudit(this.#audit(
+        await atomicJson(paths.installed, installed, operation.operation_id);
+        states = adopted;
+        currentSha256 = pluginStateSha256(states);
+        applied = currentSha256 === transition.after_state_sha256;
+      }
+    }
+
+    if (!applied && !before) {
+      throw new PluginLifecycleError("plugin_store_corrupt", "Plugin state matches neither side of the requested exact transition");
+    }
+    if (!applied && operation.operation === "install") {
+      const temporary = join(paths.tmp, `install-${operation.operation_id}`);
+      try {
+        const metadata = await lstat(temporary);
+        if (metadata.isSymbolicLink()) await unlink(temporary);
+        else if (metadata.isDirectory()) await rm(temporary, { force: true, recursive: true });
+        else throw new PluginLifecycleError("plugin_store_corrupt", "Plugin install temporary target has an unexpected type");
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+
+    const record = await this.#recordForDigest(digest, states);
+    if (applied) {
+      if (record === undefined) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "applied Plugin operation has no immutable identity record");
+      }
+      await this.#verifyStore({ record, store_relative_path: `store/v1/sha256/${digest}` });
+      if (audit !== undefined && (
+        audit.plugin.plugin_id !== record.pluginId ||
+        audit.plugin.plugin_version !== record.pluginVersion
+      )) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin audit identity disagrees with immutable content");
+      }
+      if (audit === undefined) {
+        audit = this.#audit(
+          operation.audit_event_id,
           operation.operation_id,
           operation.operation === "install" ? "installed"
             : operation.operation === "remove" ? "removed"
               : operation.operation === "enable" ? "enabled"
                 : "disabled",
           record,
-          changesEnablement ? states.enablement.revision - 1 : states.enablement.revision,
-          states.enablement.revision,
+          transition.before_enablement_revision,
+          transition.after_enablement_revision,
           "changed",
-        ));
+        );
+        await this.#appendAudit(audit);
       }
-      const reconciliation = {
-        evidence_sha256: sha256Canonical({
-          audit_event_id: audit?.event_id ?? null,
-          enablement_revision: states.enablement.revision,
-          installed_revision: states.installed.revision,
-          observed: applied ? "applied_exact" : "not_applied",
-          operation_id: operation.operation_id,
-          plugin_sha256: digest,
-        }),
-        observed: applied ? "applied_exact" as const : "not_applied" as const,
-        reconciled_at: this.options.now(),
-      };
-      const completed: PluginOperationRecordV1 = pluginOperationRecordSchema.parse({
-        ...operation,
-        reconciliation,
-        state: "completed",
-      });
-      // PHASE18/M9: an unknown mutation prefix is classified from exact index,
-      // immutable store, and audit facts before any later mutation may run.
-      await atomicJson(path, completed, this.options.randomUUID());
-      reconciled += 1;
     }
-    return reconciled;
+    const reconciliation = {
+      evidence_sha256: sha256Canonical({
+        audit_event_id: audit?.event_id ?? null,
+        enablement_revision: states.enablement.revision,
+        installed_revision: states.installed.revision,
+        observed: applied ? "applied_exact" : "not_applied",
+        operation_id: operation.operation_id,
+        plugin_sha256: digest,
+        state_sha256: currentSha256,
+      }),
+      observed: applied ? "applied_exact" as const : "not_applied" as const,
+      reconciled_at: this.options.now(),
+    };
+    const completed: PluginOperationRecordV1 = pluginOperationRecordSchema.parse({
+      ...operation,
+      reconciliation,
+      state: "completed",
+    });
+    // PHASE18/M9: an unknown mutation prefix is classified from exact before
+    // and after state digests plus immutable content and audit identity before
+    // any later mutation may run.
+    await atomicJson(path, completed, this.options.randomUUID());
+    return 1;
   }
 
   async #reconcileOperations(): Promise<number> {
@@ -580,6 +761,7 @@ export class PluginLifecycle implements PluginLifecycleLike {
   }
 
   #audit(
+    eventId: string,
     operationId: string,
     operation: PluginAuditEventV1["operation"],
     record: InstalledPluginRecordV1,
@@ -588,7 +770,7 @@ export class PluginLifecycle implements PluginLifecycleLike {
     result: PluginAuditEventV1["result"],
   ): PluginAuditEventV1 {
     return pluginAuditEventSchema.parse({
-      event_id: this.options.randomUUID(),
+      event_id: eventId,
       next_enablement_revision: next,
       occurred_at: this.options.now(),
       operation,
@@ -626,6 +808,39 @@ export class PluginLifecycle implements PluginLifecycleLike {
     }
   }
 
+  async #leaseRecords(): Promise<readonly CapabilityLeaseRecordV1[]> {
+    try {
+      const entries = await readdir(this.#paths().leases, { withFileTypes: true });
+      const records: CapabilityLeaseRecordV1[] = [];
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) {
+          throw new PluginLifecycleError("plugin_store_corrupt", "lease store contains an unexpected entry");
+        }
+        const record = capabilityLeaseRecordSchema.parse(
+          parseStrictJson(new TextDecoder("utf-8", { fatal: true }).decode(
+            await readStableBytes(
+              join(this.#paths().leases, entry.name),
+              MAX_STATE_BYTES,
+              "Plugin lease record",
+            ),
+          )),
+        );
+        if (`${record.lease_id}.json` !== entry.name) {
+          throw new PluginLifecycleError("plugin_store_corrupt", "Plugin lease filename and identity disagree");
+        }
+        records.push(record);
+      }
+      if (new Set(records.map((record) => record.lease_id)).size !== records.length) {
+        throw new PluginLifecycleError("plugin_store_corrupt", "Plugin lease identities must be unique");
+      }
+      return Object.freeze(records);
+    } catch (error) {
+      if (isMissing(error)) return Object.freeze([]);
+      if (error instanceof PluginLifecycleError) throw error;
+      throw new PluginLifecycleError("plugin_store_corrupt", "lease store failed strict validation", 1, { cause: error });
+    }
+  }
+
   async doctor(): Promise<Readonly<Record<string, unknown>>> {
     const reconciledOperationCount = await this.#reconcileOperations();
     const states = await this.#states();
@@ -653,9 +868,7 @@ export class PluginLifecycle implements PluginLifecycleLike {
         if (!entry.isFile() || !entry.name.endsWith(".json")) {
           throw new PluginLifecycleError("plugin_store_corrupt", "operation journal contains an unexpected entry");
         }
-        const record = pluginOperationRecordSchema.parse(
-          parseStrictJson(await readFile(join(paths.operations, entry.name), "utf8")),
-        );
+        const record = await readPluginOperationRecord(join(paths.operations, entry.name));
         if (record.state === "requested") incompleteOperations.push(record.operation_id);
       }
     } catch (error) {
@@ -664,24 +877,7 @@ export class PluginLifecycle implements PluginLifecycleLike {
         throw new PluginLifecycleError("plugin_store_corrupt", "operation journal failed strict validation", 1, { cause: error });
       }
     }
-    let activeLeaseCount = 0;
-    try {
-      const entries = await readdir(paths.leases, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith(".json")) {
-          throw new PluginLifecycleError("plugin_store_corrupt", "lease store contains an unexpected entry");
-        }
-        capabilityLeaseRecordSchema.parse(
-          parseStrictJson(await readFile(join(paths.leases, entry.name), "utf8")),
-        );
-        activeLeaseCount += 1;
-      }
-    } catch (error) {
-      if (!isMissing(error)) {
-        if (error instanceof PluginLifecycleError) throw error;
-        throw new PluginLifecycleError("plugin_store_corrupt", "lease store failed strict validation", 1, { cause: error });
-      }
-    }
+    const activeLeaseCount = (await this.#leaseRecords()).length;
     return deepFreeze({
       activeLeaseCount,
       auditEventCount: auditEvents.length,
@@ -727,10 +923,8 @@ export class PluginLifecycle implements PluginLifecycleLike {
           warnings: [],
         });
       }
-      const operation = await this.#operation("install", stable.pluginSha256);
       const paths = this.#paths();
       const destination = join(paths.store, stable.pluginSha256);
-      const temporary = join(paths.tmp, `install-${operation.id}`);
       let record = installedPluginRecordSchema.parse({
         installedAt: this.options.now(),
         inventorySha256: stable.inventorySha256,
@@ -765,6 +959,18 @@ export class PluginLifecycle implements PluginLifecycleLike {
           throw new PluginLifecycleError("plugin_store_corrupt", "orphaned content-addressed package is invalid", 1, { cause: error });
         }
       }
+      const storeRelativePath = `store/v1/sha256/${stable.pluginSha256}`;
+      const nextInstalled = installedPluginIndexSchema.parse({
+        plugins: [...states.installed.plugins, { record, store_relative_path: storeRelativePath }]
+          .sort((left, right) => left.record.pluginSha256.localeCompare(right.record.pluginSha256)),
+        revision: states.installed.revision + 1,
+        schema_version: 1,
+      });
+      const operation = await this.#operation("install", stable.pluginSha256, {
+        after: { enablement: states.enablement, installed: nextInstalled },
+        before: states,
+      });
+      const temporary = join(paths.tmp, `install-${operation.id}`);
       if (!published) try {
         await mkdir(temporary, { recursive: false });
         // PHASE18: install publishes only exact bytes captured by the stable
@@ -802,15 +1008,9 @@ export class PluginLifecycle implements PluginLifecycleLike {
         if (inside(paths.tmp, temporary)) await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
         throw error;
       }
-      const storeRelativePath = `store/v1/sha256/${stable.pluginSha256}`;
-      const nextInstalled = installedPluginIndexSchema.parse({
-        plugins: [...states.installed.plugins, { record, store_relative_path: storeRelativePath }]
-          .sort((left, right) => left.record.pluginSha256.localeCompare(right.record.pluginSha256)),
-        revision: states.installed.revision + 1,
-        schema_version: 1,
-      });
       await atomicJson(paths.installed, nextInstalled, operation.id);
       await this.#appendAudit(this.#audit(
+        operation.auditEventId,
         operation.id,
         "installed",
         record,
@@ -895,7 +1095,6 @@ export class PluginLifecycle implements PluginLifecycleLike {
         }
       }
       const operationName = enabled ? "enable" : "disable";
-      const operation = await this.#operation(operationName, entry.record.pluginSha256);
       const packages = enabled
         ? [
             ...states.enablement.packages,
@@ -917,8 +1116,13 @@ export class PluginLifecycle implements PluginLifecycleLike {
         revision: states.enablement.revision + 1,
         schema_version: 1,
       });
+      const operation = await this.#operation(operationName, entry.record.pluginSha256, {
+        after: { enablement: next, installed: states.installed },
+        before: states,
+      });
       await atomicJson(this.#paths().enablement, next, operation.id);
       await this.#appendAudit(this.#audit(
+        operation.auditEventId,
         operation.id,
         enabled ? "enabled" : "disabled",
         entry.record,
@@ -964,15 +1168,22 @@ export class PluginLifecycle implements PluginLifecycleLike {
       if (states.enablement.packages.some((candidate) => candidate.expected_plugin_sha256 === entry.record.pluginSha256)) {
         throw new PluginLifecycleError("plugin_remove_requires_disable", "disable the exact Plugin before removing its logical installation");
       }
+      if ((await this.#leaseRecords()).some((lease) => lease.plugin_sha256 === entry.record.pluginSha256)) {
+        throw new PluginLifecycleError("plugin_active_lease", "release active frozen Plugin leases before logical removal");
+      }
       await this.#verifyStore(entry);
-      const operation = await this.#operation("remove", entry.record.pluginSha256);
       const next = installedPluginIndexSchema.parse({
         plugins: states.installed.plugins.filter((candidate) => candidate.record.pluginSha256 !== entry.record.pluginSha256),
         revision: states.installed.revision + 1,
         schema_version: 1,
       });
+      const operation = await this.#operation("remove", entry.record.pluginSha256, {
+        after: { enablement: states.enablement, installed: next },
+        before: states,
+      });
       await atomicJson(this.#paths().installed, next, operation.id);
       await this.#appendAudit(this.#audit(
+        operation.auditEventId,
         operation.id,
         "removed",
         entry.record,
@@ -1076,7 +1287,11 @@ export class PluginLifecycle implements PluginLifecycleLike {
             if (released) return;
             released = true;
             try {
-              const current = capabilityLeaseRecordSchema.parse(parseStrictJson(await readFile(path, "utf8")));
+              const current = capabilityLeaseRecordSchema.parse(parseStrictJson(
+                new TextDecoder("utf-8", { fatal: true }).decode(
+                  await readStableBytes(path, MAX_STATE_BYTES, "Plugin lease record"),
+                ),
+              ));
               if (current.lease_id !== leaseId || current.plugin_sha256 !== digest || current.run_id !== runId) {
                 throw new PluginLifecycleError("plugin_active_lease", "capability content lease identity changed");
               }

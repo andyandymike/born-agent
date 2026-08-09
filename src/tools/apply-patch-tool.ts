@@ -376,6 +376,15 @@ export function createApplyPatchTool(
             paths: plan.files.map((file) => file.relativePath),
             toolName: "apply_patch",
           },
+          revalidateOriginalAction: async () => {
+            if ((await repositoryRulesStale(options.repositoryRules)) !== null) return false;
+            try {
+              await options.planner.revalidate(plan, context.signal);
+              return true;
+            } catch {
+              return false;
+            }
+          },
         },
         context.signal,
       );

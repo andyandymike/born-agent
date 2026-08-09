@@ -317,7 +317,12 @@ export class HookRuntime implements EffectHookPipeline {
           }
           continue;
         }
-        if (input.revalidateOriginalAction !== undefined && !(await input.revalidateOriginalAction())) {
+        const requiresOriginalRevalidation = hook.metadata.mode === "gate" &&
+          (event === "tool.before_effect" || event === "completion.before_commit");
+        if (
+          (requiresOriginalRevalidation && input.revalidateOriginalAction === undefined) ||
+          (input.revalidateOriginalAction !== undefined && !(await input.revalidateOriginalAction()))
+        ) {
           await this.options.events.append("hook.invocation.failed", {
             code: "hook_original_action_stale",
             effect_state: "none",

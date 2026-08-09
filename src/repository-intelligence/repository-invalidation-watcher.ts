@@ -80,11 +80,15 @@ function canonicalRelativePath(value: Buffer | string | null): string | null {
 function classify(eventType: "change" | "rename", filename: Buffer | string | null): RepositoryInvalidation | null {
   // PHASE17: platform watch bytes are only invalidation hints. Rename, overflow-like
   // missing names, and malformed paths force a later full authoritative rescan.
-  if (eventType === "rename") return Object.freeze({ kind: "unknown", relativePath: null });
   const relativePath = canonicalRelativePath(filename);
-  if (relativePath === null) return Object.freeze({ kind: "unknown", relativePath: null });
   if (relativePath === cacheCurrent || relativePath === cacheLock) {
+    // Atomic publication commonly reports a rename for these exact internal
+    // paths. Preserve the cache classification so the coordinator can verify
+    // the authoritative pointer instead of invalidating its own generation.
     return Object.freeze({ kind: "cache", relativePath });
+  }
+  if (eventType === "rename" || relativePath === null) {
+    return Object.freeze({ kind: "unknown", relativePath: null });
   }
   const parts = relativePath.split("/");
   if (parts.some((part) => ignoredDirectories.has(part))) return null;

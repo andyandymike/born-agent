@@ -89,7 +89,20 @@ export const pluginAuditEventSchema = z.object({
 
 export type PluginAuditEventV1 = z.infer<typeof pluginAuditEventSchema>;
 
+const pluginOperationStateTransitionSchema = z.object({
+  after_enablement_revision: revision,
+  after_installed_revision: revision,
+  after_state_sha256: sha256,
+  before_enablement_revision: revision,
+  before_installed_revision: revision,
+  before_state_sha256: sha256,
+}).strict().refine(
+  (value) => value.before_state_sha256 !== value.after_state_sha256,
+  "Plugin operation state transition must change the exact state digest",
+);
+
 export const pluginOperationRecordSchema = z.object({
+  audit_event_id: uuid.optional(),
   operation: z.enum(["install", "enable", "disable", "remove"]),
   operation_id: uuid,
   plugin_sha256: sha256.optional(),
@@ -100,10 +113,28 @@ export const pluginOperationRecordSchema = z.object({
   }).strict().optional(),
   requested_at: timestamp,
   schema_version: z.literal(1),
+  state_transition: pluginOperationStateTransitionSchema.optional(),
   state: z.enum(["requested", "completed"]),
 }).strict().superRefine((value, context) => {
   if (value.state === "requested" && value.reconciliation !== undefined) {
     context.addIssue({ code: "custom", message: "requested operation cannot carry reconciliation" });
+  }
+  if (
+    value.state === "requested" &&
+    (value.audit_event_id === undefined || value.plugin_sha256 === undefined || value.state_transition === undefined)
+  ) {
+    context.addIssue({ code: "custom", message: "requested operation requires exact audit, digest, and state transition identities" });
+  }
+  const transition = value.state_transition;
+  if (transition === undefined) return;
+  const changesInstalled = value.operation === "install" || value.operation === "remove";
+  const installedDelta = transition.after_installed_revision - transition.before_installed_revision;
+  const enablementDelta = transition.after_enablement_revision - transition.before_enablement_revision;
+  if (installedDelta !== (changesInstalled ? 1 : 0)) {
+    context.addIssue({ code: "custom", message: "Plugin operation installed revision transition is invalid" });
+  }
+  if (enablementDelta !== (changesInstalled ? 0 : 1)) {
+    context.addIssue({ code: "custom", message: "Plugin operation enablement revision transition is invalid" });
   }
 });
 
@@ -116,6 +147,8 @@ export const capabilityLeaseRecordSchema = z.object({
   run_id: uuid,
   schema_version: z.literal(1),
 }).strict();
+
+export type CapabilityLeaseRecordV1 = z.infer<typeof capabilityLeaseRecordSchema>;
 
 export function exactPluginSelector(record: InstalledPluginRecordV1): string {
   return `user_install:${record.pluginId}@${record.pluginVersion}#sha256:${record.pluginSha256}`;

@@ -34,7 +34,7 @@ describe("Phase 18A cross-process package stability", () => {
       let revision = 0;
       const write = () => {
         revision += 1;
-        fs.writeFileSync(target, JSON.stringify({
+        const bytes = Buffer.from(JSON.stringify({
           component_id: "review",
           context: { max_entry_bytes: 4096, max_resource_bytes: 4096, max_total_resource_bytes: 8192 },
           description: revision % 2 === 0 ? "Review one bounded change A." : "Review one bounded change B.",
@@ -44,6 +44,15 @@ describe("Phase 18A cross-process package stability", () => {
           kind: "skill",
           schema_version: 1
         }) + "\n");
+        const handle = fs.openSync(target, "r+");
+        try {
+          const written = fs.writeSync(handle, bytes, 0, bytes.byteLength, 0);
+          if (written !== bytes.byteLength) throw new Error("short race fixture write");
+          fs.ftruncateSync(handle, bytes.byteLength);
+          fs.fsyncSync(handle);
+        } finally {
+          fs.closeSync(handle);
+        }
         if (revision === 1) process.stdout.write("READY\n");
       };
       write();

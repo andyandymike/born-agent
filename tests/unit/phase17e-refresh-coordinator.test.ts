@@ -103,6 +103,46 @@ describe("Phase 17E foreground repository refresh coordinator", () => {
     expect(coordinator.state).toMatchObject({ kind: "ready", generationSha256: HASH.generation });
   });
 
+  it("revalidates a delayed cache publication hint before invalidating its own ready generation", async () => {
+    let projected = readyStatus();
+    const status = vi.fn(async () => projected);
+    const coordinator = new RepositoryRefreshCoordinator(service({
+      ensure: async () => current(),
+      status,
+    }));
+
+    await coordinator.refresh();
+    coordinator.invalidate({
+      kind: "cache",
+      relativePath: ".bornagent/cache/repository-intelligence/v1/current.json",
+    });
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    expect(coordinator.state).toMatchObject({
+      generationSha256: HASH.generation,
+      kind: "ready",
+    });
+
+    projected = buildRepositoryStatusProjection({
+      buildPhase: null,
+      coverage: null,
+      engineId: "typescript-language-service",
+      engineIdentitySha256: HASH.engine,
+      generationSha256: null,
+      indexState: "dirty",
+      reason: "cache_removed",
+      ruleManifestSha256: HASH.rules,
+      schemaVersion: 1,
+      sourceStateSha256: HASH.source,
+      watchState: "available",
+    });
+    coordinator.invalidate({
+      kind: "cache",
+      relativePath: ".bornagent/cache/repository-intelligence/v1/current.json",
+    });
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(3));
+    expect(coordinator.state).toEqual({ kind: "dirty", reasons: ["cache_removed"] });
+  });
+
   it("rejects a post-build stale status and retains only dirty facts", async () => {
     const dirty = buildRepositoryStatusProjection({
       buildPhase: null,

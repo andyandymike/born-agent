@@ -148,6 +148,42 @@ function closeResult(child: ChildProcessWithoutNullStreams): Promise<{ readonly 
   });
 }
 
+async function readStableRegularFile(path: string, label: string): Promise<Buffer> {
+  const before = await lstat(path);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error(`${label} is not a regular non-link file`);
+  }
+  const bytes = await readFile(path);
+  const after = await lstat(path);
+  if (
+    !after.isFile() ||
+    after.isSymbolicLink() ||
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    bytes.byteLength !== after.size
+  ) {
+    throw new Error(`${label} changed while it was read`);
+  }
+  return bytes;
+}
+
+function decodeHookOutput(chunks: readonly Buffer[], label: string): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8`, { cause: error });
+  }
+}
+
+function containsTerminalControl(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint === 0x1b || codePoint === 0x9b;
+  });
+}
+
 export class HookCommandRunner implements HookCommandRunnerLike {
   constructor(private readonly options: {
     readonly cleanup: ProcessTreeCleanup;
@@ -202,19 +238,18 @@ export class HookCommandRunner implements HookCommandRunnerLike {
         throw new HookCommandExecutionError("hook_invocation_failed", "Hook environment cannot declare credential-like names", "none");
       }
     }
-    const [script, nodeBytes] = await Promise.all([
-      this.options.content.readComponentFile(input.hook.identity, handler.executable),
-      readFile(this.options.executable),
-    ]);
-    const [scriptMetadata, executableMetadata] = await Promise.all([
+    const script = await this.options.content.readComponentFile(input.hook.identity, handler.executable)
+      .catch((error: unknown) => {
+        throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable could not be frozen", "none", { cause: error });
+      });
+    const [scriptMetadata, nodeBytes] = await Promise.all([
       lstat(script.absolutePath),
-      lstat(this.options.executable),
-    ]);
-    if (
-      !scriptMetadata.isFile() || scriptMetadata.isSymbolicLink() ||
-      !executableMetadata.isFile() || executableMetadata.isSymbolicLink()
-    ) {
-      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable identity is not a regular non-link file", "none");
+      readStableRegularFile(this.options.executable, "Node executable"),
+    ]).catch((error: unknown) => {
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable identity could not be verified", "none", { cause: error });
+    });
+    if (!scriptMetadata.isFile() || scriptMetadata.isSymbolicLink()) {
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook script is not a regular non-link file", "none");
     }
     const nodeSha256 = createHash("sha256").update(nodeBytes).digest("hex");
     const actionSha256 = sha256Canonical({
@@ -258,13 +293,25 @@ export class HookCommandRunner implements HookCommandRunnerLike {
       throw new HookCommandExecutionError("hook_approval_denied", "Hook command was not approved", "none");
     }
 
-    const revalidated = await this.options.content.readComponentFile(input.hook.identity, handler.executable);
+    const revalidated = await this.options.content.readComponentFile(input.hook.identity, handler.executable)
+      .catch((error: unknown) => {
+        throw new HookCommandExecutionError("hook_invocation_failed", "Hook script changed after approval", "none", { cause: error });
+      });
+    const [revalidatedMetadata, revalidatedNodeBytes] = await Promise.all([
+      lstat(revalidated.absolutePath),
+      readStableRegularFile(this.options.executable, "Node executable"),
+    ]).catch((error: unknown) => {
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable changed after approval", "none", { cause: error });
+    });
     if (
+      !revalidatedMetadata.isFile() ||
+      revalidatedMetadata.isSymbolicLink() ||
       revalidated.sha256 !== script.sha256 ||
       revalidated.path !== script.path ||
-      revalidated.packageRoot !== script.packageRoot
+      revalidated.packageRoot !== script.packageRoot ||
+      createHash("sha256").update(revalidatedNodeBytes).digest("hex") !== nodeSha256
     ) {
-      throw new HookCommandExecutionError("hook_invocation_failed", "Hook bytes changed after approval", "none");
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable bytes changed after approval", "none");
     }
     const childEnvironment = sanitizeChildEnvironment({
       BORN_HOOK_PROTOCOL: "1",
@@ -328,7 +375,8 @@ export class HookCommandRunner implements HookCommandRunnerLike {
     let abortListener: (() => void) | undefined;
     const interruption = new Promise<"cancelled" | "timeout">((resolveInterruption) => {
       abortListener = () => resolveInterruption("cancelled");
-      input.signal.addEventListener("abort", abortListener, { once: true });
+      if (input.signal.aborted) resolveInterruption("cancelled");
+      else input.signal.addEventListener("abort", abortListener, { once: true });
       timeoutHandle = setTimeout(() => resolveInterruption("timeout"), metadata.timeout_ms ?? 10_000);
     });
     const winner = await Promise.race([
@@ -353,15 +401,50 @@ export class HookCommandRunner implements HookCommandRunnerLike {
         "unknown",
       );
     }
+    const cleanup = await this.options.cleanup.terminate(pid);
+    if (!cleanup.verified) {
+      throw new HookCommandExecutionError(
+        "hook_invocation_failed",
+        "Hook process tree cleanup could not be verified after exit",
+        "unknown",
+      );
+    }
     if (winner.value.exitCode !== 0 || winner.value.signal !== null) {
       throw new HookCommandExecutionError("hook_invocation_failed", "Hook child exited unsuccessfully", "unknown");
     }
-    const finalScript = await this.options.content.readComponentFile(input.hook.identity, handler.executable);
-    if (finalScript.sha256 !== script.sha256 || finalScript.path !== script.path) {
-      throw new HookCommandExecutionError("hook_invocation_failed", "Hook bytes changed during execution", "unknown");
+    const finalScript = await this.options.content.readComponentFile(input.hook.identity, handler.executable)
+      .catch((error: unknown) => {
+        throw new HookCommandExecutionError("hook_invocation_failed", "Hook script identity became unavailable during execution", "unknown", { cause: error });
+      });
+    const [finalMetadata, finalNodeBytes] = await Promise.all([
+      lstat(finalScript.absolutePath),
+      readStableRegularFile(this.options.executable, "Node executable"),
+    ]).catch((error: unknown) => {
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable identity changed during execution", "unknown", { cause: error });
+    });
+    if (
+      !finalMetadata.isFile() ||
+      finalMetadata.isSymbolicLink() ||
+      finalScript.sha256 !== script.sha256 ||
+      finalScript.path !== script.path ||
+      finalScript.packageRoot !== script.packageRoot ||
+      createHash("sha256").update(finalNodeBytes).digest("hex") !== nodeSha256
+    ) {
+      throw new HookCommandExecutionError("hook_invocation_failed", "Hook executable bytes changed during execution", "unknown");
     }
-    const stdoutText = redactSensitiveText(Buffer.concat(stdout).toString("utf8"), this.options.secrets);
-    const stderrText = redactSensitiveText(Buffer.concat(stderr).toString("utf8"), this.options.secrets);
+    let stdoutRaw: string;
+    let stderrRaw: string;
+    try {
+      stdoutRaw = decodeHookOutput(stdout, "Hook stdout");
+      stderrRaw = decodeHookOutput(stderr, "Hook stderr");
+    } catch (error) {
+      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook output is not valid UTF-8", "unknown", { cause: error });
+    }
+    if (containsTerminalControl(stdoutRaw) || containsTerminalControl(stderrRaw)) {
+      throw new HookCommandExecutionError("hook_gate_output_invalid", "Hook output contains terminal control sequences", "unknown");
+    }
+    const stdoutText = redactSensitiveText(stdoutRaw, this.options.secrets);
+    const stderrText = redactSensitiveText(stderrRaw, this.options.secrets);
     let parsed: unknown;
     try {
       parsed = parseStrictJson(stdoutText.trim());

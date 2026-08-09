@@ -72,6 +72,8 @@ describe("Phase 17E repository invalidation watcher", () => {
     watcher.start();
     await vi.advanceTimersByTimeAsync(10);
 
+    port.event!("rename", ".bornagent/cache/repository-intelligence/v1/current.json");
+    await vi.advanceTimersByTimeAsync(10);
     port.event!("change", ".bornagent/cache/repository-intelligence/v1/current.json");
     port.event!("change", "src/a.ts");
     port.event!("change", "packages/core/AGENTS.md");
@@ -81,6 +83,7 @@ describe("Phase 17E repository invalidation watcher", () => {
 
     expect(invalidations).toEqual([
       { kind: "unknown", relativePath: null },
+      { kind: "cache", relativePath: ".bornagent/cache/repository-intelligence/v1/current.json" },
       { kind: "rules", relativePath: null },
     ]);
     watcher.stop();

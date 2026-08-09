@@ -12,12 +12,19 @@ const workspacePath = workspace;
 const appEntryPath = appEntry;
 const repositoryLifecycle = process.argv[4] === "repository";
 const capabilityLifecycle = process.argv[4] === "capability";
+const graphLifecycle = process.argv[4] === "graph";
 
 const MAX_OUTPUT_BYTES = 2_000_000;
 
 interface PtyExit {
   readonly exitCode: number;
   readonly signal?: number;
+}
+
+function canonicalPtySignal(signal: number | undefined): number | null {
+  // node-pty reports a clean POSIX shell exit as signal 0 while Windows
+  // ConPTY omits it. Closure evidence uses one domain-level no-signal value.
+  return signal === undefined || signal === 0 ? null : signal;
 }
 
 function childEnvironment(): Record<string, string> {
@@ -113,7 +120,7 @@ function shellLaunch(): {
     import.meta.resolve("tsx"),
     appEntryPath,
     workspacePath,
-    ...(capabilityLifecycle ? ["capability"] : []),
+    ...(capabilityLifecycle ? ["capability"] : graphLifecycle ? ["graph"] : []),
   ]
     .map(quoteCommandArgument)
     .join(" ");
@@ -202,6 +209,73 @@ async function main(): Promise<void> {
   try {
     await delay(100);
     terminal.write(`${launch.appCommand}\r`);
+    if (graphLifecycle) {
+      await waitFor(
+        (plain) => plain.includes("GRAPH |") && plain.includes("draft") && plain.includes("INPUT") &&
+          (plain.includes("run=idle") || plain.includes("precondition_failed")),
+        "Graph TUI draft",
+      );
+      terminal.resize(103, 31);
+      const resized = terminal.cols === 103 && terminal.rows === 31;
+      terminal.write("/graph approve\r");
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await delay(100);
+        const plain = visibleText(raw);
+        if (plain.includes("status=approved") || (plain.includes("GRAPH |") && plain.includes("approved"))) break;
+        terminal.write("\r");
+      }
+      await waitFor(
+        (plain) => plain.includes("status=approved") || (plain.includes("GRAPH |") && plain.includes("approved")),
+        "Graph TUI approval",
+      );
+      terminal.write("/graph enqueue foreground\r");
+      await waitFor(
+        (plain) => (plain.includes("Graph queued:") && plain.includes("Ready: inspect")) ||
+          (plain.includes("| queued |") && plain.includes("GRAPH NODE | 1:inspect | ready")),
+        "Graph TUI enqueue",
+      );
+      terminal.write("/graph node inspect\r");
+      await waitFor(
+        (plain) => plain.includes("Graph node inspect:"),
+        "Graph TUI node projection",
+      );
+      terminal.write("/graph cancel PTY_CANCEL\r");
+      await waitFor(
+        (plain) => plain.includes("Graph cancel requested:") ||
+          (plain.includes("GRAPH |") && plain.includes("| cancelled |")),
+        "Graph TUI cancellation",
+      );
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "Graph app exit");
+      terminal.write(`${launch.proofCommand}\r`);
+      await waitFor(
+        (plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        "restored parent shell",
+      );
+      terminal.write(`${launch.exitCommand}\r`);
+      const terminalExit = await Promise.race([
+        exitPromise,
+        delay(12_000).then(() => {
+          throw new Error("Graph PTY app did not exit");
+        }),
+      ]);
+      const plain = visibleText(raw);
+      process.stdout.write(JSON.stringify({
+        appExitCode: 0,
+        graphApproved: plain.includes("status=approved") || plain.includes("| approved |"),
+        graphCancelled: plain.includes("Graph cancel requested:") ||
+          (plain.includes("GRAPH |") && plain.includes("| cancelled |")),
+        graphEnqueued: (plain.includes("Graph queued:") && plain.includes("Ready: inspect")) ||
+          (plain.includes("| queued |") && plain.includes("GRAPH NODE | 1:inspect | ready")),
+        graphNodeVisible: plain.includes("Graph node inspect:"),
+        outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+        resized,
+        shellExitCode: terminalExit.exitCode,
+        shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        signal: canonicalPtySignal(terminalExit.signal),
+      }), () => process.exit(0));
+      return;
+    }
     if (capabilityLifecycle) {
       await waitFor(
         (plain) => plain.includes("STATUS") && plain.includes("run=idle"),
@@ -246,7 +320,7 @@ async function main(): Promise<void> {
         resized,
         shellExitCode: terminalExit.exitCode,
         shellRestored: visibleText(raw).split("PTY_SHELL_RESTORED").length - 1 >= 2,
-        signal: terminalExit.signal ?? null,
+        signal: canonicalPtySignal(terminalExit.signal),
         skillSelected: visibleText(raw).includes("Skill selected for the next run"),
       }), () => process.exit(0));
       return;
@@ -336,13 +410,18 @@ async function main(): Promise<void> {
       shellExitCode: terminalExit.exitCode,
       shellRestored:
         visibleText(raw).split("PTY_SHELL_RESTORED").length - 1 >= 2,
-      signal: terminalExit.signal ?? null,
+      signal: canonicalPtySignal(terminalExit.signal),
     };
     process.stdout.write(JSON.stringify(evidence), () => process.exit(0));
   } catch (error) {
-    if (exit === null) terminal.kill();
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`, () => process.exit(1));
+    process.stderr.write(`${message}\n`);
+    if (exit === null) {
+      terminal.write("\u0003");
+      terminal.write(`${launch.exitCommand}\r`);
+      await delay(250);
+    }
+    process.exit(1);
   }
 }
 

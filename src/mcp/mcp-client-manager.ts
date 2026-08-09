@@ -269,6 +269,27 @@ export class McpClientManager {
           originalActionSha256: action.actionSha256,
           toolName: modelToolName,
         },
+        revalidateOriginalAction: async () => {
+          if (managed.changeTask !== null) await managed.changeTask;
+          if (this.stopping || managed.catalogChangedNotification || managed.activeCallId !== null) return false;
+          try {
+            const current = requireFrozenMcpTool(managed.catalogState, modelToolName);
+            const currentAction = createMcpToolCallActionIdentity({
+              argumentsValue: input,
+              callTimeoutMs: managed.server.config.callTimeoutMs,
+              catalogSha256: managed.discovery.catalog.catalogSha256,
+              configSha256: managed.server.config.configSha256,
+              modelToolName,
+              processIdentitySha256: managed.server.processIdentity.processIdentitySha256,
+              rawToolName: current.rawName,
+              schemaSha256: current.schema.schemaSha256,
+              serverId,
+            });
+            return currentAction.actionSha256 === action.actionSha256;
+          } catch {
+            return false;
+          }
+        },
       },
       context.signal,
     );

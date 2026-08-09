@@ -133,7 +133,7 @@ export function createFinishTaskTool(
       );
 
       try {
-        const state = await options.state();
+        let state = await options.state();
         let decision = await options.policy.evaluate(candidate, state);
         if (decision.effect === "accept" && options.hooks !== undefined) {
           const hookDecision = await options.hooks.run(
@@ -148,11 +148,18 @@ export function createFinishTaskTool(
                 changed_paths: state.changedByRun.map((change) => change.path),
                 verification_count: state.verifications.length,
               },
+              revalidateOriginalAction: async () => {
+                const current = await options.state();
+                return (await options.policy.evaluate(candidate, current)).effect === "accept";
+              },
             },
             context.signal,
           );
           if (hookDecision.decision === "deny") {
             decision = { effect: "incomplete", reason: "task_blocked" };
+          } else {
+            state = await options.state();
+            decision = await options.policy.evaluate(candidate, state);
           }
         }
         if (decision.effect === "continue") {

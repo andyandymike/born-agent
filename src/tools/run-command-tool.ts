@@ -466,6 +466,15 @@ export function createRunCommandTool(
             originalActionSha256: prepared.actionSha256,
             toolName: "run_command",
           },
+          revalidateOriginalAction: async () => {
+            if ((await prepared.revalidate()) !== "current") return false;
+            try {
+              await options.beforeEffect?.();
+              return true;
+            } catch {
+              return false;
+            }
+          },
         },
         context.signal,
       );

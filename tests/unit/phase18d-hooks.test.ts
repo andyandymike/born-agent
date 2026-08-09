@@ -2,13 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactSessionRuntime } from "../../src/artifacts/artifact-session-runtime.js";
 import { canonicalJson } from "../../src/completion/canonical-json.js";
 import { HookCommandRunner } from "../../src/hooks/hook-command-runner.js";
 import { HookRuntime, type HookDurableFacts } from "../../src/hooks/hook-runtime.js";
 import type { Phase18HookRunEventType } from "../../src/hooks/hook-event-schema.js";
+import type { ProcessTreeCleanup } from "../../src/execution/process-tree-cleanup.js";
 import {
   createTestCapabilityRoots,
   writeTestCapabilityPackage,
@@ -31,11 +32,36 @@ const baseFacts = (): HookDurableFacts => ({
   planApprovalEvidence: [],
 });
 
+function commandGate(timeoutMs?: number) {
+  return {
+    component_id: "observer",
+    description: "Strict command gate.",
+    display_name: "Gate",
+    event: "tool.before_effect",
+    failure_policy: "fail_closed",
+    handler: {
+      argv: [],
+      cwd: "plugin_root",
+      environment: {},
+      executable: "observer.mjs",
+      sandbox: "policy_selected",
+      type: "command",
+    },
+    kind: "hook",
+    mode: "gate",
+    requested_effects: ["process_spawn"],
+    schema_version: 1,
+    ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }),
+  };
+}
+
 async function hookFixture(
   hook: unknown,
   facts = baseFacts(),
   command?: {
     readonly approval?: "approved" | "cancelled" | "denied";
+    readonly cleanup?: ProcessTreeCleanup;
+    readonly onEvent?: (type: Phase18HookRunEventType) => void;
     readonly script?: string;
   },
 ) {
@@ -75,7 +101,7 @@ async function hookFixture(
         ? {}
         : {
             commandRunner: new HookCommandRunner({
-              cleanup: {
+              cleanup: command.cleanup ?? {
                 terminate: async (pid) => {
                   if (pid !== undefined) {
                     try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
@@ -92,7 +118,12 @@ async function hookFixture(
               workspace: roots.workspace,
             }),
           }),
-      events: { append: async (type, data) => void events.push({ data, type }) },
+      events: {
+        append: async (type, data) => {
+          events.push({ data, type });
+          command?.onEvent?.(type);
+        },
+      },
       facts: () => facts,
       randomUUID,
       runId: RUN_ID,
@@ -302,5 +333,192 @@ describe("Phase 18D lifecycle Hooks", () => {
       data: { code: "hook_approval_denied", effect_state: "none" },
       type: "hook.invocation.failed",
     });
+  });
+
+  it("fails closed when a before-effect command gate has no original-action revalidation", async () => {
+    const value = await hookFixture({
+      component_id: "observer",
+      description: "Strict command gate.",
+      display_name: "Gate",
+      event: "tool.before_effect",
+      failure_policy: "fail_closed",
+      handler: {
+        argv: [],
+        cwd: "plugin_root",
+        environment: {},
+        executable: "observer.mjs",
+        sandbox: "policy_selected",
+        type: "command",
+      },
+      kind: "hook",
+      mode: "gate",
+      requested_effects: ["process_spawn"],
+      schema_version: 1,
+    }, baseFacts(), {
+      script: "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({schemaVersion:1,decision:'no_objection'})));\n",
+    });
+
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      { action: { actionKind: "run_command", originalActionSha256: "f".repeat(64) } },
+      new AbortController().signal,
+    )).resolves.toMatchObject({ decision: "deny", code: "hook_original_action_stale" });
+    expect(value.events.at(-1)).toMatchObject({
+      data: { code: "hook_original_action_stale", effect_state: "none" },
+      type: "hook.invocation.failed",
+    });
+  });
+
+  it("blocks on strict-output failure after spawn because the Hook effect is unknown", async () => {
+    const value = await hookFixture({
+      component_id: "observer",
+      description: "Strict command gate.",
+      display_name: "Gate",
+      event: "tool.before_effect",
+      failure_policy: "fail_closed",
+      handler: {
+        argv: [],
+        cwd: "plugin_root",
+        environment: {},
+        executable: "observer.mjs",
+        sandbox: "policy_selected",
+        type: "command",
+      },
+      kind: "hook",
+      mode: "gate",
+      requested_effects: ["process_spawn"],
+      schema_version: 1,
+    }, baseFacts(), { script: "process.stdout.write('{not-json');\n" });
+
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "1".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "hook_effect_unknown" });
+    expect(value.events.at(-1)).toMatchObject({
+      data: { code: "hook_gate_output_invalid", effect_state: "unknown" },
+      type: "hook.invocation.failed",
+    });
+  });
+
+  it("requires verified process-tree cleanup even after a zero exit", async () => {
+    const terminate = vi.fn(async () => ({
+      detail: "force_failed" as const,
+      forced: true,
+      verified: false,
+    }));
+    const value = await hookFixture({
+      component_id: "observer",
+      description: "Strict command gate.",
+      display_name: "Gate",
+      event: "tool.before_effect",
+      failure_policy: "fail_closed",
+      handler: {
+        argv: [],
+        cwd: "plugin_root",
+        environment: {},
+        executable: "observer.mjs",
+        sandbox: "policy_selected",
+        type: "command",
+      },
+      kind: "hook",
+      mode: "gate",
+      requested_effects: ["process_spawn"],
+      schema_version: 1,
+    }, baseFacts(), {
+      cleanup: { terminate },
+      script: "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({schemaVersion:1,decision:'no_objection'})));\n",
+    });
+
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "2".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "hook_effect_unknown" });
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it("terminates and blocks a timed-out command Hook", async () => {
+    const value = await hookFixture(commandGate(100), baseFacts(), {
+      script: "process.stdin.resume(); setInterval(() => undefined, 1000);\n",
+    });
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "3".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "hook_effect_unknown" });
+    expect(value.events.at(-1)).toMatchObject({
+      data: { code: "hook_invocation_timeout", effect_state: "unknown" },
+      type: "hook.invocation.failed",
+    });
+  });
+
+  it("terminates and blocks when cancellation arrives after the Hook child starts", async () => {
+    const controller = new AbortController();
+    const value = await hookFixture(commandGate(), baseFacts(), {
+      onEvent: (type) => {
+        if (type === "hook.invocation.started") controller.abort();
+      },
+      script: "process.stdin.resume(); setInterval(() => undefined, 1000);\n",
+    });
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "4".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      controller.signal,
+    )).rejects.toMatchObject({ code: "hook_effect_unknown" });
+    expect(value.events.at(-1)).toMatchObject({
+      data: { code: "hook_invocation_cancelled", effect_state: "unknown" },
+      type: "hook.invocation.failed",
+    });
+  });
+
+  it("rejects invalid UTF-8 and terminal controls after spawn", async () => {
+    for (const script of [
+      "process.stdout.write(Buffer.from([255]));\n",
+      "process.stdout.write('\\u001b[31m' + JSON.stringify({schemaVersion:1,decision:'no_objection'}));\n",
+    ]) {
+      const value = await hookFixture(commandGate(), baseFacts(), { script });
+      await expect(value.runtime.run(
+        "tool.before_effect",
+        {
+          action: { actionKind: "run_command", originalActionSha256: "5".repeat(64) },
+          revalidateOriginalAction: async () => true,
+        },
+        new AbortController().signal,
+      )).rejects.toMatchObject({ code: "hook_effect_unknown" });
+      expect(value.events.at(-1)).toMatchObject({
+        data: { code: "hook_gate_output_invalid", effect_state: "unknown" },
+        type: "hook.invocation.failed",
+      });
+    }
+  });
+
+  it("does not expose ambient credential or proxy variables to a command Hook", async () => {
+    const value = await hookFixture(commandGate(), baseFacts(), {
+      script: [
+        "const forbidden = Object.keys(process.env).filter((name) => /KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|COOKIE|PROXY/i.test(name));",
+        "process.stdout.write(JSON.stringify({schemaVersion:1,decision:forbidden.length===0?'no_objection':'deny',...(forbidden.length===0?{evidence:['ambient-env:none']}:{code:'ambient_env_exposed',message:forbidden.join(',')})}));",
+      ].join("\n"),
+    });
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      {
+        action: { actionKind: "run_command", originalActionSha256: "6".repeat(64) },
+        revalidateOriginalAction: async () => true,
+      },
+      new AbortController().signal,
+    )).resolves.toMatchObject({ decision: "no_objection", evidence: expect.arrayContaining(["ambient-env:none"]) });
   });
 });

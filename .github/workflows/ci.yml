@@ -35,8 +35,32 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
 
+      - name: Install pinned ripgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz"
+          download="$RUNNER_TEMP/$archive"
+          install_root="$RUNNER_TEMP/ripgrep"
+          curl --fail --location --retry 3 \
+            --output "$download" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$archive"
+          echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $download" | sha256sum --check
+          mkdir -p "$install_root"
+          tar --extract --gzip --file "$download" --directory "$install_root" --strip-components=1
+          echo "$install_root" >> "$GITHUB_PATH"
+          "$install_root/rg" --version
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Verify repository
         run: pnpm check
+
+      - name: Verify built background worker
+        env:
+          BORN_RUN_BUILT_WORKER_TEST: "1"
+        run: pnpm exec vitest run tests/integration/phase19d-background-worker.test.ts --maxWorkers=1
+
+      - name: Smoke packed artifact
+        run: pnpm pack:smoke

@@ -23,6 +23,7 @@ function boundedReasons(values: Iterable<string>): readonly string[] {
 export class RepositoryRefreshCoordinator {
   private active: Promise<CurrentGeneration> | null = null;
   private activeController: AbortController | null = null;
+  private cacheValidationEpoch = 0;
   private dirtyReasons = new Set<string>();
   private stopped = false;
   private currentState: RepositoryJobState = Object.freeze({ kind: "idle" });
@@ -38,7 +39,24 @@ export class RepositoryRefreshCoordinator {
 
   invalidate(invalidation: RepositoryInvalidation): void {
     if (this.stopped) return;
-    this.dirtyReasons.add(invalidationReason(invalidation));
+    const reason = invalidationReason(invalidation);
+    const validationEpoch = ++this.cacheValidationEpoch;
+    if (
+      invalidation.kind === "cache" &&
+      this.active === null &&
+      this.currentState.kind === "ready"
+    ) {
+      // A current.json atomic rename can be emitted after the foreground job's
+      // Promise has settled. Re-read authority before turning that self-write
+      // into dirty state; external deletion/tamper still becomes dirty.
+      void this.revalidateReadyCache(
+        this.currentState.generationSha256,
+        reason,
+        validationEpoch,
+      );
+      return;
+    }
+    this.dirtyReasons.add(reason);
     // PHASE17: invalidation stores only bounded dirty facts. It never queues a
     // model/user query and never starts a hidden refresh job.
     if (this.active === null) {
@@ -56,6 +74,7 @@ export class RepositoryRefreshCoordinator {
       return Promise.reject(new RepositoryIntelligenceError("repository_navigation_cancelled", "repository refresh coordinator has stopped", 130));
     }
     if (this.active !== null) return this.active;
+    this.cacheValidationEpoch += 1;
     const controller = new AbortController();
     const onAbort = () => controller.abort(signal.reason);
     if (signal.aborted) onAbort();
@@ -81,6 +100,7 @@ export class RepositoryRefreshCoordinator {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    this.cacheValidationEpoch += 1;
     this.cancel();
     await this.active?.catch(() => undefined);
     this.active = null;
@@ -125,6 +145,35 @@ export class RepositoryRefreshCoordinator {
       }
       throw error;
     }
+  }
+
+  private async revalidateReadyCache(
+    expectedGenerationSha256: string,
+    reason: string,
+    validationEpoch: number,
+  ): Promise<void> {
+    let valid = false;
+    let dirtyReason: string;
+    try {
+      const status = await this.service.status();
+      valid = status.indexState === "ready" &&
+        status.generationSha256 === expectedGenerationSha256;
+      dirtyReason = status.reason ?? reason;
+    } catch {
+      dirtyReason = "cache_status_failed";
+    }
+    if (
+      this.stopped ||
+      validationEpoch !== this.cacheValidationEpoch ||
+      this.active !== null ||
+      this.currentState.kind !== "ready" ||
+      this.currentState.generationSha256 !== expectedGenerationSha256
+    ) {
+      return;
+    }
+    if (valid) return;
+    this.dirtyReasons.add(dirtyReason);
+    this.transition({ kind: "dirty", reasons: boundedReasons(this.dirtyReasons) });
   }
 
   private transition(state: RepositoryJobState): void {

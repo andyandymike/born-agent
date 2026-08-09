@@ -542,6 +542,23 @@ export class McpPrimitiveRuntime {
           originalActionSha256: action.actionSha256,
           toolName: "read_mcp_resource",
         },
+        revalidateOriginalAction: async () => {
+          if (binding.staleTask !== null) await binding.staleTask;
+          const current = binding.resourceCatalog?.resources.find((candidate) => candidate.resourceId === resource.resourceId);
+          if (binding.resourceStale || current === undefined) return false;
+          const currentAction = createMcpResourceReadActionIdentity({
+            callTimeoutMs: binding.server.config.callTimeoutMs,
+            catalogGenerationSha256: current.catalogGenerationSha256,
+            configSha256: binding.server.config.configSha256,
+            negotiationSha256: binding.negotiation.negotiationSha256,
+            processIdentitySha256: binding.server.processIdentity.processIdentitySha256,
+            resourceId: current.resourceId,
+            resourceItemSha256: current.itemSha256,
+            serverId: current.serverId,
+            uri: current.uri,
+          });
+          return currentAction.actionSha256 === action.actionSha256;
+        },
       },
       context.signal,
     );
@@ -737,6 +754,25 @@ export class McpPrimitiveRuntime {
           capabilityIds: [prompt.serverId],
           originalActionSha256: action.actionSha256,
           toolName: "get_mcp_prompt",
+        },
+        revalidateOriginalAction: async () => {
+          if (binding.staleTask !== null) await binding.staleTask;
+          const current = binding.promptCatalog?.prompts.find((candidate) => candidate.promptId === prompt.promptId);
+          if (binding.promptStale || current === undefined) return false;
+          const currentAction = createMcpPromptGetActionIdentity({
+            argumentsValue,
+            callTimeoutMs: binding.server.config.callTimeoutMs,
+            catalogGenerationSha256: current.catalogGenerationSha256,
+            configSha256: binding.server.config.configSha256,
+            invocationEventId: input.invocationEventId,
+            negotiationSha256: binding.negotiation.negotiationSha256,
+            processIdentitySha256: binding.server.processIdentity.processIdentitySha256,
+            promptId: current.promptId,
+            promptItemSha256: current.itemSha256,
+            promptName: current.name,
+            serverId: current.serverId,
+          });
+          return currentAction.actionSha256 === action.actionSha256;
         },
       },
       input.signal,

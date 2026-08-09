@@ -43,6 +43,23 @@ async function fixture() {
   return { base, builtinRoot, lifecycle, userRoot, workspace };
 }
 
+async function resetOperationToRequested(path: string): Promise<Record<string, unknown>> {
+  const operation = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  delete operation.reconciliation;
+  operation.state = "requested";
+  await writeFile(path, `${canonicalJson(operation)}\n`, "utf8");
+  return operation;
+}
+
+async function removeAuditOperation(userRoot: string, operationId: string): Promise<void> {
+  const path = join(userRoot, "audit", "v1", "events.jsonl");
+  const events = (await readFile(path, "utf8")).trim().split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((event) => event.operation_id !== operationId);
+  await writeFile(path, events.length === 0 ? "" : `${events.map((event) => canonicalJson(event)).join("\n")}\n`, "utf8");
+}
+
 describe("Phase 18E local Plugin lifecycle", () => {
   it("inspects without writes, installs disabled, freezes enabled bytes, leases, disables, and removes logically", async () => {
     const value = await fixture();
@@ -83,6 +100,12 @@ describe("Phase 18E local Plugin lifecycle", () => {
     );
     expect(Buffer.from(content.bytes).toString("utf8")).toContain("# Review change");
 
+    await expect(value.lifecycle.remove(installed.exactSelector)).rejects.toMatchObject({
+      code: "plugin_active_lease",
+    });
+    expect(await value.lifecycle.list()).toHaveLength(1);
+    await leases[0]!.release();
+
     const removed = await value.lifecycle.remove(installed.exactSelector);
     expect(removed).toMatchObject({ changed: true, retainedContent: true });
     expect(await value.lifecycle.list()).toHaveLength(0);
@@ -94,8 +117,6 @@ describe("Phase 18E local Plugin lifecycle", () => {
       inspection.pluginSha256,
       "bornagent.plugin.json",
     ))).resolves.toBeUndefined();
-    await leases[0]!.release();
-
     const audit = await readFile(join(value.userRoot, "audit", "v1", "events.jsonl"), "utf8");
     expect(audit.trim().split("\n").map((line) => JSON.parse(line).operation)).toEqual([
       "installed",
@@ -153,14 +174,7 @@ describe("Phase 18E local Plugin lifecycle", () => {
     const installed = await value.lifecycle.install(source);
     const operations = join(value.userRoot, "tmp", "operations");
     const installedOperation = join(operations, `${installed.operationId}.json`);
-    await writeFile(installedOperation, `${canonicalJson({
-      operation: "install",
-      operation_id: installed.operationId,
-      plugin_sha256: installed.exactSelector.split("#sha256:")[1],
-      requested_at: "2026-08-08T00:00:00.000Z",
-      schema_version: 1,
-      state: "requested",
-    })}\n`, "utf8");
+    await resetOperationToRequested(installedOperation);
     await writeFile(join(value.userRoot, "audit", "v1", "events.jsonl"), "", "utf8");
 
     await expect(value.lifecycle.doctor()).resolves.toMatchObject({
@@ -173,15 +187,14 @@ describe("Phase 18E local Plugin lifecycle", () => {
       state: "completed",
     });
 
-    const pendingId = "30000000-0000-4000-8000-000000009999";
-    const pending = join(operations, `${pendingId}.json`);
-    await writeFile(pending, `${canonicalJson({
-      operation: "enable",
-      operation_id: pendingId,
-      plugin_sha256: installed.exactSelector.split("#sha256:")[1],
-      requested_at: "2026-08-08T00:00:00.000Z",
+    const enabled = await value.lifecycle.enable(installed.exactSelector);
+    const pending = join(operations, `${enabled.operationId}.json`);
+    await resetOperationToRequested(pending);
+    await removeAuditOperation(value.userRoot, enabled.operationId);
+    await writeFile(join(value.userRoot, "enablement", "v1", "state.json"), `${canonicalJson({
+      packages: [],
+      revision: 0,
       schema_version: 1,
-      state: "requested",
     })}\n`, "utf8");
     await expect(value.lifecycle.doctor()).resolves.toMatchObject({
       incompleteOperationCount: 0,
@@ -192,5 +205,107 @@ describe("Phase 18E local Plugin lifecycle", () => {
       reconciliation: { observed: "not_applied" },
       state: "completed",
     });
+  });
+
+  it("backfills exact enable, disable, and remove audit prefixes without repeating a mutation", async () => {
+    const value = await fixture();
+    const installed = await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    const operations = join(value.userRoot, "tmp", "operations");
+
+    const enabled = await value.lifecycle.enable(installed.exactSelector);
+    const enabledPath = join(operations, `${enabled.operationId}.json`);
+    await resetOperationToRequested(enabledPath);
+    await removeAuditOperation(value.userRoot, enabled.operationId);
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({ reconciledOperationCount: 1, status: "valid" });
+    expect(JSON.parse(await readFile(enabledPath, "utf8"))).toMatchObject({
+      reconciliation: { observed: "applied_exact" },
+      state: "completed",
+    });
+
+    const disabled = await value.lifecycle.disable(installed.exactSelector);
+    const disabledPath = join(operations, `${disabled.operationId}.json`);
+    await resetOperationToRequested(disabledPath);
+    await removeAuditOperation(value.userRoot, disabled.operationId);
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({ reconciledOperationCount: 1, status: "valid" });
+
+    const removed = await value.lifecycle.remove(installed.exactSelector);
+    const removedPath = join(operations, `${removed.operationId}.json`);
+    await resetOperationToRequested(removedPath);
+    await removeAuditOperation(value.userRoot, removed.operationId);
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({
+      installedPluginCount: 0,
+      reconciledOperationCount: 1,
+      status: "valid",
+    });
+    const audit = (await readFile(join(value.userRoot, "audit", "v1", "events.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    expect(audit.map((event) => event.operation)).toEqual(["installed", "enabled", "disabled", "removed"]);
+    expect(new Set(audit.map((event) => event.operation_id)).size).toBe(4);
+  });
+
+  it("adopts an exact immutable install orphan before completing its original operation", async () => {
+    const value = await fixture();
+    const installed = await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    const operationPath = join(value.userRoot, "tmp", "operations", `${installed.operationId}.json`);
+    const operation = await resetOperationToRequested(operationPath);
+    await removeAuditOperation(value.userRoot, installed.operationId);
+    await writeFile(join(value.userRoot, "indexes", "v1", "installed.json"), `${canonicalJson({
+      plugins: [],
+      revision: 0,
+      schema_version: 1,
+    })}\n`, "utf8");
+    const indexTemporary = join(value.userRoot, "indexes", "v1", `.installed.json.${String(operation.operation_id)}.tmp`);
+    const auditTemporary = join(value.userRoot, "audit", "v1", `.events.jsonl.${String(operation.audit_event_id)}.tmp`);
+    await writeFile(indexTemporary, "stale index prefix", "utf8");
+    await writeFile(auditTemporary, "stale audit prefix", "utf8");
+
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({
+      installedPluginCount: 1,
+      reconciledOperationCount: 1,
+      status: "valid",
+    });
+    expect(JSON.parse(await readFile(operationPath, "utf8"))).toMatchObject({
+      reconciliation: { observed: "applied_exact" },
+      state: "completed",
+    });
+    await expect(access(indexTemporary)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(auditTemporary)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed on ambiguous state and audit revision conflicts", async () => {
+    const value = await fixture();
+    const installed = await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    const enabled = await value.lifecycle.enable(installed.exactSelector);
+    const operationPath = join(value.userRoot, "tmp", "operations", `${enabled.operationId}.json`);
+    await resetOperationToRequested(operationPath);
+    const auditPath = join(value.userRoot, "audit", "v1", "events.jsonl");
+    const events = (await readFile(auditPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    const originalEventId = events.at(-1).event_id;
+    events.at(-1).event_id = "30000000-0000-4000-8000-000000008888";
+    await writeFile(auditPath, `${events.map((event) => canonicalJson(event)).join("\n")}\n`, "utf8");
+    await expect(value.lifecycle.doctor()).rejects.toMatchObject({ code: "plugin_store_corrupt" });
+
+    events.at(-1).event_id = originalEventId;
+    events.at(-1).next_enablement_revision = 2;
+    await writeFile(auditPath, `${events.map((event) => canonicalJson(event)).join("\n")}\n`, "utf8");
+    await expect(value.lifecycle.doctor()).rejects.toMatchObject({ code: "plugin_store_corrupt" });
+
+    await removeAuditOperation(value.userRoot, enabled.operationId);
+    await writeFile(join(value.userRoot, "enablement", "v1", "state.json"), `${canonicalJson({
+      packages: [],
+      revision: 2,
+      schema_version: 1,
+    })}\n`, "utf8");
+    await expect(value.lifecycle.doctor()).rejects.toMatchObject({ code: "plugin_store_corrupt" });
+  });
+
+  it("rejects a truncated audit rather than skipping or rewriting its tail", async () => {
+    const value = await fixture();
+    await value.lifecycle.install(resolve("fixtures/capability-platform/m9-review-pack"));
+    const auditPath = join(value.userRoot, "audit", "v1", "events.jsonl");
+    await writeFile(auditPath, '{"schema_version":1', "utf8");
+    await expect(value.lifecycle.doctor()).rejects.toMatchObject({ code: "plugin_store_corrupt" });
+    await writeFile(auditPath, "", "utf8");
+    await expect(value.lifecycle.doctor()).rejects.toMatchObject({ code: "plugin_store_corrupt" });
   });
 });
