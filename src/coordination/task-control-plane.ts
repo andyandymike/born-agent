@@ -70,6 +70,7 @@ export function taskMutationBlocker(
   const patches = new Set<string>();
   const mcpCalls = new Set<string>();
   const mcpServers = new Set<string>();
+  const hookCommands = new Set<string>();
 
   for (const event of session.lastRun.events) {
     switch (event.type) {
@@ -115,6 +116,22 @@ export function taskMutationBlocker(
       case "mcp.tool.call.completed":
         mcpCalls.delete(key(event.runId, event.data.call_id));
         break;
+      case "hook.invocation.requested":
+        if (event.data.handler === "command") {
+          hookCommands.add(key(event.runId, event.data.invocation_id));
+        }
+        break;
+      case "hook.invocation.decided":
+      case "hook.invocation.completed":
+        hookCommands.delete(key(event.runId, event.data.invocation_id));
+        break;
+      case "hook.invocation.failed":
+        if (event.data.effect_state === "none") {
+          hookCommands.delete(key(event.runId, event.data.invocation_id));
+        } else {
+          hookCommands.add(key(event.runId, event.data.invocation_id));
+        }
+        break;
       default:
         break;
     }
@@ -134,6 +151,9 @@ export function taskMutationBlocker(
     ...(mcpServers.size === 0
       ? []
       : [`unknown_mcp_servers=${String(mcpServers.size)}`]),
+    ...(hookCommands.size === 0
+      ? []
+      : [`unknown_hook_commands=${String(hookCommands.size)}`]),
   ];
   return details.length === 0
     ? null

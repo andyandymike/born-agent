@@ -60,6 +60,56 @@ const relativePath = z
     "path must be normalized and workspace-relative",
   );
 
+const taskBudgetCountersSchema = z.object({
+  artifactBytes: z.number().int().nonnegative(),
+  attempts: z.number().int().nonnegative(),
+  changedBytes: z.number().int().nonnegative(),
+  changedFiles: z.number().int().nonnegative(),
+  commandExecutions: z.number().int().nonnegative(),
+  commandOutputBytes: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+  modelSteps: z.number().int().nonnegative(),
+  reportedTokens: z.number().int().nonnegative().nullable(),
+}).strict();
+
+const taskOrchestrationOutcomeSchema = z.object({
+  budget: z.object({
+    consumed: taskBudgetCountersSchema,
+    limits: taskBudgetCountersSchema,
+    remaining: taskBudgetCountersSchema,
+    reserved: taskBudgetCountersSchema,
+    usageCompleteness: z.enum(["complete", "none", "partial"]),
+  }).strict(),
+  graph: z.object({
+    approvedEventId: uuid,
+    id: uuid,
+    revision: z.number().int().positive(),
+    sha256,
+    status: z.string().min(1).max(64),
+    terminalEventId: uuid.nullable(),
+  }).strict(),
+  nodes: z.array(z.object({
+    attempts: z.number().int().nonnegative().max(3),
+    id: z.string().min(1).max(64),
+    receiptSha256: sha256.nullable(),
+    status: z.string().min(1).max(64),
+  }).strict()).max(32),
+  originVerificationGenerationId: uuid.nullable(),
+  workers: z.array(z.object({
+    id: uuid,
+    mode: z.enum(["background", "foreground"]),
+    takeoverCount: z.number().int().nonnegative(),
+    terminal: z.string().min(1).max(64).nullable(),
+  }).strict()).max(32),
+  workspaces: z.array(z.object({
+    baselineSha256: sha256,
+    id: uuid,
+    promotionSha256: sha256.nullable(),
+    resultSha256: sha256.nullable(),
+    status: z.string().min(1).max(64),
+  }).strict()).max(8),
+}).strict();
+
 const outcomeWithoutHashSchema = z
   .object({
     capabilities: z
@@ -175,6 +225,7 @@ const outcomeWithoutHashSchema = z
       .nullable(),
     repository: repositoryIntelligenceRunSummarySchema.nullable(),
     skills: skillRunSummarySchema,
+    taskOrchestration: taskOrchestrationOutcomeSchema.nullable(),
     schemaVersion: z.literal(1),
     sessionId: uuid,
     usage: z
@@ -565,6 +616,15 @@ function hasUnresolvedEffect(
       event.type === "command.completed" ? [event.data.execution_id] : [],
     ),
   );
+  const completedHookCommands = new Set(
+    run.events.flatMap((event) =>
+      event.type === "hook.invocation.decided" ||
+      event.type === "hook.invocation.completed" ||
+      (event.type === "hook.invocation.failed" && event.data.effect_state === "none")
+        ? [event.data.invocation_id]
+        : [],
+    ),
+  );
   return run.events.some((event) => {
     if (event.type === "patch.apply.started") {
       return !completedPatches.has(event.data.plan_id) &&
@@ -575,6 +635,12 @@ function hasUnresolvedEffect(
       event.type === "command.started"
     ) {
       return !completedCommands.has(event.data.execution_id);
+    }
+    if (event.type === "hook.invocation.requested" && event.data.handler === "command") {
+      return !completedHookCommands.has(event.data.invocation_id);
+    }
+    if (event.type === "hook.invocation.failed" && event.data.effect_state === "unknown") {
+      return true;
     }
     return event.type === "mcp.tool.call.effect_unknown" ||
       event.type === "mcp.server.start.effect_unknown";
@@ -689,6 +755,59 @@ function classifyOutcome(input: {
     };
   }
   return { outcome: "idle", reasons: [] };
+}
+
+function projectTaskOrchestration(session: ReconstructedMultiRunSession) {
+  const execution = session.taskExecution;
+  if (execution === null) return null;
+  const approvedEventId = execution.graph.approvedEventId;
+  if (approvedEventId === null) {
+    throw new OutcomeReportError("outcome_projection_invalid", "executing Graph has no exact approval event");
+  }
+  const receiptSha256 = (terminalEventId: string | null): string | null => {
+    if (terminalEventId === null) return null;
+    const event = session.events.find((candidate) => candidate.eventId === terminalEventId);
+    return event?.scope === "session" && event.type === "task_node.attempt.terminal"
+      ? event.data.receipt_sha256
+      : null;
+  };
+  return {
+    budget: execution.budget,
+    graph: {
+      approvedEventId,
+      id: execution.graph.graphId,
+      revision: execution.graph.revision,
+      sha256: execution.graph.graphSha256,
+      status: execution.status,
+      terminalEventId: execution.graph.terminalEventId,
+    },
+    nodes: execution.nodes.map((node) => ({
+      attempts: node.attempts.length,
+      id: node.nodeId,
+      receiptSha256: receiptSha256(node.terminalEventId),
+      status: node.status,
+    })),
+    originVerificationGenerationId: [...session.events].reverse().find((event) =>
+      event.scope === "run" && event.type === "completion.evidence"
+    )?.eventId ?? null,
+    workers: session.background.workers.map((worker) => ({
+      id: worker.workerId,
+      mode: "background" as const,
+      takeoverCount: session.events.filter((event) =>
+        event.scope === "session" && event.type === "task_worker.reconciled" && event.data.operation_id === worker.operationId
+      ).length,
+      terminal: worker.terminal?.graphStatus ?? null,
+    })),
+    workspaces: session.worktrees.workspaces.map((workspace) => ({
+      baselineSha256: workspace.baseline.manifestSha256,
+      id: workspace.identity.workspaceId,
+      promotionSha256: session.worktrees.promotions.find((promotion) =>
+        promotion.bundle.workspaceId === workspace.identity.workspaceId && promotion.status === "applied"
+      )?.bundle.bundleSha256 ?? null,
+      resultSha256: workspace.lastSnapshot?.sha256 ?? null,
+      status: workspace.status,
+    })),
+  };
 }
 
 function eventEvidenceIds(input: {
@@ -918,6 +1037,7 @@ export class OutcomeReportBuilder {
               },
         repository: projectRepositoryIntelligenceRunSummary(run),
         skills: projectSkillRunSummary(run?.events ?? []),
+        taskOrchestration: projectTaskOrchestration(session),
         schemaVersion: 1,
         sessionId: session.sessionId,
         usage: {

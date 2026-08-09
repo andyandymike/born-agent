@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "lineageRoot": "core-change",
+  "promotablePrefixes": ["src/core", "src/ui"],
+  "verificationNodeId": "verify",
+  "unsupportedKinds": ["binary", "delete", "file-mode-change", "submodule", "symlink"]
+}

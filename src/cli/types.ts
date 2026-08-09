@@ -29,6 +29,16 @@ import type { CapabilityPlatformLike } from "../capabilities/capability-platform
 import type { ArtifactSessionRuntimeLike } from "../artifacts/artifact-session-runtime.js";
 import type { EffectHookPipeline } from "../hooks/hook-pipeline.js";
 import type { PluginLifecycleLike } from "../plugins/plugin-lifecycle.js";
+import type { FrozenCapabilityContentSource } from "../capabilities/capability-platform.js";
+import type { HookCommandRunnerLike } from "../hooks/hook-command-runner.js";
+import type { TaskAttemptExecutor } from "../scheduling/deterministic-task-scheduler.js";
+import type { ManagedWorktreeManager } from "../worktrees/managed-worktree-manager.js";
+import type { WorktreePromotionRuntime } from "../worktrees/promotion-runtime.js";
+import type { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
+import type { BackgroundWorkerRuntimeResultV1 } from "../background/background-worker-runtime.js";
+import type { BackgroundWorkerLiveObservationV1 } from "../background/background-worker-live-status.js";
+import type { BackgroundExecutableDescriptorV1 } from "../background/background-schema.js";
+import type { TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -53,6 +63,45 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   readonly createCapabilityPlatform?: (
     workspace: string,
   ) => CapabilityPlatformLike;
+  readonly createHookCommandRunner?: (options: {
+    readonly content: FrozenCapabilityContentSource;
+    readonly prompt: ApprovalPrompt;
+    readonly secrets: readonly (string | undefined)[];
+    readonly workspace: string;
+  }) => HookCommandRunnerLike;
+  readonly createTaskAttemptExecutor?: (options: {
+    readonly approvalMode?: "defer" | "interactive";
+    readonly io: CliIO;
+    readonly runtimeProfileId: string;
+    readonly sessionId: string;
+    readonly writerFactory?: TaskMutationWriterFactory;
+  }) => TaskAttemptExecutor;
+  readonly createBackgroundWorkerLauncher?: (options: {
+    readonly sessionId: string;
+  }) => BackgroundWorkerLauncher;
+  readonly doctorBackgroundWorker?: () => Promise<BackgroundExecutableDescriptorV1>;
+  readonly runInternalGraphWorker?: (options: {
+    readonly io: CliIO;
+    readonly operationId: string;
+    readonly repositoryId: string;
+  }) => Promise<BackgroundWorkerRuntimeResultV1>;
+  readonly observeBackgroundWorkerLive?: (options: {
+    readonly sessionId: string;
+  }) => Promise<BackgroundWorkerLiveObservationV1 | null>;
+  readonly queueBackgroundWorkerCancel?: (options: {
+    readonly graphRevision: number;
+    readonly graphSha256: string;
+    readonly reason: string;
+    readonly sessionId: string;
+  }) => Promise<{ readonly controlSha256: string; readonly operationId: string; readonly requestId: string; readonly workerId: string }>;
+  readonly createManagedWorktreeManager?: (options: {
+    readonly io: CliIO;
+    readonly sessionId: string;
+  }) => Promise<ManagedWorktreeManager>;
+  readonly createWorktreePromotionRuntime?: (options: {
+    readonly io: CliIO;
+    readonly sessionId: string;
+  }) => Promise<WorktreePromotionRuntime>;
   readonly createMcpClientManager?: (options: {
     readonly artifacts?: ArtifactSessionRuntimeLike;
     readonly events: McpEventAppender;

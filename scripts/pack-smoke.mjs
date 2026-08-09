@@ -1,4 +1,5 @@
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -37,6 +38,30 @@ function runPnpm(args, cwd) {
   if (result.status !== 0) {
     throw new Error(
       [`pnpm ${args.join(" ")} failed`, result.stdout, result.stderr]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  return result.stdout;
+}
+
+function runCommand(executable, args, cwd, env = process.env) {
+  const result = spawnSync(executable, args, {
+    cwd,
+    encoding: "utf8",
+    env,
+    shell: false,
+  });
+
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        `${executable} ${args.join(" ")} failed`,
+        result.error?.message,
+        result.stdout,
+        result.stderr,
+      ]
         .filter(Boolean)
         .join("\n"),
     );
@@ -148,6 +173,64 @@ try {
       throw new Error(`packed Phase 18 M9 review-pack asset is empty: ${relativePath}`);
     }
   }
+  const m10FixtureRoot = join(
+    packageRoot,
+    "fixtures",
+    "task-orchestration",
+    "m10-durable-graph",
+  );
+  const requiredPhase19Assets = [
+    "fixture.json",
+    "graph.json",
+    "expected/graph-projection.json",
+    "expected/outcome-summary.json",
+    "expected/promotion-manifest.json",
+    "model-scripts/core-build-node.json",
+    "model-scripts/inspect-node.json",
+    "model-scripts/ui-build-node.json",
+    "workers/crash-points.json",
+    "repository-template/.gitattributes",
+    "repository-template/AGENTS.md",
+    "repository-template/filter-sentinel.txt",
+    "repository-template/package.json",
+    "repository-template/scripts/verify.mjs",
+    "repository-template/src/core/clamp.mjs",
+    "repository-template/src/ui/AGENTS.md",
+    "repository-template/src/ui/format.mjs",
+    "repository-template/tests/fixture.test.mjs",
+  ];
+  for (const relativePath of requiredPhase19Assets) {
+    const bytes = await readFile(
+      join(m10FixtureRoot, ...relativePath.split("/")),
+    );
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 19 M10 fixture asset is empty: ${relativePath}`);
+    }
+  }
+  const m10Fixture = JSON.parse(
+    await readFile(join(m10FixtureRoot, "fixture.json"), "utf8"),
+  );
+  const m10GraphProjection = JSON.parse(
+    await readFile(
+      join(m10FixtureRoot, "expected", "graph-projection.json"),
+      "utf8",
+    ),
+  );
+  if (
+    m10Fixture.id !== "m10-durable-graph-v1" ||
+    m10Fixture.networkRequired !== false ||
+    m10Fixture.remoteProvidersAllowed !== false ||
+    m10Fixture.expectedGraphSha256 !== m10GraphProjection.graphSha256 ||
+    m10GraphProjection.nodeOrder?.length !== 4
+  ) {
+    throw new Error("packed Phase 19 M10 fixture identity is not exact");
+  }
+  const internalWorkerBytes = await readFile(
+    join(packageRoot, "dist", "commands", "internal-graph-worker.js"),
+  );
+  if (internalWorkerBytes.byteLength === 0) {
+    throw new Error("packed Phase 19 internal Graph worker is empty");
+  }
   const repositoryEngine = JSON.parse(
     await readFile(
       join(packageRoot, "policies", "repository-intelligence", "engine-v1.json"),
@@ -254,6 +337,144 @@ try {
     );
   }
 
+  const packedGraphValidate = spawnSync(
+    process.execPath,
+    [
+      binaryPath,
+      "graph",
+      "validate",
+      "--file",
+      "fixtures/task-orchestration/m10-durable-graph/graph.json",
+      "--json",
+    ],
+    {
+      cwd: packageRoot,
+      encoding: "utf8",
+      shell: false,
+    },
+  );
+  let packedGraphDocument;
+  try {
+    packedGraphDocument = JSON.parse(packedGraphValidate.stdout);
+  } catch {
+    packedGraphDocument = null;
+  }
+  if (
+    packedGraphValidate.status !== 0 ||
+    packedGraphDocument?.command !== "graph.validate" ||
+    packedGraphDocument?.result?.canonical !== true ||
+    packedGraphDocument?.result?.graphSha256 !==
+      m10Fixture.expectedGraphSha256 ||
+    packedGraphDocument?.result?.nodeCount !== 4
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} graph validate M10 fixture --json failed`,
+        packedGraphValidate.error?.message,
+        packedGraphValidate.stdout,
+        packedGraphValidate.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const m10RepositoryRoot = join(temporaryRoot, "m10-repository");
+  await cp(
+    join(m10FixtureRoot, "repository-template"),
+    m10RepositoryRoot,
+    { recursive: true },
+  );
+  const m10GitEnvironment = {
+    ...process.env,
+    GIT_AUTHOR_DATE: m10Fixture.fixedGit.authorDate,
+    GIT_COMMITTER_DATE: m10Fixture.fixedGit.committerDate,
+    GIT_CONFIG_NOSYSTEM: "1",
+    LOCALAPPDATA: join(temporaryRoot, "state"),
+    TEMP: temporaryRoot,
+    TMP: temporaryRoot,
+    XDG_STATE_HOME: join(temporaryRoot, "state"),
+  };
+  runCommand("git", ["init", "--initial-branch=main"], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["config", "core.autocrlf", "false"], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["config", "commit.gpgsign", "false"], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["config", "user.name", m10Fixture.fixedGit.name], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["config", "user.email", m10Fixture.fixedGit.email], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["add", "--all"], m10RepositoryRoot, m10GitEnvironment);
+  runCommand("git", ["commit", "--no-verify", "-m", "M10 canonical baseline"], m10RepositoryRoot, m10GitEnvironment);
+
+  const graphDoctor = spawnSync(
+    process.execPath,
+    [binaryPath, "graph", "doctor", "--json"],
+    {
+      cwd: m10RepositoryRoot,
+      encoding: "utf8",
+      env: m10GitEnvironment,
+      shell: false,
+    },
+  );
+  let graphDoctorDocument;
+  try {
+    graphDoctorDocument = JSON.parse(graphDoctor.stdout);
+  } catch {
+    graphDoctorDocument = null;
+  }
+  if (
+    graphDoctor.status !== 0 ||
+    graphDoctorDocument?.command !== "graph.doctor" ||
+    graphDoctorDocument?.result?.valid !== true ||
+    graphDoctorDocument?.result?.foreground?.deterministicSingleActive !== true ||
+    graphDoctorDocument?.result?.worktrees?.managed !== true ||
+    graphDoctorDocument?.result?.worktrees?.promotion !== true ||
+    graphDoctorDocument?.result?.background?.valid !== true
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} graph doctor --json failed`,
+        graphDoctor.error?.message,
+        graphDoctor.stdout,
+        graphDoctor.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const graphWorkerDoctor = spawnSync(
+    process.execPath,
+    [binaryPath, "graph", "worker", "doctor", "--json"],
+    {
+      cwd: m10RepositoryRoot,
+      encoding: "utf8",
+      env: m10GitEnvironment,
+      shell: false,
+    },
+  );
+  let graphWorkerDoctorDocument;
+  try {
+    graphWorkerDoctorDocument = JSON.parse(graphWorkerDoctor.stdout);
+  } catch {
+    graphWorkerDoctorDocument = null;
+  }
+  if (
+    graphWorkerDoctor.status !== 0 ||
+    graphWorkerDoctorDocument?.command !== "graph.worker.doctor" ||
+    graphWorkerDoctorDocument?.result?.valid !== true ||
+    graphWorkerDoctorDocument?.result?.descriptor?.workerProtocolVersion !== 1 ||
+    graphWorkerDoctorDocument?.result?.descriptor?.packageName !== "bornagent"
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} graph worker doctor --json failed`,
+        graphWorkerDoctor.error?.message,
+        graphWorkerDoctor.stdout,
+        graphWorkerDoctor.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
   // PHASE15: execute from the extracted package so a source-checkout fallback
   // cannot hide a missing built-in policy or Docker artifact asset.
   const policyShow = spawnSync(
@@ -263,10 +484,12 @@ try {
       cwd: installRoot,
       encoding: "utf8",
       env: {
+        LOCALAPPDATA: join(temporaryRoot, "state"),
         PATH: process.env.PATH,
         SystemRoot: process.env.SystemRoot,
         TEMP: temporaryRoot,
         TMP: temporaryRoot,
+        XDG_STATE_HOME: join(temporaryRoot, "state"),
       },
       shell: false,
     },
@@ -422,7 +645,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, and the exact Phase 18 M9 review pack; ran born --help, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, and the Phase 19 M10 canonical Graph fixture; ran born --help, validated the packed Graph hash, initialized its offline Git repository, passed Graph/worker doctor, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

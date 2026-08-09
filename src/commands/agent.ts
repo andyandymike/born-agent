@@ -177,8 +177,11 @@ export interface ResumedAgentExecution {
 
 export interface FreshTaskExecution {
   readonly modelTask: string;
+  readonly onTaskNodeStarted?: () => void;
   readonly runId: string;
   readonly sessionId: string;
+  readonly sourceRunId?: string;
+  readonly taskNodeBinding?: NonNullable<Extract<RunEvent, { type: "run.started" }>["data"]["task_node_binding"]>;
   readonly writer: SessionWriter;
 }
 
@@ -430,6 +433,7 @@ export async function executeAgent(
     runtime.randomUUID();
   const runId =
     resumedExecution?.runId ?? freshTaskExecution?.runId ?? runtime.randomUUID();
+  const taskNodeExecution = freshTaskExecution?.taskNodeBinding !== undefined;
   let writer: SessionWriter;
   try {
     writer =
@@ -861,12 +865,17 @@ export async function executeAgent(
           ? {}
           : { provider_source: resolvedOptions.providerSource }),
         runtime_policy: persistRuntimePolicyEvidence(effectivePolicy.evidence),
-        ...(resumedExecution === undefined
-          ? {}
-          : {
+        ...(resumedExecution !== undefined
+          ? {
               resume_mode: resumedExecution.mode,
               resume_of_run_id: resumedExecution.sourceRunId,
-            }),
+            }
+          : freshTaskExecution?.sourceRunId === undefined
+            ? {}
+            : {
+                resume_mode: "canonical_degraded" as const,
+                resume_of_run_id: freshTaskExecution.sourceRunId,
+              }),
         report_format: config.reportFormat,
         require_verification: config.requireVerification,
         request_timeout_ms: config.requestTimeoutMs,
@@ -883,7 +892,7 @@ export async function executeAgent(
                   ? []
                   : ["repository_outline", "find_symbol", "find_references"]),
                 "search",
-                "update_plan",
+                ...(taskNodeExecution ? [] : ["update_plan"]),
               ]
             : config.taskProfile === "read-only"
             ? [
@@ -910,7 +919,7 @@ export async function executeAgent(
                   : ["repository_outline", "find_symbol", "find_references"]),
                 "run_command",
                 "search",
-                ...(phase16Binding === undefined ? [] : ["update_plan"]),
+                ...(phase16Binding === undefined || taskNodeExecution ? [] : ["update_plan"]),
               ],
         tools_enabled: true,
         workspace: runtime.cwd,
@@ -929,6 +938,9 @@ export async function executeAgent(
       ...(preparedCapabilitySnapshot === undefined
         ? {}
         : { capability_snapshot: preparedCapabilitySnapshot.binding }),
+      ...(freshTaskExecution?.taskNodeBinding === undefined
+        ? {}
+        : { task_node_binding: freshTaskExecution.taskNodeBinding }),
     };
     // PHASE18: the exact snapshot object is durable before run.started, while
     // the event is the sole authority that selects those bytes for this run.
@@ -941,6 +953,24 @@ export async function executeAgent(
         capabilityBoundRunStartedData,
         phase16Binding,
       );
+    if (freshTaskExecution?.taskNodeBinding !== undefined) {
+      if (writer.appendTaskGraphEvent === undefined) {
+        throw new EventPersistenceError(new TypeError("Graph node run requires a TaskGraph-aware session writer"));
+      }
+      const binding = freshTaskExecution.taskNodeBinding;
+      // PHASE19: the node-start fact is appended by the process that owns the
+      // normal run writer, so scheduler observation cannot race a locked run.
+      await writer.appendTaskGraphEvent("task_node.attempt.started", {
+        attempt_id: binding.attempt_id,
+        graph_id: binding.graph_id,
+        graph_revision: binding.graph_revision,
+        graph_sha256: binding.graph_sha256,
+        node_id: binding.node_id,
+        run_id: runId,
+        scheduler_lease_nonce_sha256: binding.scheduler_lease_nonce_sha256,
+      });
+      freshTaskExecution.onTaskNodeStarted?.();
+    }
     await publisher.publish({
       data: {
         adapter: backend.identity.adapter,
@@ -1086,6 +1116,16 @@ export async function executeAgent(
       }
       hookRuntime = new HookRuntime({
         artifacts: artifactRuntime,
+        ...(capabilityPlatform === undefined || runtime.createHookCommandRunner === undefined
+          ? {}
+          : {
+              commandRunner: runtime.createHookCommandRunner({
+                content: capabilityPlatform.createContentSource(preparedCapabilitySnapshot.snapshot),
+                prompt: runtime.createApprovalPrompt(io),
+                secrets,
+                workspace: runtime.cwd,
+              }),
+            }),
         events: {
           append: async <TType extends Phase18HookRunEventType>(
             type: TType,
@@ -1622,7 +1662,7 @@ export async function executeAgent(
       throw new TypeError("Docker executor requires durable Phase 13 event storage");
     }
     const updatePlanTool =
-      phase16Binding === undefined
+      phase16Binding === undefined || taskNodeExecution
         ? undefined
         : (() => {
             if (!(writer instanceof V2SessionWriter) || phase16TaskState === undefined) {
@@ -1731,26 +1771,28 @@ export async function executeAgent(
                 }
                 assertGoalChangePlanPreflight(ledger, plan, runId);
               },
-              completionPolicy: new CollaborativeCompletionPolicy({
-                base: new VerifiedCompletionPolicy(),
-                goalChanges: async () => {
-                  const ledger = projectGoalChangeLedger(
-                    writer.readDecodedEvents!(),
-                    phase16Binding.goal_id,
-                    phase16Binding.goal_revision,
-                  );
-                  if (ledger === null) {
-                    throw new GoalChangeLedgerError(
-                      "goal_change_baseline_invalid",
-                      "Build completion requires its durable Goal execution baseline",
-                    );
-                  }
-                  await assertGoalChangeWorkspaceMatches(ledger, runtime.cwd);
-                  return ledger;
-                },
-                runBinding: phase16Binding,
-                taskState: phase16TaskState,
-              }),
+              completionPolicy: taskNodeExecution
+                ? new VerifiedCompletionPolicy()
+                : new CollaborativeCompletionPolicy({
+                    base: new VerifiedCompletionPolicy(),
+                    goalChanges: async () => {
+                      const ledger = projectGoalChangeLedger(
+                        writer.readDecodedEvents!(),
+                        phase16Binding.goal_id,
+                        phase16Binding.goal_revision,
+                      );
+                      if (ledger === null) {
+                        throw new GoalChangeLedgerError(
+                          "goal_change_baseline_invalid",
+                          "Build completion requires its durable Goal execution baseline",
+                        );
+                      }
+                      await assertGoalChangeWorkspaceMatches(ledger, runtime.cwd);
+                      return ledger;
+                    },
+                    runBinding: phase16Binding,
+                    taskState: phase16TaskState,
+                  }),
               goalId: phase16Binding.goal_id,
               goalRevision: phase16Binding.goal_revision,
               seed: goalChangeSeed,
@@ -1782,6 +1824,7 @@ export async function executeAgent(
       ...(sandboxEvents === undefined ? {} : { sandboxEvents }),
       secrets,
       taskProfile: config.taskProfile,
+      ...(taskNodeExecution ? { taskNodeExecution: true } : {}),
       ...(updatePlanTool === undefined ? {} : { updatePlanTool }),
       sessionId,
       timestamp: runtime.timestamp,
@@ -1833,7 +1876,7 @@ export async function executeAgent(
                 );
               },
             }),
-        ...(phase16Binding?.agent_mode !== "build" ||
+        ...(taskNodeExecution || phase16Binding?.agent_mode !== "build" ||
         phase16TaskState === undefined ||
         writer.appendTaskEvent === undefined
           ? {}

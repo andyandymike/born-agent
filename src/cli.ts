@@ -49,6 +49,7 @@ try {
         readLine: readApprovalLine,
       },
       cwd: process.cwd(),
+      cliEntryPath: fileURLToPath(import.meta.url),
       env: process.env,
       evalAssetsRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "evals"),
       execPath: process.execPath,
@@ -67,6 +68,12 @@ try {
         stdoutIsTTY: process.stdout.isTTY === true,
       },
       version: packageJson.version,
+      ...(process.env.BORN_BACKGROUND_WORKER === "1" && process.env.BORN_WORKER_STATE_ROOT !== undefined
+        ? { workerUserStateRoot: process.env.BORN_WORKER_STATE_ROOT }
+        : {}),
+      ...(process.env.BORN_BACKGROUND_WORKER === "1" && process.env.BORN_WORKTREE_STATE_ROOT !== undefined
+        ? { worktreeUserStateRoot: process.env.BORN_WORKTREE_STATE_ROOT }
+        : {}),
     }),
   );
 } catch (error) {

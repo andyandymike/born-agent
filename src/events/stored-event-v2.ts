@@ -10,6 +10,7 @@ import { phase16GoalChangeRunEventDataSchemas } from "../coordination/goal-chang
 import { phase17RepositoryIntelligenceRunEventDataSchemas } from "../repository-intelligence/repository-intelligence-event-schema.js";
 import { phase18SkillRunEventDataSchemas } from "../skills/skill-event-schema.js";
 import { phase18HookRunEventDataSchemas } from "../hooks/hook-event-schema.js";
+import { phase19TaskGraphSessionEventDataSchemas } from "../task-graph/task-graph-event-schema.js";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
@@ -229,6 +230,7 @@ export const phase9RunEventDataSchemas = {
 export const v2SessionEventDataSchemas = {
   ...phase9SessionEventDataSchemas,
   ...phase16TaskSessionEventDataSchemas,
+  ...phase19TaskGraphSessionEventDataSchemas,
 } as const;
 
 export const v2RunEventDataSchemas = {

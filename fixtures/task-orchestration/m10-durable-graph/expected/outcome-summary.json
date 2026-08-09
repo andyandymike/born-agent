@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "expectedGoalStatus": "completed",
+  "expectedGraphStatus": "completed",
+  "requiredEvidence": [
+    "task-node-receipts",
+    "applied-promotion-bundle",
+    "origin-verification",
+    "plan-item-transitions"
+  ],
+  "remoteEvidence": "not_run_by_policy"
+}

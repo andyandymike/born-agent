@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "graphId": "19000000-0000-4000-8000-000000000004",
+  "binding": {
+    "sessionId": "19000000-0000-4000-8000-000000000001",
+    "goalId": "19000000-0000-4000-8000-000000000002",
+    "goalRevision": 1,
+    "planId": "19000000-0000-4000-8000-000000000003",
+    "planRevision": 1,
+    "planSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "title": "M10 canonical durable Graph",
+  "nodes": [
+    {
+      "nodeId": "inspect",
+      "sequence": 1,
+      "title": "Inspect repository and nested rules",
+      "objective": "Read the repository outline, nested AGENTS.md scope, and exact dependency facts without changing files.",
+      "planItemIds": ["inspect"],
+      "dependsOn": [],
+      "workspace": {
+        "mode": "origin_read_only",
+        "declaredPathPrefixes": []
+      },
+      "requiredCapabilities": [
+        "workspace:bornagent.m9-review-pack@1.0.0/skill/review-change#sha256:f156fae9a4b9ab516b41dfd0c3410aa4d22e1885f196133f98cd9000c09dd078"
+      ],
+      "budget": {
+        "maxAttempts": 1,
+        "maxDurationMs": 60000,
+        "maxModelSteps": 4,
+        "maxCommandExecutions": 0,
+        "maxCommandOutputBytes": 0,
+        "maxChangedFiles": 0,
+        "maxChangedBytes": 0,
+        "maxArtifactBytes": 131072,
+        "maxReportedTokens": 8192
+      },
+      "retry": {
+        "maxAttempts": 1,
+        "automaticOn": []
+      },
+      "kind": "agent",
+      "agent": {
+        "mode": "plan",
+        "taskProfile": "read-only"
+      }
+    },
+    {
+      "nodeId": "core-change",
+      "sequence": 2,
+      "title": "Implement the core change",
+      "objective": "Fix the core clamp implementation in an isolated managed worktree and verify the local change.",
+      "planItemIds": ["core"],
+      "dependsOn": ["inspect"],
+      "workspace": {
+        "mode": "managed_worktree",
+        "declaredPathPrefixes": ["src/core"]
+      },
+      "requiredCapabilities": [
+        "workspace:bornagent.m9-review-pack@1.0.0/hook/protect-generated#sha256:f231c9dc859557aa6e0406ef69eeea2cf7b6cfec54d9f5ab27102431ccfd62a3"
+      ],
+      "budget": {
+        "maxAttempts": 1,
+        "maxDurationMs": 180000,
+        "maxModelSteps": 8,
+        "maxCommandExecutions": 1,
+        "maxCommandOutputBytes": 131072,
+        "maxChangedFiles": 4,
+        "maxChangedBytes": 262144,
+        "maxArtifactBytes": 524288,
+        "maxReportedTokens": 16384
+      },
+      "retry": {
+        "maxAttempts": 1,
+        "automaticOn": []
+      },
+      "kind": "agent",
+      "agent": {
+        "mode": "build",
+        "taskProfile": "coding"
+      }
+    },
+    {
+      "nodeId": "ui-change",
+      "sequence": 3,
+      "title": "Implement the UI change",
+      "objective": "Update the UI formatter while inheriting only the accepted core workspace and dependency receipt.",
+      "planItemIds": ["ui"],
+      "dependsOn": ["core-change"],
+      "workspace": {
+        "mode": "inherit_predecessor",
+        "declaredPathPrefixes": ["src/ui"]
+      },
+      "requiredCapabilities": [
+        "workspace:bornagent.m9-review-pack@1.0.0/hook/protect-generated#sha256:f231c9dc859557aa6e0406ef69eeea2cf7b6cfec54d9f5ab27102431ccfd62a3"
+      ],
+      "budget": {
+        "maxAttempts": 1,
+        "maxDurationMs": 180000,
+        "maxModelSteps": 8,
+        "maxCommandExecutions": 1,
+        "maxCommandOutputBytes": 131072,
+        "maxChangedFiles": 4,
+        "maxChangedBytes": 262144,
+        "maxArtifactBytes": 524288,
+        "maxReportedTokens": 16384
+      },
+      "retry": {
+        "maxAttempts": 1,
+        "automaticOn": []
+      },
+      "kind": "agent",
+      "agent": {
+        "mode": "build",
+        "taskProfile": "coding"
+      }
+    },
+    {
+      "nodeId": "verify",
+      "sequence": 4,
+      "title": "Verify the accepted lineage",
+      "objective": "Run the exact offline verification command against the final accepted managed-worktree snapshot.",
+      "planItemIds": ["verify"],
+      "dependsOn": ["ui-change"],
+      "workspace": {
+        "mode": "inherit_predecessor",
+        "declaredPathPrefixes": ["src", "tests", "scripts/verify.mjs"]
+      },
+      "requiredCapabilities": [
+        "workspace:bornagent.m9-review-pack@1.0.0/hook/protect-generated#sha256:f231c9dc859557aa6e0406ef69eeea2cf7b6cfec54d9f5ab27102431ccfd62a3"
+      ],
+      "budget": {
+        "maxAttempts": 1,
+        "maxDurationMs": 120000,
+        "maxModelSteps": 0,
+        "maxCommandExecutions": 1,
+        "maxCommandOutputBytes": 131072,
+        "maxChangedFiles": 0,
+        "maxChangedBytes": 0,
+        "maxArtifactBytes": 131072,
+        "maxReportedTokens": 0
+      },
+      "retry": {
+        "maxAttempts": 1,
+        "automaticOn": []
+      },
+      "kind": "verification",
+      "verification": {
+        "argv": ["node", "scripts/verify.mjs"],
+        "cwd": ".",
+        "purpose": "Verify the M10 canonical fixture"
+      }
+    }
+  ],
+  "graphBudget": {
+    "maxAttempts": 4,
+    "maxDurationMs": 600000,
+    "maxModelSteps": 20,
+    "maxCommandExecutions": 3,
+    "maxCommandOutputBytes": 393216,
+    "maxChangedFiles": 8,
+    "maxChangedBytes": 524288,
+    "maxArtifactBytes": 1310720,
+    "maxReportedTokens": 40960
+  }
+}

@@ -17,6 +17,10 @@ import type {
   Phase16GoalChangeRunEventData,
   Phase16GoalChangeRunEventType,
 } from "../coordination/goal-change-event-schema.js";
+import type {
+  Phase19TaskGraphSessionEventData,
+  Phase19TaskGraphSessionEventType,
+} from "../task-graph/task-graph-event-schema.js";
 
 export interface SessionWriter {
   readonly path: string;
@@ -57,6 +61,10 @@ export interface SessionWriter {
   appendTaskEvent?<TType extends Phase16TaskSessionEventType>(
     type: TType,
     data: Phase16TaskSessionEventData<TType>,
+  ): Promise<unknown>;
+  appendTaskGraphEvent?<TType extends Phase19TaskGraphSessionEventType>(
+    type: TType,
+    data: Phase19TaskGraphSessionEventData<TType>,
   ): Promise<unknown>;
   close(): Promise<void>;
   readDecodedEvents?(): readonly DecodedStoredEvent[];

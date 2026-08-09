@@ -39,6 +39,15 @@ import {
   type DurableSessionStoreOpenOptions,
 } from "./durable-session-store.js";
 import type { StoredLineDecoder } from "./tail-recovery.js";
+import {
+  phase19TaskGraphSessionEventDataSchemas,
+  type Phase19TaskGraphSessionEventData,
+  type Phase19TaskGraphSessionEventType,
+} from "../task-graph/task-graph-event-schema.js";
+import { TaskGraphProjector } from "../task-graph/task-graph-projector.js";
+import { TaskExecutionProjector } from "../scheduling/task-execution-projector.js";
+import { WorktreeProjector } from "../worktrees/worktree-projector.js";
+import { BackgroundProjector } from "../background/background-projector.js";
 
 export interface V2SessionWriterOptions {
   readonly afterDurableEvent?: (event: DecodedStoredEvent) => void;
@@ -225,6 +234,30 @@ export class V2SessionWriter implements SessionWriter {
     return this.appendEnvelope(envelope);
   }
 
+  /**
+   * Phase 19 Graph events use a dedicated append port so Graph approval can
+   * never be confused with Goal/Plan authority or the generic Phase 9 port.
+   */
+  async appendTaskGraphEvent<TType extends Phase19TaskGraphSessionEventType>(
+    type: TType,
+    data: Phase19TaskGraphSessionEventData<TType>,
+  ): Promise<DecodedStoredEvent> {
+    phase19TaskGraphSessionEventDataSchemas[type].parse(data);
+    const eventId = this.createEventId();
+    if (!isCanonicalUuid(eventId)) throw new Error("event id must be a canonical UUID");
+    const envelope = storedEventEnvelopeV2Schema.parse({
+      data,
+      event_id: eventId,
+      schema_version: 2,
+      scope: "session",
+      session_id: this.sessionId,
+      session_seq: this.rawValues.length + 1,
+      timestamp: this.timestamp(),
+      type,
+    });
+    return this.appendEnvelope(envelope);
+  }
+
   async appendArtifactEvent(
     runId: string,
     event: Phase10ArtifactEvent,
@@ -369,6 +402,10 @@ export class V2SessionWriter implements SessionWriter {
     // cross-event authority invariant. Reject the prospective state before
     // bytes reach the append+sync commit point.
     TaskStateMachine.project(decoded);
+    TaskGraphProjector.project(decoded);
+    TaskExecutionProjector.project(decoded);
+    WorktreeProjector.project(decoded);
+    BackgroundProjector.project(decoded);
     assertGoalChangeLedgerSemantics(decoded);
     const event = decoded.at(-1);
     if (event === undefined) throw new Error("stored envelope produced no event");

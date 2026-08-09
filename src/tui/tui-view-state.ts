@@ -1,6 +1,10 @@
 import type { OutcomeReport } from "../coordination/outcome-report.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import { initialRepositoryStatusProjection, type RepositoryStatusProjection } from "../repository-intelligence/repository-status-projection.js";
+import type { TaskGraphProjectionV1 } from "../task-graph/task-graph-projector.js";
+import type { TaskExecutionProjectionV1 } from "../scheduling/task-execution-projector.js";
+import type { WorktreeProjectionV1 } from "../worktrees/worktree-projector.js";
+import type { BackgroundProjectionV1 } from "../background/background-projector.js";
 
 export type TuiRunStatus =
   | "budget_exceeded"
@@ -212,18 +216,27 @@ export interface ApprovalTranscriptViewItem {
 
 export interface TuiViewState {
   readonly approval: ApprovalView | null;
+  readonly background: BackgroundProjectionV1;
   readonly context: ContextView;
   readonly outcomeReport: OutcomeReport | null;
   readonly repository: RepositoryStatusProjection;
   readonly run: RunView | null;
   readonly session: SessionView;
   readonly taskState: TaskStateProjection;
+  readonly taskExecution: TaskExecutionProjectionV1 | null;
+  readonly taskGraph: TaskGraphProjectionV1;
   readonly transcript: readonly TranscriptViewItem[];
+  readonly worktrees: WorktreeProjectionV1;
 }
 
 export function createInitialTuiViewState(): TuiViewState {
   return {
     approval: null,
+    background: {
+      current: null,
+      lastSessionSeq: 0,
+      workers: [],
+    },
     context: {
       absoluteInputTokens: null,
       compacting: false,
@@ -252,7 +265,22 @@ export function createInitialTuiViewState(): TuiViewState {
       readyForCompletion: false,
       trackingMode: "legacy_untracked",
     },
+    taskExecution: null,
+    taskGraph: {
+      currentApproved: null,
+      currentDraft: null,
+      currentExecution: null,
+      lastSessionSeq: 0,
+      revisions: [],
+      trackingMode: "none",
+    },
     transcript: [],
+    worktrees: {
+      lastSessionSeq: 0,
+      pendingOperationIds: [],
+      promotions: [],
+      workspaces: [],
+    },
   };
 }
 

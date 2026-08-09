@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "nodeId": "ui-change",
+  "script": ["read_artifact", "read_file", "apply_patch", "run_command", "finish_task"],
+  "forbiddenTools": ["update_plan", "update_task_graph"]
+}

@@ -61,6 +61,27 @@ import {
   executePluginsShow,
 } from "../commands/plugins.js";
 import { executeHooksExplain, executeHooksList } from "../commands/hooks.js";
+import {
+  executeGraphApprove,
+  executeGraphCancel,
+  executeGraphDoctor,
+  executeGraphEnqueue,
+  executeGraphLogs,
+  executeGraphReject,
+  executeGraphReplace,
+  executeGraphRun,
+  executeGraphPromote,
+  executeGraphResume,
+  executeGraphRetry,
+  executeGraphShow,
+  executeGraphStatus,
+  executeGraphValidate,
+  executeGraphWorktrees,
+  executeGraphWorktreeAllocate,
+  executeGraphWorktreeCleanup,
+  executeGraphWorkerDoctor,
+} from "../commands/graph.js";
+import { executeInternalGraphWorker } from "../commands/internal-graph-worker.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -83,6 +104,18 @@ export async function runCli(
     });
 
   let commandExitCode = 0;
+
+  const internal = program.command("internal", { hidden: true });
+  internal
+    .command("graph-worker", { hidden: true })
+    .requiredOption("--operation <uuid>")
+    .requiredOption("--repository <sha256>")
+    .action(async (options: { operation: string; repository: string }) => {
+      commandExitCode = await executeInternalGraphWorker({
+        operationId: options.operation,
+        repositoryId: options.repository,
+      }, runtime, io);
+    });
 
   const plugins = program
     .command("plugins")
@@ -971,6 +1004,221 @@ export async function runCli(
         );
       },
     );
+
+  const graph = program
+    .command("graph")
+    .description("Validate and control exact durable Task Graph revisions.");
+
+  graph
+    .command("validate")
+    .description("Validate and hash one strict workspace Graph JSON file without mutation.")
+    .requiredOption("--file <workspace-relative-json>", "strict workspace-relative Graph JSON")
+    .option("--json", "write canonical JSON", false)
+    .action(async (options: { file: string; json: boolean }) => {
+      commandExitCode = await executeGraphValidate(options, runtime, io);
+    });
+
+  graph
+    .command("doctor")
+    .description("Validate local Git, deterministic scheduler, managed worktree, promotion, and sealed worker capabilities.")
+    .option("--json", "write canonical JSON", false)
+    .action(async (options: { json: boolean }) => {
+      commandExitCode = await executeGraphDoctor(options, runtime, io);
+    });
+
+  graph
+    .command("show")
+    .description("Replay and verify durable Graph revisions for one session.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--revision <n>", "show one exact Graph revision")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; revision?: string }) => {
+      commandExitCode = await executeGraphShow({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("replace")
+    .description("Propose an initial or replacement Graph from a strict workspace JSON file.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--file <workspace-relative-json>", "strict workspace-relative Graph JSON")
+    .option("--base-revision <n>", "exact current Graph revision")
+    .option("--base-sha256 <hash>", "exact full current Graph SHA-256")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { baseRevision?: string; baseSha256?: string; file: string; json: boolean }) => {
+      commandExitCode = await executeGraphReplace({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("approve")
+    .description("Approve one exact draft Graph revision; effects remain independently gated.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact draft Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full draft Graph SHA-256")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphApprove({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("reject")
+    .description("Reject one exact draft Graph revision.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact draft Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full draft Graph SHA-256")
+    .option("--reason <text>", "bounded optional rejection reason")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; reason?: string; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphReject({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("enqueue")
+    .description("Enqueue one exact approved Graph revision without granting node effects.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact approved Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full approved Graph SHA-256")
+    .option("--runtime-profile <id>", "trusted runtime policy profile", "local-free-v1")
+    .option("--background", "reserve background execution intent", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { background: boolean; json: boolean; revision: string; runtimeProfile: string; sha256: string }) => {
+      commandExitCode = await executeGraphEnqueue({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("status")
+    .description("Replay the durable Graph execution projection.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--live", "add one bounded current worker observation", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; live: boolean }) => {
+      commandExitCode = await executeGraphStatus({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("run")
+    .description("Run the deterministic single-active Graph scheduler.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--foreground", "run under the current terminal", false)
+    .option("--background", "hando off to a bounded background worker", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { background: boolean; foreground: boolean; json: boolean }) => {
+      if (options.background && options.foreground) {
+        io.stderr.write("task_graph_schema_invalid: choose one execution mode\n");
+        commandExitCode = 2;
+        return;
+      }
+      commandExitCode = await executeGraphRun({ background: options.background, json: options.json, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("resume")
+    .description("Resume one exact waiting Graph with fresh foreground or background authority.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact waiting Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full waiting Graph SHA-256")
+    .option("--foreground", "resume under the current terminal", false)
+    .option("--background", "resume through a new sealed worker handoff", false)
+    .option("--takeover", "request owner-death reconciliation before resume", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { background: boolean; foreground: boolean; json: boolean; revision: string; sha256: string; takeover: boolean }) => {
+      commandExitCode = await executeGraphResume({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("retry")
+    .description("Authorize a fresh user retry for one exact known failed node attempt.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--node <id>", "exact failed node id")
+    .requiredOption("--attempt <n>", "exact failed attempt number")
+    .requiredOption("--terminal-event <id>", "exact terminal event UUID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { attempt: string; json: boolean; node: string; terminalEvent: string }) => {
+      commandExitCode = await executeGraphRetry({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("logs")
+    .description("Read verified bounded node receipts for one Graph session.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--node <id>", "filter by exact node id")
+    .option("--cursor <opaque>", "continue after an opaque bounded cursor")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { cursor?: string; json: boolean; node?: string }) => {
+      commandExitCode = await executeGraphLogs({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("worktrees")
+    .description("Show replayed managed worktree and promotion state without exposing local paths.")
+    .argument("<session-id>", "canonical session UUID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean }) => {
+      commandExitCode = await executeGraphWorktrees({ ...options, sessionId }, runtime, io);
+    });
+
+  const graphWorker = graph
+    .command("worker")
+    .description("Inspect bounded background worker eligibility.");
+
+  graphWorker
+    .command("doctor")
+    .description("Seal and verify the current built CLI worker executable.")
+    .option("--json", "write canonical JSON", false)
+    .action(async (options: { json: boolean }) => {
+      commandExitCode = await executeGraphWorkerDoctor(options, runtime, io);
+    });
+
+  graph
+    .command("cancel")
+    .description("Request cancellation of one exact active Graph revision.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact active Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full active Graph SHA-256")
+    .requiredOption("--reason <text>", "bounded cancellation reason")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; reason: string; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphCancel({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("worktree-allocate")
+    .description("Capture an exact baseline and create one approved managed worktree lineage.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact approved Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full approved Graph SHA-256")
+    .requiredOption("--source-node <id>", "managed_worktree lineage source node")
+    .option("--include-current-changes", "explicitly include tracked/untracked origin changes", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { includeCurrentChanges: boolean; json: boolean; revision: string; sha256: string; sourceNode: string }) => {
+      commandExitCode = await executeGraphWorktreeAllocate({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("promote")
+    .description("Promote one accepted managed-worktree attempt through exact origin preimages.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact executing Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full Graph SHA-256")
+    .requiredOption("--node-id <id>", "exact managed node id")
+    .requiredOption("--attempt-id <id>", "exact accepted attempt UUID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { attemptId: string; json: boolean; nodeId: string; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphPromote({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("worktree-cleanup")
+    .description("Remove an exact clean worktree, or explicitly archive every file before force removal.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--graph-id <id>", "exact Graph UUID")
+    .requiredOption("--revision <n>", "exact Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full Graph SHA-256")
+    .requiredOption("--node-id <id>", "node in the managed lineage")
+    .option("--archive-and-remove", "capture a verified local archive before force removal", false)
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { archiveAndRemove: boolean; graphId: string; json: boolean; nodeId: string; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphWorktreeCleanup({ ...options, sessionId }, runtime, io);
+    });
 
   const sessions = program
     .command("sessions")

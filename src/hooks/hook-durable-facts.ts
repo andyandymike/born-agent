@@ -15,6 +15,7 @@ function unresolvedEffects(
   const patches = new Set<string>();
   const mcpCalls = new Set<string>();
   const mcpStarts = new Set<string>();
+  const hookCommands = new Set<string>();
   const unknown: string[] = [];
   for (const event of events) {
     if (event.scope !== "run" || event.runId !== runId) continue;
@@ -57,6 +58,23 @@ function unresolvedEffects(
         mcpCalls.add(key(runId, event.data.call_id));
         unknown.push(`event:${event.eventId}`);
         break;
+      case "hook.invocation.requested":
+        if (event.data.handler === "command") {
+          hookCommands.add(key(runId, event.data.invocation_id));
+        }
+        break;
+      case "hook.invocation.decided":
+      case "hook.invocation.completed":
+        hookCommands.delete(key(runId, event.data.invocation_id));
+        break;
+      case "hook.invocation.failed":
+        if (event.data.effect_state === "none") {
+          hookCommands.delete(key(runId, event.data.invocation_id));
+        } else {
+          hookCommands.add(key(runId, event.data.invocation_id));
+          unknown.push(`event:${event.eventId}`);
+        }
+        break;
       default:
         break;
     }
@@ -67,6 +85,7 @@ function unresolvedEffects(
     ...[...patches].map((value) => `pending-patch:${value}`),
     ...[...mcpCalls].map((value) => `pending-mcp-call:${value}`),
     ...[...mcpStarts].map((value) => `pending-mcp-start:${value}`),
+    ...[...hookCommands].map((value) => `pending-hook-command:${value}`),
   ].sort());
 }
 

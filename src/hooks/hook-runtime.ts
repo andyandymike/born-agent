@@ -3,6 +3,11 @@ import type { CapabilitySnapshotV1, FrozenCapabilityRecord } from "../capabiliti
 import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
 import type { ParsedCapabilityComponent } from "../capabilities/plugin-manifest-schema.js";
 import { HookError } from "./hook-errors.js";
+import {
+  HookCommandExecutionError,
+  type HookCommandRunnerLike,
+  type HookCommandRunnerResult,
+} from "./hook-command-runner.js";
 import type {
   Phase18HookRunEventData,
   Phase18HookRunEventType,
@@ -143,6 +148,7 @@ export class HookRuntime implements EffectHookPipeline {
 
   constructor(private readonly options: {
     readonly artifacts: ArtifactSessionRuntimeLike;
+    readonly commandRunner?: HookCommandRunnerLike;
     readonly events: HookEventAppender;
     readonly facts: () => HookDurableFacts;
     readonly randomUUID: () => string;
@@ -240,15 +246,134 @@ export class HookRuntime implements EffectHookPipeline {
         continue;
       }
       if (hook.metadata.handler.type === "command") {
-        const code = hook.metadata.mode === "gate" ? "hook_event_unsupported" : "hook_observer_degraded";
-        await this.options.events.append("hook.invocation.failed", {
-          code,
-          effect_state: "none",
-          failure_policy: hook.metadata.failure_policy,
-          invocation_id: invocationId,
+        if (this.options.commandRunner === undefined) {
+          const code = hook.metadata.mode === "gate" ? "hook_event_unsupported" : "hook_observer_degraded";
+          await this.options.events.append("hook.invocation.failed", {
+            code,
+            effect_state: "none",
+            failure_policy: hook.metadata.failure_policy,
+            invocation_id: invocationId,
+          });
+          if (hook.metadata.mode === "gate") {
+            denied = { code, decision: "deny", invocationId, message: "command Hook runner is unavailable" };
+          }
+          continue;
+        }
+        let result: HookCommandRunnerResult;
+        try {
+          result = await this.options.commandRunner.run({
+            events: {
+              approvalDecided: async (approval) => this.options.events.append("hook.approval.decided", {
+                action_sha256: approval.actionSha256,
+                approval_request_id: approval.requestId,
+                decision: approval.decision,
+                invocation_id: approval.invocationId,
+              }),
+              approvalRequested: async (approval) => this.options.events.append("hook.approval.requested", {
+                action_sha256: approval.actionSha256,
+                approval_request_id: approval.requestId,
+                invocation_id: approval.invocationId,
+              }),
+              permissionEvaluated: async (permission) => this.options.events.append("hook.permission.evaluated", {
+                action_sha256: permission.actionSha256,
+                effect: permission.effect,
+                invocation_id: permission.invocationId,
+                reason_code: permission.reasonCode,
+              }),
+              started: async (started) => this.options.events.append("hook.invocation.started", {
+                action_sha256: started.actionSha256,
+                invocation_id: started.invocationId,
+                pid: started.pid,
+                process_identity_sha256: started.processIdentitySha256,
+              }),
+            },
+            hook: hook.record,
+            inputBytes: Buffer.from(serialized, "utf8"),
+            inputSha256,
+            invocationId,
+            signal,
+          });
+        } catch (error) {
+          if (!(error instanceof HookCommandExecutionError)) throw error;
+          await this.options.events.append("hook.invocation.failed", {
+            code: error.code,
+            effect_state: error.effectState,
+            failure_policy: hook.metadata.failure_policy,
+            invocation_id: invocationId,
+          });
+          if (error.effectState === "unknown") {
+            throw new HookError("hook_effect_unknown", error.message, 1, { cause: error });
+          }
+          if (error.code === "hook_invocation_cancelled") throw error;
+          if (hook.metadata.mode === "gate") {
+            denied = {
+              code: error.code,
+              decision: "deny",
+              invocationId,
+              message: error.message,
+            };
+          } else if (hook.metadata.failure_policy === "fail_closed") {
+            throw new HookError("hook_observer_degraded", error.message, 8, { cause: error });
+          }
+          continue;
+        }
+        if (input.revalidateOriginalAction !== undefined && !(await input.revalidateOriginalAction())) {
+          await this.options.events.append("hook.invocation.failed", {
+            code: "hook_original_action_stale",
+            effect_state: "none",
+            failure_policy: hook.metadata.failure_policy,
+            invocation_id: invocationId,
+          });
+          if (hook.metadata.mode === "gate") {
+            denied = {
+              code: "hook_original_action_stale",
+              decision: "deny",
+              invocationId,
+              message: "original action changed while its command Hook was running",
+            };
+            continue;
+          }
+          throw new HookError(
+            "hook_original_action_stale",
+            "original action changed while its command Hook was running",
+          );
+        }
+        const terminalEventId = this.options.randomUUID();
+        const outputBytes = Buffer.from(canonicalJson({
+          action_sha256: result.actionSha256,
+          kind: result.kind,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        }), "utf8");
+        const outputArtifact = await this.options.artifacts.materializeText({
+          bytes: outputBytes,
+          mediaType: "text/plain; charset=utf-8",
+          originEventId: requestedEventId,
         });
-        if (hook.metadata.mode === "gate") {
-          denied = { code, decision: "deny", invocationId, message: "command Hook runner is unavailable" };
+        if (result.kind === "gate") {
+          const commandDecision: HookPipelineDecision = Object.freeze({
+            ...(result.code === undefined ? {} : { code: result.code }),
+            decision: result.decision,
+            evidence: Object.freeze([...new Set([...result.evidence, outputArtifact.artifactId])]),
+            invocationId,
+            ...(result.message === undefined ? {} : { message: result.message }),
+          });
+          evidence.push(...(commandDecision.evidence ?? []));
+          await this.options.events.append("hook.invocation.decided", {
+            ...(commandDecision.code === undefined ? {} : { code: commandDecision.code }),
+            decision: commandDecision.decision,
+            evidence: [...(commandDecision.evidence ?? [])],
+            invocation_id: invocationId,
+            ...(commandDecision.message === undefined ? {} : { message: commandDecision.message }),
+          }, terminalEventId);
+          if (commandDecision.decision === "deny") denied = commandDecision;
+        } else {
+          await this.options.events.append("hook.invocation.completed", {
+            artifact_ids: [outputArtifact.artifactId],
+            invocation_id: invocationId,
+            ...(result.message === undefined ? {} : { message: result.message }),
+            status: "observed",
+          }, terminalEventId);
         }
         continue;
       }

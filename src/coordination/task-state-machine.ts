@@ -186,6 +186,9 @@ class TaskProjector {
       case "patch.apply.completed":
       case "resume.pending_call.adopted":
       case "side_effect.reconciled":
+      case "task_graph.proposed":
+      case "task_graph.replaced":
+      case "task_node.attempt.terminal":
       case "tool.call.completed":
       case "tool.call.recovered":
       case "tool.call.requested":
@@ -829,13 +832,39 @@ class TaskProjector {
     if (plan.status !== "active") {
       this.fail(event, "plan_item_transition_invalid", "only active Plan accepts progress");
     }
-    this.assertAgentOrigin(
-      event,
-      event.data.origin,
-      event.data.goal_id,
-      event.data.goal_revision,
-      "build",
-    );
+    const progressOrigin = event.data.origin;
+    let graphRevision: DecodedStoredEvent | null | undefined = null;
+    if (progressOrigin.kind === "agent") {
+      this.assertAgentOrigin(
+          event,
+          progressOrigin,
+          event.data.goal_id,
+          event.data.goal_revision,
+          "build",
+        );
+    } else {
+      graphRevision = [...this.eventsById.values()].find((candidate) =>
+          candidate.scope === "session" &&
+          (candidate.type === "task_graph.proposed" || candidate.type === "task_graph.replaced") &&
+          candidate.data.graph_id === progressOrigin.graph_id &&
+          candidate.data.graph_revision === progressOrigin.graph_revision &&
+          candidate.data.graph_sha256 === progressOrigin.graph_sha256
+        );
+    }
+    if (progressOrigin.kind === "task_graph") {
+      if (
+        graphRevision === undefined || graphRevision === null || graphRevision.scope !== "session" ||
+        (graphRevision.type !== "task_graph.proposed" && graphRevision.type !== "task_graph.replaced") ||
+        graphRevision.data.binding.goal_id !== event.data.goal_id ||
+        graphRevision.data.binding.goal_revision !== event.data.goal_revision ||
+        graphRevision.data.binding.plan_id !== event.data.plan_id ||
+        graphRevision.data.binding.plan_revision !== event.data.revision ||
+        graphRevision.data.binding.plan_sha256 !== event.data.plan_sha256 ||
+        !graphRevision.data.content.nodes.some((node) => node.planItemIds.includes(event.data.item_id))
+      ) {
+        this.fail(event, "plan_binding_mismatch", "Task Graph progress origin does not exact-match this Plan item");
+      }
+    }
     const item = plan.items.find(
       (candidate) => candidate.content.id === event.data.item_id,
     );
@@ -907,6 +936,21 @@ class TaskProjector {
         goalRevision: event.data.goal_revision,
         runBindings: this.runBindings,
       });
+      if (event.data.origin.kind === "task_graph" && evidence.scope === "session" && evidence.type === "task_node.attempt.terminal") {
+        const revision = graphRevision;
+        const node = revision !== null && revision !== undefined && revision.scope === "session" &&
+          (revision.type === "task_graph.proposed" || revision.type === "task_graph.replaced")
+          ? revision.data.content.nodes.find((candidate) => candidate.nodeId === evidence.data.node_id)
+          : undefined;
+        if (
+          evidence.data.graph_id !== event.data.origin.graph_id ||
+          evidence.data.graph_revision !== event.data.origin.graph_revision ||
+          evidence.data.graph_sha256 !== event.data.origin.graph_sha256 ||
+          !node?.planItemIds.includes(event.data.item_id)
+        ) {
+          this.fail(event, "evidence_reference_invalid", "Task Graph evidence is not mapped to this Plan item");
+        }
+      }
       if (
         (event.data.to === "completed" &&
           !classification.eligibleForCompleted) ||

@@ -27,6 +27,19 @@ import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import { reconstructSession } from "./reconstruct-session.js";
 import { projectGoalChangeLedger } from "../coordination/goal-change-ledger.js";
 import { goalChangeAttributionScope } from "../coordination/goal-change-seed.js";
+import {
+  TaskGraphProjector,
+  type TaskGraphProjectionV1,
+} from "../task-graph/task-graph-projector.js";
+import { TaskGraphError } from "../task-graph/task-graph-errors.js";
+import {
+  TaskExecutionProjector,
+  type TaskExecutionProjectionV1,
+} from "../scheduling/task-execution-projector.js";
+import { WorktreeProjector, type WorktreeProjectionV1 } from "../worktrees/worktree-projector.js";
+import { WorktreeError } from "../worktrees/worktree-errors.js";
+import { BackgroundProjector, type BackgroundProjectionV1 } from "../background/background-projector.js";
+import { BackgroundError } from "../background/background-errors.js";
 
 export type ReconstructedRunStatus =
   | "budget_exceeded"
@@ -69,6 +82,10 @@ export interface ReconstructedMultiRunSession {
   readonly sessionId: string;
   readonly status: ReconstructedRunStatus | "idle";
   readonly taskState: TaskStateProjection;
+  readonly taskGraph: TaskGraphProjectionV1;
+  readonly taskExecution: TaskExecutionProjectionV1 | null;
+  readonly worktrees: WorktreeProjectionV1;
+  readonly background: BackgroundProjectionV1;
 }
 
 interface MutableRunProjection {
@@ -99,6 +116,9 @@ const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
   "hook.invocation.requested",
   "hook.invocation.started",
   "hook.matched",
+  "hook.permission.evaluated",
+  "hook.approval.requested",
+  "hook.approval.decided",
   "mcp.prompt.catalog.stale",
   "mcp.prompt.cataloged",
   "mcp.prompt.get.completed",
@@ -536,6 +556,58 @@ export function reconstructMultiRunSession(
     throw error;
   }
 
+  let taskGraph: TaskGraphProjectionV1;
+  try {
+    taskGraph = TaskGraphProjector.project(events);
+  } catch (error) {
+    if (error instanceof TaskGraphError) {
+      throw new SessionProjectionError(
+        `task Graph projection failed (${error.code}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
+  let taskExecution: TaskExecutionProjectionV1 | null;
+  try {
+    taskExecution = TaskExecutionProjector.project(events);
+  } catch (error) {
+    if (error instanceof TaskGraphError) {
+      throw new SessionProjectionError(
+        `task execution projection failed (${error.code}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
+  let worktrees: WorktreeProjectionV1;
+  try {
+    worktrees = WorktreeProjector.project(events);
+  } catch (error) {
+    if (error instanceof WorktreeError) {
+      throw new SessionProjectionError(
+        `worktree projection failed (${error.code}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
+  let background: BackgroundProjectionV1;
+  try {
+    background = BackgroundProjector.project(events);
+  } catch (error) {
+    if (error instanceof BackgroundError) {
+      throw new SessionProjectionError(
+        `background worker projection failed (${error.code}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
   if (
     lastRun === null &&
     (taskState.trackingMode !== "phase16" || taskState.goals.length === 0)
@@ -546,6 +618,7 @@ export function reconstructMultiRunSession(
   }
 
   return {
+    background,
     artifacts,
     events,
     lastRun,
@@ -553,6 +626,9 @@ export function reconstructMultiRunSession(
     sessionEvents,
     sessionId,
     status: lastRun?.status ?? "idle",
+    taskGraph,
+    taskExecution,
     taskState,
+    worktrees,
   };
 }

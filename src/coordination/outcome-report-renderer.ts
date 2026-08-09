@@ -33,6 +33,9 @@ export function renderOutcomeReport(
     `Skills: ${String(report.skills.activations.length)} activations / ${String(report.skills.resourceReadCount)} resource reads`,
     `Hooks: ${String(report.hooks.counts.matched)} matched / ${String(report.hooks.counts.executed)} executed / ${String(report.hooks.counts.denied)} denied / ${String(report.hooks.counts.degraded)} degraded`,
     `MCP primitives: ${String(report.mcp.servers.length)} servers / ${String(report.mcp.resourceReads.length)} resource reads / ${String(report.mcp.promptGets.length)} prompts`,
+    `Task Graph: ${report.taskOrchestration === null
+      ? "none"
+      : `${report.taskOrchestration.graph.status} ${report.taskOrchestration.graph.id} rev ${String(report.taskOrchestration.graph.revision)} (${String(report.taskOrchestration.nodes.filter((node) => node.status === "succeeded").length)}/${String(report.taskOrchestration.nodes.length)} nodes)`}`,
     `Reasons: ${report.outcomeReasons.join(", ") || "none"}`,
   ];
   return `${lines.join("\n")}\n`;

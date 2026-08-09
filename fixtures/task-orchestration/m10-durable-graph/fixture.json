@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "m10-durable-graph-v1",
+  "networkRequired": false,
+  "remoteProvidersAllowed": false,
+  "fixedGit": {
+    "authorDate": "2026-08-09T00:00:00Z",
+    "committerDate": "2026-08-09T00:00:00Z",
+    "email": "m10@example.invalid",
+    "name": "BornAgent M10 Fixture"
+  },
+  "graphFile": "graph.json",
+  "expectedGraphSha256": "98212749823838bb52367771f08047e17bd3e22630db9b8e6e57116b2da8a3a2",
+  "repositoryTemplate": "repository-template"
+}

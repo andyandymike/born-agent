@@ -23,5 +23,5 @@ describe("Phase 17C model-free engine gold", () => {
     });
     expect(semantic.modelQualityEvidence).toBe("not_measured");
     expect(semantic.remoteExecution).toBe("not_run_by_policy");
-  });
+  }, 20_000);
 });

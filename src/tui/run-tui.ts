@@ -26,6 +26,7 @@ import {
   TuiController,
   type TuiCorePort,
   type TuiCoreRunResult,
+  type TuiGraphIntent,
 } from "./tui-controller.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
 import type {
@@ -34,6 +35,14 @@ import type {
 } from "./phase16-user-intent.js";
 import { RepositoryInvalidationWatcher } from "../repository-intelligence/repository-invalidation-watcher.js";
 import { RepositoryRefreshCoordinator } from "../repository-intelligence/repository-refresh-coordinator.js";
+import {
+  executeGraphApprove,
+  executeGraphCancel,
+  executeGraphEnqueue,
+  executeGraphPromote,
+  executeGraphResume,
+  executeGraphRun,
+} from "../commands/graph.js";
 
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
@@ -64,6 +73,23 @@ async function captureCoreRun(
   const exitCode = await run(io);
   const normalized = diagnostic.replace(/\s+/gu, " ").trim();
   return { diagnostic: normalized.length === 0 ? null : normalized, exitCode };
+}
+
+async function executeTuiGraphCommand(intent: TuiGraphIntent, runtime: CliRuntime, io: CliIO): Promise<number> {
+  switch (intent.type) {
+    case "approve":
+      return executeGraphApprove({ json: false, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
+    case "enqueue":
+      return executeGraphEnqueue({ background: intent.background, json: false, revision: String(intent.revision), runtimeProfile: "local-free", sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
+    case "run":
+      return executeGraphRun({ background: intent.background, json: false, sessionId: intent.sessionId }, runtime, io);
+    case "cancel":
+      return executeGraphCancel({ json: false, reason: intent.reason, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
+    case "resume":
+      return executeGraphResume({ background: intent.background, foreground: !intent.background, json: false, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256, takeover: false }, runtime, io);
+    case "promote":
+      return executeGraphPromote({ attemptId: intent.attemptId, json: false, nodeId: intent.nodeId, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
+  }
 }
 
 function usage(io: CliIO, message: string): 2 {
@@ -553,6 +579,7 @@ export async function executeTui(
     cancelRepositoryRefresh: () => repositoryRefresh?.coordinator.cancel(),
     loadSession: async (sessionId) =>
       (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
+    graphCommand: (intent) => captureCoreRun((coreIo) => executeTuiGraphCommand(intent, tuiRuntime, coreIo)),
     selectMcpPrompt: async (selector: string, argumentsJson: string | undefined) => {
       const { parseExplicitMcpPromptSelection } = await import("../mcp/mcp-prompt-selection.js");
       const selection = parseExplicitMcpPromptSelection({

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "nodeId": "inspect",
+  "expectedTools": ["repository_outline", "find_symbol", "read_file"],
+  "forbiddenTools": ["apply_patch", "run_command", "update_plan", "update_task_graph"]
+}

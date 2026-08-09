@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "graphId": "19000000-0000-4000-8000-000000000004",
+  "graphSha256": "98212749823838bb52367771f08047e17bd3e22630db9b8e6e57116b2da8a3a2",
+  "nodeOrder": ["inspect", "core-change", "ui-change", "verify"],
+  "readyNodeIds": ["inspect"],
+  "terminalPolicy": "promotion_and_origin_verification_required"
+}

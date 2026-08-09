@@ -28,6 +28,23 @@ const identity = z.object({
 }).strict();
 
 export const phase18HookRunEventDataSchemas = {
+  "hook.permission.evaluated": z.object({
+    action_sha256: sha256,
+    effect: z.enum(["ask", "deny"]),
+    invocation_id: uuid,
+    reason_code: bounded(128).min(1),
+  }).strict(),
+  "hook.approval.requested": z.object({
+    action_sha256: sha256,
+    approval_request_id: uuid,
+    invocation_id: uuid,
+  }).strict(),
+  "hook.approval.decided": z.object({
+    action_sha256: sha256,
+    approval_request_id: uuid,
+    decision: z.enum(["approved", "cancelled", "denied"]),
+    invocation_id: uuid,
+  }).strict(),
   "hook.matched": z.object({
     event: hookEvent,
     hook_identity: identity,

@@ -67,6 +67,19 @@ export interface VerificationFactTranscriptItem {
   readonly verificationId: string;
 }
 
+export interface TaskGraphFactTranscriptItem {
+  readonly bundleSha256?: string;
+  readonly fact: "approved" | "enqueued" | "node_terminal" | "promotion_applied" | "terminal";
+  readonly graphId: string;
+  readonly graphRevision: number;
+  readonly graphSha256: string;
+  readonly kind: "task_graph";
+  readonly nodeId?: string;
+  readonly receiptSha256?: string | null;
+  readonly sessionSeq: number;
+  readonly status: string;
+}
+
 export type CompletionFactTranscriptItem =
   | {
       readonly candidateSha256: string;
@@ -107,6 +120,7 @@ export type CanonicalTranscriptItem =
   | CompletionFactTranscriptItem
   | ToolCallFactTranscriptItem
   | ToolObservationFactTranscriptItem
+  | TaskGraphFactTranscriptItem
   | UserTextTranscriptItem
   | VerificationFactTranscriptItem;
 
@@ -213,6 +227,64 @@ export function buildCanonicalTranscript(
             text: event.data.message,
           });
         }
+        break;
+      case "task_graph.approved":
+        transcript.push({
+          fact: "approved",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          sessionSeq: event.sessionSeq,
+          status: "approved",
+        });
+        break;
+      case "task_graph.enqueued":
+        transcript.push({
+          fact: "enqueued",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          sessionSeq: event.sessionSeq,
+          status: event.data.requested_execution,
+        });
+        break;
+      case "task_node.attempt.terminal":
+        transcript.push({
+          fact: "node_terminal",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          nodeId: event.data.node_id,
+          receiptSha256: event.data.receipt_sha256,
+          sessionSeq: event.sessionSeq,
+          status: event.data.terminal,
+        });
+        break;
+      case "task_worktree.promotion.applied":
+        transcript.push({
+          bundleSha256: event.data.bundle_sha256,
+          fact: "promotion_applied",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          sessionSeq: event.sessionSeq,
+          status: "applied",
+        });
+        break;
+      case "task_graph.terminal":
+        transcript.push({
+          fact: "terminal",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          sessionSeq: event.sessionSeq,
+          status: event.data.status,
+        });
         break;
       case "tool.call.requested":
         transcript.push({

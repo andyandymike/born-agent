@@ -44,10 +44,47 @@ export interface McpApprovalPreview {
   readonly title: string;
 }
 
+export interface WorktreeAllocationApprovalPreview {
+  readonly actionKind: "task_worktree.allocate";
+  readonly actionSha256: string;
+  readonly baseCommit: string;
+  readonly dirtyEntries: readonly string[];
+  readonly fileCount: number;
+  readonly graphId: string;
+  readonly nodeIds: readonly string[];
+  readonly requestedBytes: number;
+  readonly workspaceId: string;
+}
+
+export interface WorktreePromotionApprovalPreview {
+  readonly actionKind: "task_worktree.promote";
+  readonly actionSha256: string;
+  readonly bundleSha256: string;
+  readonly changedBytes: number;
+  readonly graphId: string;
+  readonly nodeId: string;
+  readonly paths: readonly string[];
+  readonly targetSnapshotSha256: string;
+  readonly workspaceId: string;
+}
+
+export interface WorktreeCleanupApprovalPreview {
+  readonly actionKind: "task_worktree.cleanup";
+  readonly actionSha256: string;
+  readonly archiveSha256: string;
+  readonly bytes: number;
+  readonly files: number;
+  readonly graphId: string;
+  readonly workspaceId: string;
+}
+
 export type ApprovalPreview =
   | CommandApprovalPreview
   | McpApprovalPreview
-  | PatchApprovalPreview;
+  | PatchApprovalPreview
+  | WorktreeAllocationApprovalPreview
+  | WorktreeCleanupApprovalPreview
+  | WorktreePromotionApprovalPreview;
 
 export interface ApprovalPrompt {
   request(

@@ -1,0 +1,1 @@
+Git checkout and worktree materialization must never invoke a configured filter for this file.

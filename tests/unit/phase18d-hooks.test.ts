@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ArtifactSessionRuntime } from "../../src/artifacts/artifact-session-runtime.js";
 import { canonicalJson } from "../../src/completion/canonical-json.js";
+import { HookCommandRunner } from "../../src/hooks/hook-command-runner.js";
 import { HookRuntime, type HookDurableFacts } from "../../src/hooks/hook-runtime.js";
 import type { Phase18HookRunEventType } from "../../src/hooks/hook-event-schema.js";
 import {
@@ -30,14 +31,21 @@ const baseFacts = (): HookDurableFacts => ({
   planApprovalEvidence: [],
 });
 
-async function hookFixture(hook: unknown, facts = baseFacts()) {
+async function hookFixture(
+  hook: unknown,
+  facts = baseFacts(),
+  command?: {
+    readonly approval?: "approved" | "cancelled" | "denied";
+    readonly script?: string;
+  },
+) {
   const base = await mkdtemp(join(tmpdir(), "bornagent-phase18d-hooks-"));
   temporary.push(base);
   const roots = await createTestCapabilityRoots(base);
   const plugin = await writeTestCapabilityPackage(join(roots.userRoot, "hook-package"), {
     extraFiles: {
       "hook.json": `${canonicalJson(hook)}\n`,
-      "observer.mjs": "process.stdout.write('{}');\n",
+      "observer.mjs": command?.script ?? "process.stdout.write('{}');\n",
     },
     includeHook: true,
     includeSkill: false,
@@ -63,6 +71,27 @@ async function hookFixture(hook: unknown, facts = baseFacts()) {
     events,
     runtime: new HookRuntime({
       artifacts,
+      ...(command === undefined
+        ? {}
+        : {
+            commandRunner: new HookCommandRunner({
+              cleanup: {
+                terminate: async (pid) => {
+                  if (pid !== undefined) {
+                    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+                  }
+                  return { detail: "clean" as const, forced: true, verified: true };
+                },
+              },
+              content: roots.platform.createContentSource(snapshot),
+              environment: process.env,
+              executable: process.execPath,
+              prompt: { request: async () => command.approval ?? "approved" },
+              randomUUID,
+              secrets: [],
+              workspace: roots.workspace,
+            }),
+          }),
       events: { append: async (type, data) => void events.push({ data, type }) },
       facts: () => facts,
       randomUUID,
@@ -186,6 +215,91 @@ describe("Phase 18D lifecycle Hooks", () => {
     expect(decision).toMatchObject({ decision: "no_objection" });
     expect(value.events.at(-1)).toMatchObject({
       data: { code: "hook_observer_degraded", effect_state: "none" },
+      type: "hook.invocation.failed",
+    });
+  });
+
+  it("runs a frozen command gate behind an independent approval and persists its strict result", async () => {
+    const value = await hookFixture({
+      component_id: "observer",
+      description: "Strict command gate.",
+      display_name: "Gate",
+      event: "tool.before_effect",
+      failure_policy: "fail_closed",
+      handler: {
+        argv: [],
+        cwd: "plugin_root",
+        environment: {},
+        executable: "observer.mjs",
+        sandbox: "policy_selected",
+        type: "command",
+      },
+      kind: "hook",
+      mode: "gate",
+      requested_effects: ["process_spawn"],
+      schema_version: 1,
+    }, baseFacts(), {
+      script: "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({schemaVersion:1,decision:'no_objection',evidence:['fixture:checked']})));\n",
+    });
+    let revalidated = 0;
+    const decision = await value.runtime.run(
+      "tool.before_effect",
+      {
+        action: {
+          actionKind: "run_command",
+          originalActionSha256: "d".repeat(64),
+          toolName: "run_command",
+        },
+        revalidateOriginalAction: async () => {
+          revalidated += 1;
+          return true;
+        },
+      },
+      new AbortController().signal,
+    );
+    expect(decision).toMatchObject({ decision: "no_objection" });
+    expect(decision.evidence).toContain("fixture:checked");
+    expect(decision.evidence?.some((entry) => entry.startsWith("sha256:"))).toBe(true);
+    expect(revalidated).toBe(1);
+    expect(value.events.map((event) => event.type)).toEqual([
+      "hook.matched",
+      "hook.invocation.requested",
+      "hook.permission.evaluated",
+      "hook.approval.requested",
+      "hook.approval.decided",
+      "hook.invocation.started",
+      "hook.invocation.decided",
+    ]);
+  });
+
+  it("does not spawn a command Hook when its exact action approval is denied", async () => {
+    const value = await hookFixture({
+      component_id: "observer",
+      description: "Strict command gate.",
+      display_name: "Gate",
+      event: "tool.before_effect",
+      failure_policy: "fail_closed",
+      handler: {
+        argv: [],
+        cwd: "plugin_root",
+        environment: {},
+        executable: "observer.mjs",
+        sandbox: "policy_selected",
+        type: "command",
+      },
+      kind: "hook",
+      mode: "gate",
+      requested_effects: ["process_spawn"],
+      schema_version: 1,
+    }, baseFacts(), { approval: "denied" });
+    await expect(value.runtime.run(
+      "tool.before_effect",
+      { action: { actionKind: "run_command", originalActionSha256: "e".repeat(64) } },
+      new AbortController().signal,
+    )).resolves.toMatchObject({ decision: "deny", code: "hook_approval_denied" });
+    expect(value.events.some((event) => event.type === "hook.invocation.started")).toBe(false);
+    expect(value.events.at(-1)).toMatchObject({
+      data: { code: "hook_approval_denied", effect_state: "none" },
       type: "hook.invocation.failed",
     });
   });

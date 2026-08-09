@@ -84,6 +84,8 @@ export interface AgentToolRegistryOptions {
   readonly sandboxEvents?: SandboxEventAppender;
   readonly secrets?: readonly (string | undefined)[];
   readonly taskProfile: TaskProfile;
+  /** Graph-node runs may finish their attempt, but never mutate the Goal/Plan control plane. */
+  readonly taskNodeExecution?: boolean;
   readonly sessionId: string;
   readonly timestamp: () => string;
   readonly updatePlanTool?: ToolDefinition<UpdatePlanInput>;

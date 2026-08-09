@@ -233,6 +233,8 @@ function transcriptLine(item: CanonicalTranscriptItem): string | undefined {
       return item.phase === "terminal"
         ? `Run outcome: ${item.outcome}`
         : undefined;
+    case "task_graph":
+      return `Task Graph ${item.fact}: ${item.graphId} rev ${String(item.graphRevision)} status=${item.status}${item.nodeId === undefined ? "" : ` node=${item.nodeId}`}`;
   }
 }
 
@@ -385,6 +387,10 @@ export async function executeSessionsShow(
               transcriptTruncated: transcript.length > MAX_SHOW_ITEMS,
             }),
         lastRunId: lastRun?.runId ?? null,
+        taskGraph: session.taskGraph,
+        taskExecution: session.taskExecution,
+        worktrees: session.worktrees,
+        background: session.background,
         model: lastRun?.started.data.model ?? null,
         outcomeReport,
         provider: lastRun?.started.data.provider ?? null,
@@ -419,6 +425,13 @@ export async function executeSessionsShow(
     io.stdout.write(
       `Artifacts: ${session.artifacts.storedReferenceCount} references, ${session.artifacts.objects.length} objects, ${session.artifacts.budgetUsage.sessionBytes ?? 0} captured bytes, ${session.artifacts.truncatedCaptureEventCount} truncated\n`,
     );
+    if (session.taskExecution !== null) {
+      io.stdout.write(`Task Graph: ${session.taskExecution.graph.graphId} rev ${String(session.taskExecution.graph.revision)} status=${session.taskExecution.status}\n`);
+      io.stdout.write(`Task nodes: ${String(session.taskExecution.nodes.filter((node) => node.status === "succeeded").length)}/${String(session.taskExecution.nodes.length)} succeeded\n`);
+    }
+    if (session.background.workers.length > 0) {
+      io.stdout.write(`Background workers: ${String(session.background.workers.length)} historical, current=${session.background.current?.status ?? "none"}\n`);
+    }
     io.stdout.write(renderOutcomeReport(outcomeReport, "text"));
     if (options.context === true) {
       const facts = publicContextFacts(session) as {

@@ -93,10 +93,21 @@ export const pluginOperationRecordSchema = z.object({
   operation: z.enum(["install", "enable", "disable", "remove"]),
   operation_id: uuid,
   plugin_sha256: sha256.optional(),
+  reconciliation: z.object({
+    evidence_sha256: sha256,
+    observed: z.enum(["applied_exact", "not_applied"]),
+    reconciled_at: timestamp,
+  }).strict().optional(),
   requested_at: timestamp,
   schema_version: z.literal(1),
   state: z.enum(["requested", "completed"]),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.state === "requested" && value.reconciliation !== undefined) {
+    context.addIssue({ code: "custom", message: "requested operation cannot carry reconciliation" });
+  }
+});
+
+export type PluginOperationRecordV1 = z.infer<typeof pluginOperationRecordSchema>;
 
 export const capabilityLeaseRecordSchema = z.object({
   acquired_at: timestamp,

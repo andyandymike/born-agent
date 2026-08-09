@@ -146,4 +146,51 @@ describe("Phase 18E local Plugin lifecycle", () => {
       code: "plugin_tampered",
     });
   });
+
+  it("reconciles applied and not-applied operation crash prefixes before later mutations", async () => {
+    const value = await fixture();
+    const source = resolve("fixtures/capability-platform/m9-review-pack");
+    const installed = await value.lifecycle.install(source);
+    const operations = join(value.userRoot, "tmp", "operations");
+    const installedOperation = join(operations, `${installed.operationId}.json`);
+    await writeFile(installedOperation, `${canonicalJson({
+      operation: "install",
+      operation_id: installed.operationId,
+      plugin_sha256: installed.exactSelector.split("#sha256:")[1],
+      requested_at: "2026-08-08T00:00:00.000Z",
+      schema_version: 1,
+      state: "requested",
+    })}\n`, "utf8");
+    await writeFile(join(value.userRoot, "audit", "v1", "events.jsonl"), "", "utf8");
+
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({
+      incompleteOperationCount: 0,
+      reconciledOperationCount: 1,
+      status: "valid",
+    });
+    expect(JSON.parse(await readFile(installedOperation, "utf8"))).toMatchObject({
+      reconciliation: { observed: "applied_exact" },
+      state: "completed",
+    });
+
+    const pendingId = "30000000-0000-4000-8000-000000009999";
+    const pending = join(operations, `${pendingId}.json`);
+    await writeFile(pending, `${canonicalJson({
+      operation: "enable",
+      operation_id: pendingId,
+      plugin_sha256: installed.exactSelector.split("#sha256:")[1],
+      requested_at: "2026-08-08T00:00:00.000Z",
+      schema_version: 1,
+      state: "requested",
+    })}\n`, "utf8");
+    await expect(value.lifecycle.doctor()).resolves.toMatchObject({
+      incompleteOperationCount: 0,
+      reconciledOperationCount: 1,
+      status: "valid",
+    });
+    expect(JSON.parse(await readFile(pending, "utf8"))).toMatchObject({
+      reconciliation: { observed: "not_applied" },
+      state: "completed",
+    });
+  });
 });

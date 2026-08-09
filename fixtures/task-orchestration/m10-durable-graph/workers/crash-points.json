@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "points": [
+    "before-ready",
+    "after-ready-before-ack",
+    "after-attempt-requested",
+    "after-effect-before-terminal",
+    "after-terminal-before-worker-terminal"
+  ]
+}

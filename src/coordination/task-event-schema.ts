@@ -39,6 +39,15 @@ export const agentOriginSchema = z
   })
   .strict();
 
+export const taskGraphProgressOriginSchema = z
+  .object({
+    graph_id: z.string().uuid(),
+    graph_revision: revisionSchema,
+    graph_sha256: sha256Schema,
+    kind: z.literal("task_graph"),
+  })
+  .strict();
+
 export const hostCompletionOriginSchema = z
   .object({ kind: z.literal("host_completion") })
   .strict();
@@ -160,7 +169,7 @@ export const planItemStatusChangedDataSchema = z
     goal_revision: revisionSchema,
     item_id: planItemIdSchema,
     note: noteSchema,
-    origin: agentOriginSchema,
+    origin: z.union([agentOriginSchema, taskGraphProgressOriginSchema]),
     plan_id: planIdSchema,
     plan_sha256: sha256Schema,
     revision: revisionSchema,
@@ -195,6 +204,7 @@ export const phase16TaskSessionEventDataSchemas = {
 
 export type UserOrigin = Readonly<z.infer<typeof userOriginSchema>>;
 export type AgentOrigin = Readonly<z.infer<typeof agentOriginSchema>>;
+export type TaskGraphProgressOrigin = Readonly<z.infer<typeof taskGraphProgressOriginSchema>>;
 export type HostCompletionOrigin = Readonly<
   z.infer<typeof hostCompletionOriginSchema>
 >;

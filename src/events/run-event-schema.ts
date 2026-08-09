@@ -119,6 +119,15 @@ const commonRunStartedData = {
   workspace_fingerprint: sha256Schema.optional(),
   workspace_resume_fingerprint: workspaceResumeFingerprintSchema.optional(),
   runtime_policy: persistedRuntimePolicyEvidenceSchema.optional(),
+  task_node_binding: z.object({
+    attempt_id: uuidSchema,
+    attempt_number: z.number().int().min(1).max(3),
+    graph_id: uuidSchema,
+    graph_revision: positiveInteger,
+    graph_sha256: sha256Schema,
+    node_id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
+    scheduler_lease_nonce_sha256: sha256Schema,
+  }).strict().optional(),
 };
 const chatRunStartedDataSchema = z
   .object({

@@ -20,6 +20,8 @@ export interface HookPipelineInput {
   readonly action?: HookActionProjection;
   readonly completion?: Readonly<Record<string, unknown>>;
   readonly result?: Readonly<Record<string, unknown>>;
+  /** Rechecks the original action after any command Hook process returns. */
+  readonly revalidateOriginalAction?: () => Promise<boolean>;
 }
 
 export interface HookPipelineDecision {

@@ -4,10 +4,18 @@ import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import type { DecodedStoredEvent } from "../events/event-decoder-registry.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
+import type { TaskGraphProjectionV1 } from "../task-graph/task-graph-projector.js";
+import type { TaskExecutionProjectionV1 } from "../scheduling/task-execution-projector.js";
+import type { WorktreeProjectionV1 } from "../worktrees/worktree-projector.js";
+import type { BackgroundProjectionV1 } from "../background/background-projector.js";
 
 export interface Phase16TuiProjection {
+  readonly background: BackgroundProjectionV1;
   readonly outcomeReport: OutcomeReport;
+  readonly taskExecution: TaskExecutionProjectionV1 | null;
+  readonly taskGraph: TaskGraphProjectionV1;
   readonly taskState: TaskStateProjection;
+  readonly worktrees: WorktreeProjectionV1;
 }
 
 function decoded(event: TuiPersistedEvent): DecodedStoredEvent {
@@ -42,8 +50,12 @@ export class Phase16TuiProjector {
     try {
       const session = reconstructMultiRunSession(this.#events);
       return {
+        background: session.background,
         outcomeReport: this.#outcomes.build(session),
+        taskExecution: session.taskExecution,
+        taskGraph: session.taskGraph,
         taskState: session.taskState,
+        worktrees: session.worktrees,
       };
     } catch (error) {
       if (this.#phase16) throw error;

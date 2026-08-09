@@ -72,6 +72,7 @@ export interface TuiCorePort {
   ): Promise<TuiCoreRunResult>;
   startTask(task: string): Promise<TuiCoreRunResult>;
   refreshRepository?(): Promise<RepositoryStatusProjection>;
+  graphCommand?(intent: TuiGraphIntent): Promise<TuiCoreRunResult>;
   startIntent?(
     intent: Phase16StartIntent,
     selectedMode: "build" | "plan",
@@ -83,6 +84,14 @@ export interface TuiCorePort {
     onError: (error: Error) => void,
   ): Promise<() => void>;
 }
+
+export type TuiGraphIntent =
+  | { readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "approve" }
+  | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "enqueue" }
+  | { readonly background: boolean; readonly sessionId: string; readonly type: "run" }
+  | { readonly reason: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "cancel" }
+  | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
+  | { readonly attemptId: string; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
 
 export interface TuiCoreRunResult {
   readonly diagnostic: string | null;
@@ -113,6 +122,7 @@ const PLAN_REJECT_COMMAND = /^\/plan\s+reject\s+([\s\S]+)$/u;
 const PLAN_REPLACE_COMMAND = /^\/plan\s+replace\s+([\s\S]+)$/u;
 const SKILL_COMMAND = /^\/skill\s+(\S+)(?:\s+([\s\S]+))?$/u;
 const MCP_PROMPT_COMMAND = /^\/mcp-prompt\s+(\S+)(?:\s+([\s\S]+))?$/u;
+const GRAPH_COMMAND = /^\/graph(?:\s+([\s\S]+))?$/u;
 
 function printableInput(data: string): string | null {
   if (data.length === 0) return null;
@@ -388,8 +398,12 @@ export class TuiController {
       if (projection !== null) {
         this.viewState = {
           ...this.viewState,
+          background: projection.background,
           outcomeReport: projection.outcomeReport,
+          taskExecution: projection.taskExecution,
+          taskGraph: projection.taskGraph,
           taskState: projection.taskState,
+          worktrees: projection.worktrees,
         };
       }
     }
@@ -724,6 +738,11 @@ export class TuiController {
       );
       return;
     }
+    const graphCommand = GRAPH_COMMAND.exec(text)?.[1]?.trim();
+    if (graphCommand !== undefined) {
+      await this.executeGraphCommand(graphCommand, text);
+      return;
+    }
     if (this.options.core.startIntent === undefined || this.coordinator === null) {
       this.ephemeralState = setDraftInput(this.ephemeralState, "");
       await this.startCoreRun(() => this.options.core.startTask(text), text);
@@ -871,6 +890,90 @@ export class TuiController {
           expectedSessionSeq: this.viewState.session.lastSessionSeq,
           sessionId: this.viewState.session.id,
         };
+  }
+
+  private async executeGraphCommand(command: string, original: string): Promise<void> {
+    if (this.options.core.graphCommand === undefined) {
+      this.showCommandDiagnostic("Graph control is unavailable in this TUI runtime.");
+      return;
+    }
+    const sessionId = this.viewState.session.id;
+    if (sessionId === null) {
+      this.showCommandDiagnostic("Select a session before using /graph commands.");
+      return;
+    }
+    if (command === "worktrees") {
+      const workspaces = this.viewState.worktrees.workspaces;
+      this.ephemeralState = setCoreDiagnostic(
+        setDraftInput(this.ephemeralState, ""),
+        workspaces.length === 0
+          ? "Graph worktrees: none."
+          : `Graph worktrees: ${workspaces.map((workspace) => `${workspace.identity.workspaceId}:${workspace.status}`).join(" | ")}`,
+      );
+      this.scheduleRender();
+      return;
+    }
+    const nodeSelector = /^node\s+([a-z][a-z0-9-]{0,63})$/u.exec(command)?.[1];
+    if (nodeSelector !== undefined) {
+      const node = this.viewState.taskExecution?.nodes.find((candidate) => candidate.nodeId === nodeSelector);
+      this.ephemeralState = setCoreDiagnostic(
+        setDraftInput(this.ephemeralState, ""),
+        node === undefined
+          ? `Graph node not found: ${nodeSelector}`
+          : `Graph node ${node.nodeId}: ${node.status}; attempts=${String(node.attempts.length)}; next=${node.nextAttemptOrigin ?? "none"}`,
+      );
+      this.scheduleRender();
+      return;
+    }
+    let intent: TuiGraphIntent | null = null;
+    if (command === "approve") {
+      const graph = this.viewState.taskGraph.currentDraft;
+      if (graph !== null) intent = { revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "approve" };
+    } else {
+      const modeMatch = /^(enqueue|run|resume)\s+(foreground|background)$/u.exec(command);
+      if (modeMatch !== null) {
+        const background = modeMatch[2] === "background";
+        if (modeMatch[1] === "enqueue") {
+          const graph = this.viewState.taskGraph.currentApproved;
+          if (graph !== null) intent = { background, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "enqueue" };
+        } else if (modeMatch[1] === "run") {
+          intent = { background, sessionId, type: "run" };
+        } else {
+          const graph = this.viewState.taskExecution?.graph;
+          if (graph !== undefined) intent = { background, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "resume" };
+        }
+      }
+    }
+    if (intent === null && command.startsWith("cancel")) {
+      const graph = this.viewState.taskExecution?.graph;
+      if (graph !== undefined) intent = {
+        reason: command.slice("cancel".length).trim() || "cancelled from the TUI",
+        revision: graph.revision,
+        sessionId,
+        sha256: graph.graphSha256,
+        type: "cancel",
+      };
+    }
+    const promotionNode = /^promotion\s+([a-z][a-z0-9-]{0,63})$/u.exec(command)?.[1];
+    if (intent === null && promotionNode !== undefined) {
+      const execution = this.viewState.taskExecution;
+      const node = execution?.nodes.find((candidate) => candidate.nodeId === promotionNode);
+      const attempt = [...(node?.attempts ?? [])].reverse().find((candidate) => candidate.terminal === "succeeded");
+      if (execution !== null && execution !== undefined && attempt !== undefined) intent = {
+        attemptId: attempt.attemptId,
+        nodeId: promotionNode,
+        revision: execution.graph.revision,
+        sessionId,
+        sha256: execution.graph.graphSha256,
+        type: "promote",
+      };
+    }
+    if (intent === null) {
+      this.showCommandDiagnostic("Graph command is unavailable for the current projection. Use approve, enqueue/run/resume foreground|background, cancel [reason], promotion <node>, node <node>, or worktrees.");
+      return;
+    }
+    this.ephemeralState = setDraftInput(this.ephemeralState, "");
+    await this.startCoreRun(() => this.options.core.graphCommand!(intent), original);
   }
 
   private currentSnapshot(): RunCoordinatorSnapshot {

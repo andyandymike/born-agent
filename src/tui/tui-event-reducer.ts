@@ -1250,6 +1250,9 @@ function reduceKnownEvent(
       });
     case "hook.invocation.requested":
     case "hook.invocation.started":
+    case "hook.permission.evaluated":
+    case "hook.approval.requested":
+    case "hook.approval.decided":
       return state;
     case "goal.created":
     case "goal.revised":
@@ -1262,6 +1265,45 @@ function reduceKnownEvent(
     case "plan.proposed":
     case "plan.rejected":
     case "plan.revised":
+    case "task_graph.proposed":
+    case "task_graph.replaced":
+    case "task_graph.approved":
+    case "task_graph.rejected":
+    case "task_graph.stale":
+    case "task_graph.enqueued":
+    case "task_graph.started":
+    case "task_graph.waiting_for_user":
+    case "task_graph.cancel.requested":
+    case "task_graph.terminal":
+    case "task_scheduler.lease.acquired":
+    case "task_scheduler.lease.recovered":
+    case "task_node.attempt.requested":
+    case "task_node.attempt.started":
+    case "task_node.attempt.waiting_for_user":
+    case "task_node.attempt.terminal":
+    case "task_node.retry.requested":
+    case "task_node.skipped":
+    case "task_budget.exhausted":
+    case "task_worktree.allocation.prepared":
+    case "task_worktree.allocation.approved":
+    case "task_worktree.create.requested":
+    case "task_worktree.created":
+    case "task_worktree.baseline.seeded":
+    case "task_worktree.lease.acquired":
+    case "task_worktree.lease.released":
+    case "task_worktree.snapshot.accepted":
+    case "task_worktree.promotion.proposed":
+    case "task_worktree.promotion.approved":
+    case "task_worktree.promotion.requested":
+    case "task_worktree.promotion.applied":
+    case "task_worktree.cleanup.requested":
+    case "task_worktree.cleanup.completed":
+    case "task_worktree.reconciled":
+    case "task_worker.spawn.requested":
+    case "task_worker.started":
+    case "task_worker.control.accepted":
+    case "task_worker.terminal":
+    case "task_worker.reconciled":
       return state;
     default:
       return assertNever(event);

@@ -88,6 +88,23 @@ export function classifyPlanItemEvidence(
     });
   }
 
+  if (event.scope === "session" && event.type === "task_node.attempt.terminal") {
+    if (event.data.terminal !== "succeeded") return INELIGIBLE;
+    const revision = [...context.eventsById.values()].find((candidate) =>
+      candidate.scope === "session" &&
+      (candidate.type === "task_graph.proposed" || candidate.type === "task_graph.replaced") &&
+      candidate.data.graph_id === event.data.graph_id &&
+      candidate.data.graph_revision === event.data.graph_revision &&
+      candidate.data.graph_sha256 === event.data.graph_sha256
+    );
+    if (
+      revision === undefined || revision.scope !== "session" ||
+      (revision.type !== "task_graph.proposed" && revision.type !== "task_graph.replaced") ||
+      revision.data.binding.goal_id !== context.goalId || revision.data.binding.goal_revision !== context.goalRevision
+    ) return INELIGIBLE;
+    return Object.freeze({ eligibleForBlocked: true, eligibleForCompleted: true });
+  }
+
   if (event.scope !== "run") return INELIGIBLE;
   const binding = matchingRunBinding(event.runId, context);
   if (binding === undefined) return INELIGIBLE;

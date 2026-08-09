@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type { CliRuntime } from "./types.js";
-import type { ApprovalLineReader } from "../approvals/approval-types.js";
+import type { ApprovalLineReader, ApprovalPrompt } from "../approvals/approval-types.js";
 import { TerminalApprovalPrompt } from "../approvals/terminal-approval-prompt.js";
 import { createDefaultExecutableRegistry } from "../execution/executable-registry.js";
 import { ExecutionPreparer } from "../execution/execution-preparer.js";
@@ -47,11 +47,40 @@ import { UserStateModelQualificationGate } from "../model/user-state-model-quali
 import { DefaultCapabilityPlatform } from "../capabilities/capability-platform.js";
 import { resolveCapabilityUserStateRoot } from "../capabilities/capability-source.js";
 import { PluginLifecycle } from "../plugins/plugin-lifecycle.js";
+import { HookCommandRunner } from "../hooks/hook-command-runner.js";
+import { executeAgent } from "../commands/agent.js";
+import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
+import { taskMutationBlocker } from "../coordination/task-control-plane.js";
+import type { PreparedTaskWorkspaceV1, TaskAttemptExecutionResultV1 } from "../scheduling/deterministic-task-scheduler.js";
+import { sha256Canonical } from "../completion/canonical-json.js";
+import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
+import { NodeGitWorktreePort } from "../worktrees/git-worktree-port.js";
+import { ManagedWorktreeManager } from "../worktrees/managed-worktree-manager.js";
+import { WorktreePromotionRuntime } from "../worktrees/promotion-runtime.js";
+import { resolveWorktreeUserStateRoot } from "../worktrees/managed-worktree-policy.js";
+import { BackgroundDeferredApprovalPrompt } from "../background/background-approval-prompt.js";
+import { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
+import { BackgroundWorkerRuntime } from "../background/background-worker-runtime.js";
+import { resolveWorkerUserStateRoot } from "../background/background-operation-store.js";
+import { observeBackgroundWorkerLive } from "../background/background-worker-live-status.js";
+import { queueBackgroundWorkerCancel } from "../background/background-worker-control.js";
+import { sealBackgroundExecutable } from "../background/background-executable-descriptor.js";
+import { ExecutionPreparationError, type ExecutionResult } from "../execution/execution-types.js";
+import { SessionCatalog } from "../sessions/session-catalog.js";
+import { NodeProcessIdentityProbe } from "../sessions/process-identity.js";
+import { ArtifactStore } from "../artifacts/artifact-store.js";
+import { taskNodeReceiptSchema } from "../task-graph/task-node-receipt.js";
+import { parseStrictJson } from "../system/strict-json.js";
+import { TaskGraphError } from "../task-graph/task-graph-errors.js";
+import type { TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-projector.js";
+import type { TaskNodeSpecV1 } from "../task-graph/task-graph-schema.js";
 
 export interface NodeRuntimeOptions {
+  readonly approvalPromptOverride?: ApprovalPrompt;
   readonly approvalInput: ApprovalLineReader;
   readonly capabilityAssetsRoot?: string;
   readonly capabilityUserStateRoot?: string;
+  readonly cliEntryPath?: string;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly evalAssetsRoot?: string;
@@ -63,8 +92,88 @@ export interface NodeRuntimeOptions {
   readonly nodeVersion: string;
   readonly onCancel: (listener: () => void) => () => void;
   readonly platform: NodeJS.Platform;
+  /**
+   * Embedders and deterministic acceptance tests may supply the same bounded
+   * model-evidence ports used by a direct Agent run. Graph nodes still receive
+   * a fresh runtime and cannot replace filesystem/process/control-plane ports.
+   */
+  readonly taskAgentRuntimeOverrides?: Partial<Pick<
+    CliRuntime,
+    "agentModelEvidence" | "createModelBackend" | "modelQualificationGate"
+  >>;
   readonly tuiHost?: TuiHost;
   readonly version: string;
+  readonly worktreeUserStateRoot?: string;
+  readonly workerUserStateRoot?: string;
+}
+
+function boundedGraphFact(value: string, maximum = 1_024): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum - 1)}…`;
+}
+
+async function buildGraphNodeModelTask(input: {
+  readonly graph: TaskGraphRevisionProjectionV1;
+  readonly node: TaskNodeSpecV1;
+  readonly session: ReturnType<typeof reconstructMultiRunSession>;
+  readonly workspace: PreparedTaskWorkspaceV1;
+  readonly workspaceRoot: string;
+}): Promise<string> {
+  const goal = input.session.taskState.goals.find((candidate) =>
+    candidate.content.goalId === input.graph.binding.goalId && candidate.content.revision === input.graph.binding.goalRevision
+  );
+  const plan = input.session.taskState.plans.find((candidate) =>
+    candidate.content.planId === input.graph.binding.planId && candidate.content.revision === input.graph.binding.planRevision &&
+    candidate.planSha256 === input.graph.binding.planSha256
+  );
+  if (goal === undefined || plan === undefined || input.session.taskExecution === null) {
+    throw new TaskGraphError("task_graph_binding_stale", "Graph node context no longer exact-matches its approved Goal, Plan, and execution");
+  }
+  const store = await ArtifactStore.create({ sessionId: input.session.sessionId, workspace: input.workspaceRoot });
+  const dependencies: string[] = [];
+  for (const dependencyId of input.node.dependsOn) {
+    const dependency = input.session.taskExecution.nodes.find((candidate) => candidate.nodeId === dependencyId);
+    const attempt = [...(dependency?.attempts ?? [])].reverse().find((candidate) => candidate.terminal === "succeeded");
+    const terminal = attempt?.terminalEventId === null || attempt?.terminalEventId === undefined
+      ? undefined
+      : input.session.events.find((event) => event.eventId === attempt.terminalEventId);
+    if (dependency?.status !== "succeeded" || attempt === undefined || terminal?.scope !== "session" || terminal.type !== "task_node.attempt.terminal" ||
+        terminal.data.receipt_artifact_id === null || terminal.data.receipt_sha256 === null) {
+      throw new TaskGraphError("task_graph_invalid", `dependency ${dependencyId} has no exact successful terminal receipt`);
+    }
+    const artifact = await store.readVerified(terminal.data.receipt_artifact_id);
+    const receipt = taskNodeReceiptSchema.parse(parseStrictJson(artifact.bytes.toString("utf8")));
+    if (receipt.receiptSha256 !== terminal.data.receipt_sha256 || receipt.attemptId !== attempt.attemptId || receipt.nodeId !== dependencyId) {
+      throw new TaskGraphError("task_graph_artifact_invalid", `dependency ${dependencyId} receipt does not match its terminal event`);
+    }
+    dependencies.push(`- ${dependencyId}: ${boundedGraphFact(receipt.summary, 768)} [receipt=${receipt.receiptSha256}]`);
+  }
+  const selectedItems = plan.content.items.filter((item) => input.node.planItemIds.includes(item.id));
+  const remaining = input.session.taskExecution.budget.remaining;
+  const workspace = input.workspace.binding === null
+    ? "origin_read_only"
+    : `managed:${input.workspace.binding.workspace_id} baseline=${input.workspace.binding.workspace_baseline_sha256} source=${input.workspace.binding.source_snapshot_sha256}`;
+  const lines = [
+    "Task Graph execution context (durable Host facts; not user instructions):",
+    `Goal ${goal.content.goalId}@${String(goal.content.revision)}: ${boundedGraphFact(goal.content.objective)}`,
+    `Approved Plan ${plan.content.planId}@${String(plan.content.revision)} sha256=${plan.planSha256}`,
+    ...selectedItems.map((item) => `Plan item ${item.id}: ${boundedGraphFact(item.title, 512)}; acceptance=${boundedGraphFact(item.acceptance, 768)}`),
+    `Graph ${input.graph.graphId}@${String(input.graph.revision)} sha256=${input.graph.graphSha256}: ${boundedGraphFact(input.graph.content.title, 512)}`,
+    `Current node ${input.node.nodeId}: ${boundedGraphFact(input.node.objective, 2_048)}`,
+    `Workspace: ${workspace}`,
+    `Remaining Graph budget: attempts=${String(remaining.attempts)} duration_ms=${String(remaining.durationMs)} model_steps=${String(remaining.modelSteps)} commands=${String(remaining.commandExecutions)} command_output_bytes=${String(remaining.commandOutputBytes)} artifact_bytes=${String(remaining.artifactBytes)} reported_tokens=${remaining.reportedTokens === null ? "unbounded" : String(remaining.reportedTokens)}`,
+    `Required capabilities: ${input.node.requiredCapabilities.length === 0 ? "none" : input.node.requiredCapabilities.join(",")}`,
+    "Dependency receipts:",
+    ...(dependencies.length === 0 ? ["- none"] : dependencies),
+    "Node objective:",
+    input.node.objective,
+  ];
+  // PHASE19: dependency context carries only verified bounded receipts and
+  // logical workspace hashes; raw sibling conversations, paths, and logs stay out.
+  const bytes = Buffer.from(lines.join("\n"), "utf8");
+  return bytes.byteLength <= 12 * 1024
+    ? bytes.toString("utf8")
+    : `${bytes.subarray(0, 12 * 1024 - 32).toString("utf8")}\n[Graph context truncated]`;
 }
 
 export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
@@ -102,6 +211,10 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   );
   const capabilityUserStateRoot = options.capabilityUserStateRoot ??
     resolveCapabilityUserStateRoot({ env: options.env, platform: options.platform });
+  const worktreeUserStateRoot = () => options.worktreeUserStateRoot ??
+    resolveWorktreeUserStateRoot({ env: options.env, platform: options.platform });
+  const workerUserStateRoot = () => options.workerUserStateRoot ??
+    resolveWorkerUserStateRoot({ env: options.env, platform: options.platform });
   const createPluginLifecycle = (workspace: string) => new PluginLifecycle({
     isProcessAlive,
     now: () => new Date().toISOString(),
@@ -109,6 +222,381 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     root: capabilityUserStateRoot,
     workspace,
   });
+  const taskContext = (sessionId: string) => ({
+    inputSurface: "cli" as const,
+    now: () => new Date().toISOString(),
+    randomUuid: randomUUID,
+    sessionId,
+    workspace: options.cwd,
+  });
+  const repositoryRuleIdentity = async (workspace: string): Promise<string> => {
+    const source = await (await RepositorySourceSnapshotter.create(workspace, { environment: options.env })).snapshot();
+    return sha256Canonical({
+      entries: source.snapshot.entries.filter((entry) => entry.relativePath === "AGENTS.md" || entry.relativePath.endsWith("/AGENTS.md")),
+      source_state_sha256: source.snapshot.sourceStateSha256,
+    });
+  };
+  const createManagedWorktreeManager: NonNullable<CliRuntime["createManagedWorktreeManager"]> = async ({ io, sessionId }) =>
+    new ManagedWorktreeManager({
+      context: taskContext(sessionId),
+      git: new NodeGitWorktreePort({ environment: options.env }),
+      managedRoot: worktreeUserStateRoot(),
+      prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+      repositoryRulesSha256: await repositoryRuleIdentity(options.cwd),
+    });
+  const createTaskAttemptExecutor: NonNullable<CliRuntime["createTaskAttemptExecutor"]> =
+    ({ approvalMode = "interactive", io, runtimeProfileId, sessionId, writerFactory }) => {
+      const context = taskContext(sessionId);
+      const openTaskWriter = writerFactory ?? ((writerContext) => V2SessionWriter.openExisting(
+        writerContext.workspace,
+        writerContext.sessionId,
+        { createEventId: writerContext.randomUuid, timestamp: writerContext.now },
+      ));
+      const manager = repositoryRuleIdentity(options.cwd).then((repositoryRulesSha256) => new ManagedWorktreeManager({
+        context,
+        git: new NodeGitWorktreePort({ environment: options.env }),
+        managedRoot: worktreeUserStateRoot(),
+        prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+        repositoryRulesSha256,
+        writerFactory: openTaskWriter,
+      }));
+      return ({
+      supports: (node) =>
+        (node.kind === "agent" && (
+          (node.agent.mode === "plan" && node.agent.taskProfile === "read-only" && node.workspace.mode === "origin_read_only") ||
+          (node.agent.mode === "build" && node.agent.taskProfile === "coding" && node.workspace.mode !== "origin_read_only")
+        )) || (node.kind === "verification" && node.workspace.mode !== "origin_read_only" &&
+          node.budget.maxCommandExecutions >= 1 && node.budget.maxCommandOutputBytes >= 1),
+      prepareWorkspace: async (input) => {
+        if (input.node.workspace.mode === "origin_read_only") {
+          return Object.freeze({ binding: null, executionRoot: options.cwd });
+        }
+        const handle = await (await manager).locate({
+          graphId: input.graph.graphId,
+          graphRevision: input.graph.revision,
+          graphSha256: input.graph.graphSha256,
+          nodeId: input.node.nodeId,
+        });
+        const source = await (await RepositorySourceSnapshotter.create(handle.workspacePath, { environment: options.env })).snapshot(input.signal);
+        return Object.freeze({
+          binding: Object.freeze({
+            managed_path_sha256: handle.identity.managedPathSha256,
+            repository_id: handle.identity.repositoryId,
+            source_snapshot_sha256: source.snapshot.sourceStateSha256,
+            workspace_baseline_sha256: handle.baselineManifestSha256,
+            workspace_id: handle.identity.workspaceId,
+          }),
+          executionRoot: handle.workspacePath,
+        });
+      },
+      start: async (input) => {
+        const deferredController = new AbortController();
+        const deferredApproval = approvalMode === "defer"
+          ? new BackgroundDeferredApprovalPrompt(() => deferredController.abort())
+          : null;
+        if (input.node.kind === "verification") {
+          const verificationNode = input.node;
+          const startedWriter = await openTaskWriter(context);
+          try {
+            await startedWriter.appendTaskGraphEvent("task_node.attempt.started", {
+              attempt_id: input.attemptId,
+              graph_id: input.graph.graphId,
+              graph_revision: input.graph.revision,
+              graph_sha256: input.graph.graphSha256,
+              node_id: input.node.nodeId,
+              run_id: input.runId,
+              scheduler_lease_nonce_sha256: input.schedulerLeaseNonceSha256,
+            });
+          } finally {
+            await startedWriter.close();
+          }
+          const result = (async (): Promise<TaskAttemptExecutionResultV1> => {
+            const zero = (
+              terminal: TaskAttemptExecutionResultV1["terminal"],
+              waitingForUser?: NonNullable<TaskAttemptExecutionResultV1["waitingForUser"]>,
+              diagnosticCode?: string,
+            ): TaskAttemptExecutionResultV1 => Object.freeze({
+              budget: Object.freeze({
+                artifactBytes: 0,
+                attempts: 1,
+                changedBytes: 0,
+                changedFiles: 0,
+                commandExecutions: 0,
+                commandOutputBytes: 0,
+                durationMs: 0,
+                modelSteps: 0,
+                reportedTokens: 0,
+              }),
+              receiptArtifactId: null,
+              receiptSha256: null,
+              ...(diagnosticCode === undefined ? {} : { diagnosticCode }),
+              terminal,
+              usageCompleteness: "complete",
+              ...(waitingForUser === undefined ? {} : { waitingForUser }),
+            });
+            try {
+              const registry = createDefaultExecutableRegistry({
+                execPath: options.execPath,
+                hostEnvironment: options.env,
+                platform: options.platform,
+              });
+              const preparer = await ExecutionPreparer.create({
+                hostEnvironment: options.env,
+                platform: options.platform,
+                registry,
+                workspace: input.workspace.executionRoot,
+              });
+              const [logicalExecutable, ...args] = verificationNode.verification.argv;
+              const prepared = await preparer.prepare({
+                args,
+                cwd: verificationNode.verification.cwd,
+                executable: logicalExecutable!,
+                outputLimitBytes: input.node.budget.maxCommandOutputBytes,
+                purpose: "verify",
+                timeoutMs: input.node.budget.maxDurationMs,
+              });
+              const prompt = deferredApproval ?? new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr });
+              const decision = await prompt.request({
+                actionKind: "run_command",
+                actionSha256: prepared.actionSha256,
+                args: prepared.request.args,
+                cwd: verificationNode.verification.cwd,
+                executable: prepared.request.logicalExecutable,
+                executor: "local",
+                purpose: "verify",
+                reviewLines: Object.freeze([
+                  `node: ${input.node.nodeId}`,
+                  `purpose: ${verificationNode.verification.purpose}`,
+                  ...prepared.review.lifecycleScripts.map((script) => `${script.name}: ${script.body}`),
+                ]),
+                riskWarning: prepared.review.warning,
+              }, input.signal);
+              if (deferredApproval?.deferred != null) {
+                return zero("pre_effect_infrastructure_failure", deferredApproval.deferred);
+              }
+              if (decision !== "approved") return zero(decision === "cancelled" ? "cancelled_clean" : "known_failed");
+              if (await prepared.revalidate() !== "current") return zero("pre_effect_infrastructure_failure");
+              const executor = new LocalExecutor({
+                clock: { now: () => performance.now() },
+                platform: options.platform,
+                processTreeCleanup: createCleanup(),
+                redact: (value) => redactSensitiveText(value),
+                spawn: createNodeSpawnAdapter(spawn),
+                timers,
+              });
+              let completed: ExecutionResult | null = null;
+              for await (const signal of executor.execute(prepared, input.signal)) {
+                if (signal.type === "completed") completed = signal.result;
+              }
+              if (completed === null) return zero("blocked_reconciliation");
+              const command = completed as ExecutionResult;
+              let terminal: TaskAttemptExecutionResultV1["terminal"] =
+                !command.cleanupVerified ? "blocked_reconciliation"
+                  : command.termination === "cancelled" ? "cancelled_clean"
+                    : command.exitCode === 0 && command.termination === "exit" ? "succeeded"
+                      : "known_failed";
+              if (terminal === "succeeded" && input.workspace.binding !== null) {
+                try {
+                  const after = await (await RepositorySourceSnapshotter.create(
+                    input.workspace.executionRoot,
+                    { environment: options.env },
+                  )).snapshot(input.signal);
+                  if (after.snapshot.sourceStateSha256 !== input.workspace.binding.source_snapshot_sha256) {
+                    terminal = "blocked_reconciliation";
+                  } else {
+                    await (await manager).acceptSnapshot({
+                      attemptId: input.attemptId,
+                      graph: input.graph,
+                      nodeId: input.node.nodeId,
+                    });
+                  }
+                } catch {
+                  terminal = "blocked_reconciliation";
+                }
+              }
+              return Object.freeze({
+                budget: Object.freeze({
+                  artifactBytes: 0,
+                  attempts: 1,
+                  // A verification attempt proves an inherited snapshot; it
+                  // does not consume the predecessor's changed-file budget a
+                  // second time. Source mutation is rejected above.
+                  changedBytes: 0,
+                  changedFiles: 0,
+                  commandExecutions: command.termination === "spawn_error" ? 0 : 1,
+                  commandOutputBytes: command.stdoutBytes + command.stderrBytes,
+                  durationMs: command.durationMs,
+                  modelSteps: 0,
+                  reportedTokens: 0,
+                }),
+                receiptArtifactId: null,
+                receiptSha256: null,
+                ...(terminal === "succeeded" ? {} : { diagnosticCode: command.errorCode ?? command.termination }),
+                terminal,
+                usageCompleteness: "complete",
+              });
+            } catch (error) {
+              const diagnosticCode = error instanceof ExecutionPreparationError
+                ? error.code
+                : error instanceof Error ? error.name : "unknown_verification_preflight";
+              return zero("pre_effect_infrastructure_failure", undefined, diagnosticCode);
+            }
+          })();
+          return Object.freeze({ attemptStartedPersisted: true, result });
+        }
+        if (
+          input.node.kind !== "agent" ||
+          (input.node.agent.mode === "plan") !== (input.node.workspace.mode === "origin_read_only")
+        ) {
+          throw new TypeError("production Graph executor received an unsupported node");
+        }
+        const writer = await openTaskWriter(context);
+        const before = reconstructMultiRunSession(writer.events);
+        const graphModelTask = await buildGraphNodeModelTask({
+          graph: input.graph,
+          node: input.node,
+          session: before,
+          workspace: input.workspace,
+          workspaceRoot: options.cwd,
+        });
+        let started = false;
+        let resolveStarted!: () => void;
+        const startedSignal = new Promise<void>((resolveStartedSignal) => {
+          resolveStarted = resolveStartedSignal;
+        });
+        const nodeRuntime: CliRuntime = {
+          ...createNodeRuntime({
+            ...options,
+            ...(deferredApproval === null ? {} : { approvalPromptOverride: deferredApproval }),
+            cwd: input.workspace.executionRoot,
+            onCancel: (listener) => {
+              const removeHost = options.onCancel(listener);
+              const onAbort = () => listener();
+              const onDeferred = () => listener();
+              input.signal.addEventListener("abort", onAbort, { once: true });
+              deferredController.signal.addEventListener("abort", onDeferred, { once: true });
+              return () => {
+                input.signal.removeEventListener("abort", onAbort);
+                deferredController.signal.removeEventListener("abort", onDeferred);
+                removeHost();
+              };
+            },
+          }),
+          ...options.taskAgentRuntimeOverrides,
+        };
+        const execution = executeAgent({
+          commandApproval: input.node.agent.mode === "build" ? "ask" : "deny",
+          commandTimeoutMs: undefined,
+          completionPolicy: "verified",
+          editApproval: input.node.agent.mode === "build" ? "ask" : "deny",
+          maxDurationMs: String(input.node.budget.maxDurationMs),
+          maxCommandOutputBytes: String(input.node.budget.maxCommandOutputBytes),
+          maxSteps: String(input.node.budget.maxModelSteps),
+          maxTokens: input.node.budget.maxReportedTokens === null
+            ? undefined
+            : String(input.node.budget.maxReportedTokens),
+          maxToolOutputBytes: String(Math.max(1, input.node.budget.maxArtifactBytes)),
+          mode: input.node.agent.mode,
+          modeSource: "explicit_cli",
+          model: undefined,
+          policyProfile: runtimeProfileId,
+          provider: undefined,
+          reportFormat: "text",
+          requestTimeoutMs: undefined,
+          requireVerification: "auto",
+          task: input.node.objective,
+          taskProfile: input.node.agent.taskProfile,
+          verbose: false,
+        }, nodeRuntime, io, undefined, {
+          modelTask: graphModelTask,
+          onTaskNodeStarted: () => {
+            started = true;
+            resolveStarted();
+          },
+          runId: input.runId,
+          sessionId,
+          ...(before.lastRun === null ? {} : { sourceRunId: before.lastRun.runId }),
+          taskNodeBinding: {
+            attempt_id: input.attemptId,
+            attempt_number: input.attemptNumber,
+            graph_id: input.graph.graphId,
+            graph_revision: input.graph.revision,
+            graph_sha256: input.graph.graphSha256,
+            node_id: input.node.nodeId,
+            scheduler_lease_nonce_sha256: input.schedulerLeaseNonceSha256,
+          },
+          writer,
+        });
+        await Promise.race([
+          startedSignal,
+          execution.then(() => {
+            if (!started) throw new Error("Graph node run failed before durable start");
+          }),
+        ]);
+        const result = execution.then(async (exitCode): Promise<TaskAttemptExecutionResultV1> => {
+          const session = reconstructMultiRunSession(writer.events);
+          const run = session.runs.find((candidate) => candidate.runId === input.runId);
+          if (run === undefined || run.terminal === undefined) {
+            throw new Error("Graph node executor produced no terminal run projection");
+          }
+          const usage = [...run.events].reverse().find((event) => event.type === "usage");
+          const commands = run.events.filter((event) => event.type === "command.completed");
+          const artifacts = run.events.filter((event) => event.type === "artifact.stored");
+          const terminalDuration = "duration_ms" in run.terminal.data ? run.terminal.data.duration_ms : 0;
+          const effectBlocker = taskMutationBlocker(session);
+          const terminal: TaskAttemptExecutionResultV1["terminal"] = deferredApproval?.deferred != null
+            ? "pre_effect_infrastructure_failure"
+            : effectBlocker !== null
+            ? "blocked_reconciliation"
+            : exitCode === 0 && run.status === "completed"
+              ? "succeeded"
+              : exitCode === 130 && run.status === "cancelled"
+                ? "cancelled_clean"
+                : "known_failed";
+          let accepted: Awaited<ReturnType<ManagedWorktreeManager["acceptSnapshot"]>> | null = null;
+          if (terminal === "succeeded" && input.workspace.binding !== null) {
+            try {
+              accepted = await (await manager).acceptSnapshot({ attemptId: input.attemptId, graph: input.graph, nodeId: input.node.nodeId });
+            } catch {
+              return Object.freeze({
+                budget: Object.freeze({
+                  artifactBytes: artifacts.reduce((sum, event) => sum + event.data.bytes, 0), attempts: 1,
+                  changedBytes: 0, changedFiles: 0, commandExecutions: commands.length,
+                  commandOutputBytes: commands.reduce((sum, event) => sum + event.data.total_bytes, 0), durationMs: terminalDuration,
+                  modelSteps: run.events.filter((event) => event.type === "agent.step.started").length,
+                  reportedTokens: usage?.type === "usage" ? usage.data.total_tokens : null,
+                }),
+                receiptArtifactId: null, receiptSha256: null, terminal: "blocked_reconciliation", usageCompleteness: usage?.type !== "usage" ? "none" : usage.data.usage_incomplete === true ? "partial" : "complete",
+              });
+            }
+          }
+          return Object.freeze({
+            budget: Object.freeze({
+              artifactBytes: artifacts.reduce((sum, event) => sum + event.data.bytes, 0),
+              attempts: 1,
+              changedBytes: accepted?.changedBytes ?? 0,
+              changedFiles: accepted?.changedFiles ?? 0,
+              commandExecutions: commands.length,
+              commandOutputBytes: commands.reduce((sum, event) => sum + event.data.total_bytes, 0),
+              durationMs: terminalDuration,
+              modelSteps: run.events.filter((event) => event.type === "agent.step.started").length,
+              reportedTokens: usage?.type === "usage" ? usage.data.total_tokens : null,
+            }),
+            receiptArtifactId: null,
+            receiptSha256: null,
+            terminal,
+            usageCompleteness: usage?.type !== "usage"
+              ? "none"
+              : usage.data.usage_incomplete === true ? "partial" : "complete",
+            ...(deferredApproval?.deferred === null || deferredApproval?.deferred === undefined
+              ? {}
+              : { waitingForUser: deferredApproval.deferred }),
+          });
+        });
+        return Object.freeze({ attemptStartedPersisted: true, result });
+      },
+    });
+    };
   return {
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
@@ -116,7 +604,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     agentModelEvidence: () => null,
     clearTimer: (handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>),
-    createApprovalPrompt: (io) =>
+    createApprovalPrompt: (io) => options.approvalPromptOverride ??
       new TerminalApprovalPrompt({
         ...options.approvalInput,
         output: io.stderr,
@@ -130,6 +618,89 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         userStateRoot: capabilityUserStateRoot,
         workspace,
       }),
+    createHookCommandRunner: ({ content, prompt, secrets, workspace }) =>
+      new HookCommandRunner({
+        cleanup: createCleanup(),
+        content,
+        environment: options.env,
+        executable: options.execPath,
+        prompt,
+        randomUUID,
+        secrets,
+        workspace,
+      }),
+    createTaskAttemptExecutor,
+    ...(options.cliEntryPath === undefined ? {} : {
+      doctorBackgroundWorker: async () => (await sealBackgroundExecutable({
+        cliEntryPath: options.cliEntryPath!,
+        nodeExecutablePath: options.execPath,
+        nodeVersion: options.nodeVersion,
+      })).descriptor,
+      createBackgroundWorkerLauncher: ({ sessionId }: { readonly sessionId: string }) => new BackgroundWorkerLauncher({
+        cliEntryPath: options.cliEntryPath!,
+        context: taskContext(sessionId),
+        environment: options.env,
+        nodeExecutablePath: options.execPath,
+        nodeVersion: options.nodeVersion,
+        userStateRoot: workerUserStateRoot(),
+        worktreeUserStateRoot: worktreeUserStateRoot(),
+      }),
+      observeBackgroundWorkerLive: async ({ sessionId }: { readonly sessionId: string }) => {
+        const session = await new SessionCatalog(options.cwd).read(sessionId);
+        return observeBackgroundWorkerLive({
+          current: session.background.current,
+          ownerProbe: new NodeProcessIdentityProbe(),
+          userStateRoot: workerUserStateRoot(),
+        });
+      },
+      queueBackgroundWorkerCancel: async (input: {
+        readonly graphRevision: number;
+        readonly graphSha256: string;
+        readonly reason: string;
+        readonly sessionId: string;
+      }) => {
+        const session = await new SessionCatalog(options.cwd).read(input.sessionId);
+        const queued = await queueBackgroundWorkerCancel({
+          current: session.background.current,
+          graphRevision: input.graphRevision,
+          graphSha256: input.graphSha256,
+          now: () => new Date().toISOString(),
+          randomUuid: randomUUID,
+          reason: input.reason,
+          userStateRoot: workerUserStateRoot(),
+        });
+        return Object.freeze({
+          controlSha256: queued.controlSha256,
+          operationId: queued.control.operationId,
+          requestId: queued.control.requestId,
+          workerId: queued.control.workerId,
+        });
+      },
+      runInternalGraphWorker: async (input: {
+        readonly io: Parameters<NonNullable<CliRuntime["runInternalGraphWorker"]>>[0]["io"];
+        readonly operationId: string;
+        readonly repositoryId: string;
+      }) => new BackgroundWorkerRuntime({
+        createExecutor: (executorInput) => createTaskAttemptExecutor(executorInput),
+        currentCliEntryPath: options.cliEntryPath!,
+        environment: options.env,
+        io: input.io,
+        nodeVersion: options.nodeVersion,
+        operationId: input.operationId,
+        repositoryId: input.repositoryId,
+        userStateRoot: workerUserStateRoot(),
+      }).run(),
+    }),
+    createManagedWorktreeManager,
+    createWorktreePromotionRuntime: async ({ io, sessionId }) => {
+      const manager = await createManagedWorktreeManager({ io, sessionId });
+      return new WorktreePromotionRuntime({
+        context: taskContext(sessionId),
+        manager,
+        prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+        repositoryRulesSha256: await repositoryRuleIdentity(options.cwd),
+      });
+    },
     createPluginLifecycle,
     createMcpClientManager: ({ artifacts, events, hooks, prompt, recency, secrets = [] }) => {
       const launcher = new McpServerLauncher({

@@ -9,6 +9,7 @@
     "dist",
     "capabilities",
     "fixtures/capability-platform/m9-review-pack",
+    "fixtures/task-orchestration/m10-durable-graph",
     "evals",
     "policies",
     "docker/artifacts"

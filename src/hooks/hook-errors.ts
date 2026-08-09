@@ -5,6 +5,8 @@ export type HookErrorCode =
   | "hook_invocation_limit_exceeded"
   | "hook_gate_denied"
   | "hook_gate_output_invalid"
+  | "hook_approval_denied"
+  | "hook_invocation_failed"
   | "hook_invocation_approval_required"
   | "hook_invocation_timeout"
   | "hook_invocation_cancelled"
