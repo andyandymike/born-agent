@@ -337,6 +337,17 @@ async function main(): Promise<void> {
     if (repositoryLifecycle) {
       const firstRefreshOffset = visibleText(raw).length;
       terminal.write("/refresh\r");
+      // Cancelling the first run can finish just before the session watcher
+      // publishes its fresh idle snapshot. The controller deliberately keeps
+      // `/refresh` as a local draft instead of rebinding that stale Enter, so
+      // submit the exact preserved draft again until the bounded refresh has
+      // produced its repository projection.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        await delay(100);
+        const refreshed = visibleText(raw).slice(firstRefreshOffset);
+        if (refreshed.includes("engine=typescript-language-service") && refreshed.includes("index=ready")) break;
+        terminal.write("\r");
+      }
       await waitFor(
         (plain) => {
           const refreshed = plain.slice(firstRefreshOffset);
