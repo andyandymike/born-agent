@@ -166,7 +166,7 @@ function collectSources(
   );
   const recordedSources = new Set(
     events.flatMap((event) =>
-      event.type === "goal.change.recorded"
+      event.scope === "run" && event.type === "goal.change.recorded"
         ? [event.data.source.event_id]
         : [],
     ),

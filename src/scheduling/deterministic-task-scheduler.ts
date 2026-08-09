@@ -27,6 +27,11 @@ export interface TaskAttemptExecutionResultV1 {
   readonly diagnosticCode?: string;
   readonly receiptArtifactId: string | null;
   readonly receiptSha256: string | null;
+  readonly structuredEvidence?: readonly {
+    readonly artifactRef: string;
+    readonly kind: string;
+    readonly sha256: string;
+  }[];
   readonly terminal:
     | "blocked_reconciliation"
     | "blocked_unknown_effect"

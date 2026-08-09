@@ -91,6 +91,7 @@ export type TuiGraphIntent =
   | { readonly background: boolean; readonly sessionId: string; readonly type: "run" }
   | { readonly reason: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "cancel" }
   | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
+  | { readonly promotionOperation: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "verify_origin" }
   | { readonly attemptId: string; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
 
 export interface TuiCoreRunResult {
@@ -904,11 +905,12 @@ export class TuiController {
     }
     if (command === "worktrees") {
       const workspaces = this.viewState.worktrees.workspaces;
+      const verifications = this.viewState.worktrees.originVerifications;
       this.ephemeralState = setCoreDiagnostic(
         setDraftInput(this.ephemeralState, ""),
-        workspaces.length === 0
+        workspaces.length === 0 && verifications.length === 0
           ? "Graph worktrees: none."
-          : `Graph worktrees: ${workspaces.map((workspace) => `${workspace.identity.workspaceId}:${workspace.status}`).join(" | ")}`,
+          : `Graph worktrees: ${workspaces.map((workspace) => `${workspace.identity.workspaceId}:${workspace.status}`).join(" | ") || "none"}; origin verification: ${verifications.map((verification) => `${verification.promotionOperationId}:${verification.status}`).join(" | ") || "none"}`,
       );
       this.scheduleRender();
       return;
@@ -968,8 +970,22 @@ export class TuiController {
         type: "promote",
       };
     }
+    const verificationOperation = /^verify-origin\s+([0-9a-f-]{36})$/u.exec(command)?.[1];
+    if (intent === null && verificationOperation !== undefined) {
+      const execution = this.viewState.taskExecution;
+      const promotion = this.viewState.worktrees.promotions.find((candidate) =>
+        candidate.status === "applied" && candidate.operationId === verificationOperation
+      );
+      if (execution !== null && execution !== undefined && promotion !== undefined) intent = {
+        promotionOperation: verificationOperation,
+        revision: execution.graph.revision,
+        sessionId,
+        sha256: execution.graph.graphSha256,
+        type: "verify_origin",
+      };
+    }
     if (intent === null) {
-      this.showCommandDiagnostic("Graph command is unavailable for the current projection. Use approve, enqueue/run/resume foreground|background, cancel [reason], promotion <node>, node <node>, or worktrees.");
+      this.showCommandDiagnostic("Graph command is unavailable for the current projection. Use approve, enqueue/run/resume foreground|background, cancel [reason], promotion <node>, verify-origin <operation>, node <node>, or worktrees.");
       return;
     }
     this.ephemeralState = setDraftInput(this.ephemeralState, "");

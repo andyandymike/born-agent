@@ -6,6 +6,7 @@ import {
   workspaceAllocationPlanSchema,
   workspaceBaselineManifestSchema,
 } from "./worktree-schema.js";
+import { taskPromotionGoalChangeRecordedDataSchema } from "./task-promotion-goal-change.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -19,6 +20,7 @@ const graph = {
 } as const;
 
 export const phase19WorktreeSessionEventDataSchemas = {
+  "goal.change.recorded": taskPromotionGoalChangeRecordedDataSchema,
   "task_worktree.allocation.prepared": z.object({
     ...graph,
     allocation_plan: workspaceAllocationPlanSchema,
@@ -95,7 +97,52 @@ export const phase19WorktreeSessionEventDataSchemas = {
     bundle_sha256: sha256,
     changed_paths: z.array(z.string().min(1).max(1024)).max(256),
     operation_id: uuid,
+    origin_source_snapshot_sha256: sha256,
     result_snapshot_sha256: sha256,
+  }).strict(),
+  "task_origin_verification.approved": z.object({
+    ...graph,
+    action_sha256: sha256,
+    approval_identity_sha256: sha256,
+    approval_request_id: uuid,
+    bundle_sha256: sha256,
+    command_sha256: sha256,
+    origin_source_snapshot_sha256: sha256,
+    promotion_operation_id: uuid,
+    verification_id: uuid,
+    verification_node_id: nodeId,
+    workspace_id: uuid,
+  }).strict(),
+  "task_origin_verification.requested": z.object({
+    ...graph,
+    action_sha256: sha256,
+    approval_request_id: uuid,
+    bundle_sha256: sha256,
+    command_sha256: sha256,
+    origin_source_snapshot_sha256: sha256,
+    promotion_operation_id: uuid,
+    verification_id: uuid,
+    verification_node_id: nodeId,
+    workspace_id: uuid,
+  }).strict(),
+  "task_origin_verification.completed": z.object({
+    ...graph,
+    action_sha256: sha256,
+    after_source_state_sha256: sha256,
+    before_source_state_sha256: sha256,
+    bundle_sha256: sha256,
+    cleanup_verified: z.boolean(),
+    command_sha256: sha256,
+    exit_code: z.number().int().nullable(),
+    origin_source_snapshot_sha256: sha256,
+    promotion_operation_id: uuid,
+    receipt_artifact_id: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    receipt_sha256: sha256,
+    status: z.enum(["cancelled", "failed", "passed", "reconciliation_required"]),
+    termination: z.enum(["cancelled", "cleanup_failed", "exit", "output_limit_exceeded", "signal", "spawn_error", "stale", "timeout"]),
+    verification_id: uuid,
+    verification_node_id: nodeId,
+    workspace_id: uuid,
   }).strict(),
   "task_worktree.cleanup.requested": z.object({
     ...graph,

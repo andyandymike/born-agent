@@ -8,6 +8,10 @@ import { taskNodeReceiptSchema } from "../task-graph/task-node-receipt.js";
 import { assertGoalChangeWorkspaceMatches, projectGoalChangeLedger } from "./goal-change-ledger.js";
 import type { TaskMutationContext } from "./task-control-plane.js";
 import { TaskStateMachine } from "./task-state-machine.js";
+import {
+  originVerificationReceiptMatchesCompletedEvent,
+  originVerificationReceiptSchema,
+} from "../worktrees/origin-verification-receipt.js";
 
 export interface TaskOrchestrationCompositionResultV1 {
   readonly appendedEventTypes: readonly string[];
@@ -82,7 +86,9 @@ export class TaskOrchestrationCompletionComposer {
         candidate.status === "applied" && candidate.bundle.workspaceId === workspace.identity.workspaceId &&
         candidate.bundle.workspaceSnapshotSha256 === workspace.lastSnapshot?.sha256
       );
-      if (promotion === undefined) return Object.freeze({ appendedEventTypes: Object.freeze([]), status: "none" });
+      if (promotion === undefined || promotion.goalChangeEventId === null) {
+        return Object.freeze({ appendedEventTypes: Object.freeze([]), status: "none" });
+      }
       const verification = execution.nodes.find((node) =>
         node.node.kind === "verification" && node.status === "succeeded" &&
         [...node.attempts].reverse().some((attempt) =>
@@ -107,6 +113,42 @@ export class TaskOrchestrationCompletionComposer {
         receipt.workspaceSnapshotSha256 !== workspace.lastSnapshot?.sha256
       ) {
         throw new TaskGraphError("task_graph_artifact_invalid", "verification receipt is not bound to the promoted workspace snapshot");
+      }
+      const actionEvidence = receipt.structuredEvidence.find((evidence) => evidence.kind === "verification_action");
+      const commandEvidence = receipt.structuredEvidence.find((evidence) => evidence.kind === "verification_command");
+      const originVerification = [...session.worktrees.originVerifications].reverse().find((candidate) =>
+        candidate.promotionOperationId === promotion.operationId &&
+        candidate.bundleSha256 === promotion.bundle.bundleSha256 && candidate.workspaceId === workspace.identity.workspaceId &&
+        candidate.verificationNodeId === verification.node.nodeId
+      );
+      if (actionEvidence === undefined || commandEvidence === undefined || originVerification === undefined ||
+          originVerification.status !== "passed" || originVerification.completedEventId === null ||
+          originVerification.receiptArtifactId === null || originVerification.receiptSha256 === null ||
+          promotion.originSourceSnapshotSha256 === null) {
+        return Object.freeze({ appendedEventTypes: Object.freeze([]), status: "none" });
+      }
+      const originCompleted = session.events.find((event) => event.eventId === originVerification.completedEventId);
+      if (originCompleted?.scope !== "session" || originCompleted.type !== "task_origin_verification.completed") {
+        throw new TaskGraphError("task_graph_artifact_invalid", "origin verification completion event is unavailable");
+      }
+      const originArtifact = await (await ArtifactStore.create({ sessionId: session.sessionId, workspace: this.options.context.workspace }))
+        .readVerified(originVerification.receiptArtifactId);
+      const originReceipt = originVerificationReceiptSchema.parse(parseStrictJson(originArtifact.bytes.toString("utf8")));
+      if (
+        !originVerificationReceiptMatchesCompletedEvent(originReceipt, originCompleted.data) ||
+        originReceipt.receiptSha256 !== originVerification.receiptSha256 || originReceipt.status !== "passed" ||
+        originReceipt.actionSha256 !== originVerification.actionSha256 ||
+        originReceipt.commandSha256 !== originVerification.commandSha256 ||
+        originReceipt.actionSha256 !== actionEvidence.sha256 || originReceipt.commandSha256 !== commandEvidence.sha256 ||
+        originReceipt.graphId !== graph.graphId || originReceipt.graphRevision !== graph.revision || originReceipt.graphSha256 !== graph.graphSha256 ||
+        originReceipt.promotionOperationId !== promotion.operationId || originReceipt.bundleSha256 !== promotion.bundle.bundleSha256 ||
+        originReceipt.workspaceId !== workspace.identity.workspaceId || originReceipt.verificationNodeId !== verification.node.nodeId ||
+        originReceipt.originSourceSnapshotSha256 !== promotion.originSourceSnapshotSha256 ||
+        originReceipt.beforeSourceStateSha256 !== promotion.originSourceSnapshotSha256 ||
+        originReceipt.afterSourceStateSha256 !== promotion.originSourceSnapshotSha256 ||
+        !originReceipt.cleanupVerified || originReceipt.exitCode !== 0 || originReceipt.termination !== "exit"
+      ) {
+        throw new TaskGraphError("task_graph_artifact_invalid", "origin verification receipt is not bound to the current promoted target");
       }
     }
     if (changedWorkspaces.length > 0) {
@@ -170,7 +212,7 @@ export class TaskOrchestrationCompletionComposer {
       graph_id: graph.graphId,
       graph_revision: graph.revision,
       graph_sha256: graph.graphSha256,
-      reason: "all nodes succeeded; exact workspace snapshots were promoted and verification receipts match promoted content",
+      reason: "all nodes succeeded; exact workspace snapshots were promoted and the latest origin verification matches each promoted target",
       status: "completed",
     });
     appended.push("task_graph.terminal");

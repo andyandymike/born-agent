@@ -771,6 +771,7 @@ function projectTaskOrchestration(session: ReconstructedMultiRunSession) {
       ? event.data.receipt_sha256
       : null;
   };
+  const latestOriginVerification = session.worktrees.originVerifications.at(-1);
   return {
     budget: execution.budget,
     graph: {
@@ -787,9 +788,9 @@ function projectTaskOrchestration(session: ReconstructedMultiRunSession) {
       receiptSha256: receiptSha256(node.terminalEventId),
       status: node.status,
     })),
-    originVerificationGenerationId: [...session.events].reverse().find((event) =>
-      event.scope === "run" && event.type === "completion.evidence"
-    )?.eventId ?? null,
+    originVerificationGenerationId: latestOriginVerification?.status === "passed"
+      ? latestOriginVerification.verificationId
+      : null,
     workers: session.background.workers.map((worker) => ({
       id: worker.workerId,
       mode: "background" as const,
@@ -835,6 +836,13 @@ function eventEvidenceIds(input: {
   }
   add(input.changeLedger?.baselineEventId);
   for (const record of input.changeLedger?.records ?? []) add(record.eventId);
+  for (const promotion of input.session.worktrees.promotions) {
+    add(promotion.goalChangeEventId);
+    add(promotion.appliedEventId);
+  }
+  for (const verification of input.session.worktrees.originVerifications) {
+    if (verification.status === "passed") add(verification.completedEventId);
+  }
   add(input.run?.started.eventId);
   add(input.run?.terminal?.eventId);
   if (input.run?.started.data.agent_mode !== undefined) {

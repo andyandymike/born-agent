@@ -11,11 +11,14 @@ import { sha256Canonical } from "../completion/canonical-json.js";
 import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
+import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
 import type { TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-projector.js";
 import type { ManagedWorktreeManager } from "./managed-worktree-manager.js";
+import type { OriginVerificationResultV1, OriginVerificationRuntime } from "./origin-verification-runtime.js";
 import { WorktreeError } from "./worktree-errors.js";
 import { captureWorkspaceSnapshot, type CapturedWorkspaceFileV1 } from "./workspace-baseline.js";
 import { promotionBundleSchema, type PromotionBundleV1, type WorkspaceBaselineManifestV1 } from "./worktree-schema.js";
+import { createTaskPromotionGoalChangeRecordedData } from "./task-promotion-goal-change.js";
 
 const PROMOTION_PATCH_MAX_FILES = 8;
 const PROMOTION_TARGET_MAX_BYTES = 1024 * 1024;
@@ -96,6 +99,8 @@ export interface PromotionResultV1 {
   readonly bundle: PromotionBundleV1;
   readonly changedPaths: readonly string[];
   readonly operationId: string;
+  readonly originSourceSnapshotSha256: string;
+  readonly originVerification: OriginVerificationResultV1 | null;
   readonly resultSnapshotSha256: string;
 }
 
@@ -103,6 +108,7 @@ export class WorktreePromotionRuntime {
   constructor(private readonly options: {
     readonly context: TaskMutationContext;
     readonly manager: ManagedWorktreeManager;
+    readonly originVerification?: OriginVerificationRuntime;
     readonly prompt: ApprovalPrompt;
     readonly repositoryRulesSha256: string;
     readonly writerFactory?: TaskMutationWriterFactory;
@@ -126,7 +132,7 @@ export class WorktreePromotionRuntime {
     try {
       const session = reconstructMultiRunSession(writer.events);
       const found = session.taskGraph.revisions.find((candidate) => candidate.revision === input.graphRevision && candidate.graphSha256 === input.graphSha256);
-      if (found === undefined || !["running", "waiting_for_user", "awaiting_integration"].includes(found.status)) {
+      if (found === undefined || found.status !== "awaiting_integration") {
         throw new WorktreeError("worktree_promotion_stale", "promotion Graph is not awaiting an exact integration");
       }
       graph = found;
@@ -227,13 +233,15 @@ export class WorktreePromotionRuntime {
     const bundle = promotionBundleSchema.parse({ ...bundleContent, bundleSha256: sha256Canonical(bundleContent) });
     const proposalId = this.options.context.randomUuid();
     writer = await this.writerFactory(this.options.context);
-    try {
-      await writer.appendTaskGraphEvent("task_worktree.promotion.proposed", {
-        ...exactGraph(graph), bundle, bundle_sha256: bundle.bundleSha256, proposal_id: proposalId,
-      });
-    } finally {
-      await writer.close();
-    }
+    const proposalEventId = await (async () => {
+      try {
+        return (await writer.appendTaskGraphEvent("task_worktree.promotion.proposed", {
+          ...exactGraph(graph), bundle, bundle_sha256: bundle.bundleSha256, proposal_id: proposalId,
+        })).eventId;
+      } finally {
+        await writer.close();
+      }
+    })();
     const approvalRequestId = this.options.context.randomUuid();
     const approvalIdentitySha256 = sha256Canonical({
       approval_request_id: approvalRequestId,
@@ -265,23 +273,26 @@ export class WorktreePromotionRuntime {
     }
     const operationId = this.options.context.randomUuid();
     writer = await this.writerFactory(this.options.context);
-    try {
-      const session = reconstructMultiRunSession(writer.events);
-      const current = session.taskGraph.revisions.find((candidate) => candidate.graphId === graph.graphId && candidate.revision === graph.revision && candidate.graphSha256 === graph.graphSha256);
-      if (current === undefined || !["running", "waiting_for_user", "awaiting_integration"].includes(current.status)) {
-        throw new WorktreeError("worktree_promotion_stale", "Graph authority changed after promotion approval");
+    const { approvalEventId, requestEventId } = await (async () => {
+      try {
+        const session = reconstructMultiRunSession(writer.events);
+        const current = session.taskGraph.revisions.find((candidate) => candidate.graphId === graph.graphId && candidate.revision === graph.revision && candidate.graphSha256 === graph.graphSha256);
+        if (current === undefined || current.status !== "awaiting_integration") {
+          throw new WorktreeError("worktree_promotion_stale", "Graph authority changed after promotion approval");
+        }
+        const approved = await writer.appendTaskGraphEvent("task_worktree.promotion.approved", {
+          ...exactGraph(graph), approval_identity_sha256: approvalIdentitySha256, approval_request_id: approvalRequestId,
+          bundle_sha256: bundle.bundleSha256, target_snapshot_sha256: targetSnapshotSha256,
+        });
+        const requested = await writer.appendTaskGraphEvent("task_worktree.promotion.requested", {
+          ...exactGraph(graph), approval_request_id: approvalRequestId, bundle_sha256: bundle.bundleSha256,
+          operation_id: operationId, target_snapshot_sha256: targetSnapshotSha256,
+        });
+        return { approvalEventId: approved.eventId, requestEventId: requested.eventId };
+      } finally {
+        await writer.close();
       }
-      await writer.appendTaskGraphEvent("task_worktree.promotion.approved", {
-        ...exactGraph(graph), approval_identity_sha256: approvalIdentitySha256, approval_request_id: approvalRequestId,
-        bundle_sha256: bundle.bundleSha256, target_snapshot_sha256: targetSnapshotSha256,
-      });
-      await writer.appendTaskGraphEvent("task_worktree.promotion.requested", {
-        ...exactGraph(graph), approval_request_id: approvalRequestId, bundle_sha256: bundle.bundleSha256,
-        operation_id: operationId, target_snapshot_sha256: targetSnapshotSha256,
-      });
-    } finally {
-      await writer.close();
-    }
+    })();
     try {
       await new AtomicPatchApplier({ planner }).apply(patchPlan, input.signal);
     } catch (error) {
@@ -291,16 +302,80 @@ export class WorktreePromotionRuntime {
       throw error;
     }
     const resultSnapshotSha256 = sha256Canonical(entries.map((entry) => ({ path: entry.path, post_sha256: entry.postSha256 })));
+    const originSource = await (await RepositorySourceSnapshotter.create(this.options.context.workspace)).snapshot(input.signal);
     writer = await this.writerFactory(this.options.context);
     try {
+      await writer.appendTaskGraphEvent("goal.change.recorded", createTaskPromotionGoalChangeRecordedData({
+        files: entries.map((entry) => ({
+          bytes: entry.bytes,
+          kind: entry.kind,
+          mode: entry.mode,
+          path: entry.path,
+          post_sha256: entry.postSha256,
+          pre_sha256: entry.preSha256,
+        })),
+        goal_id: graph.binding.goalId,
+        goal_revision: graph.binding.goalRevision,
+        source: {
+          approval_event_id: approvalEventId,
+          attempt_id: bundle.attemptId,
+          bundle_sha256: bundle.bundleSha256,
+          graph_id: graph.graphId,
+          graph_revision: graph.revision,
+          graph_sha256: graph.graphSha256,
+          kind: "task_promotion",
+          node_id: bundle.nodeId,
+          operation_id: operationId,
+          proposal_event_id: proposalEventId,
+          request_event_id: requestEventId,
+          workspace_id: bundle.workspaceId,
+        },
+      }));
       await writer.appendTaskGraphEvent("task_worktree.promotion.applied", {
         ...exactGraph(graph), bundle_sha256: bundle.bundleSha256, changed_paths: entries.map((entry) => entry.path),
-        operation_id: operationId, result_snapshot_sha256: resultSnapshotSha256,
+        operation_id: operationId, origin_source_snapshot_sha256: originSource.snapshot.sourceStateSha256,
+        result_snapshot_sha256: resultSnapshotSha256,
       });
-      await new TaskOrchestrationCompletionComposer({ context: this.options.context, writer }).compose();
     } finally {
       await writer.close();
     }
-    return Object.freeze({ bundle, changedPaths: Object.freeze(entries.map((entry) => entry.path)), operationId, resultSnapshotSha256 });
+    let originVerification: OriginVerificationResultV1 | null = null;
+    if (graph.content.nodes.some((candidate) => candidate.kind === "verification")) {
+      originVerification = await this.verifyOrigin({
+        graphRevision: graph.revision,
+        graphSha256: graph.graphSha256,
+        promotionOperationId: operationId,
+        signal: input.signal,
+      });
+    }
+    return Object.freeze({
+      bundle,
+      changedPaths: Object.freeze(entries.map((entry) => entry.path)),
+      operationId,
+      originSourceSnapshotSha256: originSource.snapshot.sourceStateSha256,
+      originVerification,
+      resultSnapshotSha256,
+    });
+  }
+
+  async verifyOrigin(input: {
+    readonly graphRevision: number;
+    readonly graphSha256: string;
+    readonly promotionOperationId: string;
+    readonly signal: AbortSignal;
+  }): Promise<OriginVerificationResultV1> {
+    if (this.options.originVerification === undefined) {
+      throw new WorktreeError("worktree_origin_verification_unavailable", "runtime has no origin verification authority");
+    }
+    const result = await this.options.originVerification.verify(input);
+    if (result.status === "passed") {
+      const writer = await this.writerFactory(this.options.context);
+      try {
+        await new TaskOrchestrationCompletionComposer({ context: this.options.context, writer }).compose();
+      } finally {
+        await writer.close();
+      }
+    }
+    return result;
   }
 }

@@ -71,6 +71,7 @@ import {
   executeGraphReplace,
   executeGraphRun,
   executeGraphPromote,
+  executeGraphOriginVerify,
   executeGraphResume,
   executeGraphRetry,
   executeGraphShow,
@@ -1204,6 +1205,18 @@ export async function runCli(
     .option("--json", "write canonical JSON", false)
     .action(async (sessionId: string, options: { attemptId: string; json: boolean; nodeId: string; revision: string; sha256: string }) => {
       commandExitCode = await executeGraphPromote({ ...options, sessionId }, runtime, io);
+    });
+
+  graph
+    .command("verify-origin")
+    .description("Retry the exact verification action against one applied promotion target.")
+    .argument("<session-id>", "canonical session UUID")
+    .requiredOption("--revision <n>", "exact executing Graph revision")
+    .requiredOption("--sha256 <hash>", "exact full Graph SHA-256")
+    .requiredOption("--promotion-operation <id>", "exact applied promotion operation UUID")
+    .option("--json", "write canonical JSON", false)
+    .action(async (sessionId: string, options: { json: boolean; promotionOperation: string; revision: string; sha256: string }) => {
+      commandExitCode = await executeGraphOriginVerify({ ...options, sessionId }, runtime, io);
     });
 
   graph

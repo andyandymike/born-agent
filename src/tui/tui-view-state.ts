@@ -277,6 +277,7 @@ export function createInitialTuiViewState(): TuiViewState {
     transcript: [],
     worktrees: {
       lastSessionSeq: 0,
+      originVerifications: [],
       pendingOperationIds: [],
       promotions: [],
       workspaces: [],

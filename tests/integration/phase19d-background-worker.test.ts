@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -98,8 +98,23 @@ describe("Phase 19D bounded background worker", () => {
     await git(workspace, "config", "user.name", "Phase 19D Fixture");
     await writeFile(join(workspace, ".gitignore"), ".bornagent/\nplan.json\ngraph.json\n", "utf8");
     await writeFile(join(workspace, "AGENTS.md"), "# Phase 19D fixture\n", "utf8");
-    await writeFile(join(workspace, "verify.mjs"), "process.stdout.write('verified\\n');\n", "utf8");
-    await git(workspace, "add", ".gitignore", "AGENTS.md", "verify.mjs");
+    await mkdir(join(workspace, "fixtures"), { recursive: true });
+    await cp(
+      resolve("fixtures", "phase-07-fix-and-verify"),
+      join(workspace, "fixtures", "phase-07-fix-and-verify"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(workspace, "fixtures", "phase-07-fix-and-verify", "src", "clamp.mjs"),
+      [
+        "export function clamp(value, minimum, maximum) {",
+        "  return Math.min(maximum, Math.max(minimum, value));",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await git(workspace, "add", ".gitignore", "AGENTS.md", "fixtures/phase-07-fix-and-verify");
     await git(workspace, "commit", "-m", "background fixture");
     await writeLegacySession(workspace);
 
@@ -119,12 +134,17 @@ describe("Phase 19D bounded background worker", () => {
       graphBudget: budget({
         maxArtifactBytes: 12_288,
         maxCommandExecutions: 3,
-        maxCommandOutputBytes: 12_288,
+        maxCommandOutputBytes: 131_072,
         maxDurationMs: 180_000,
       }),
       graphId: "92000000-0000-4000-8000-000000000019",
       nodes: [{
-        budget: budget({ maxAttempts: 2, maxCommandExecutions: 1 }),
+        budget: budget({
+          maxAttempts: 2,
+          maxCommandExecutions: 1,
+          maxCommandOutputBytes: 131_072,
+          maxDurationMs: 120_000,
+        }),
         dependsOn: [],
         kind: "verification",
         nodeId: "verify",
@@ -134,8 +154,15 @@ describe("Phase 19D bounded background worker", () => {
         retry: { automaticOn: [], maxAttempts: 1 },
         sequence: 1,
         title: "Verify fixture",
-        verification: { argv: ["node", "verify.mjs"], cwd: ".", purpose: "Verify the fixture" },
-        workspace: { declaredPathPrefixes: ["verify.mjs"], mode: "managed_worktree" },
+        verification: {
+          argv: ["node", "verify.mjs"],
+          cwd: "fixtures/phase-07-fix-and-verify",
+          purpose: "Verify the trusted local-free fixture",
+        },
+        workspace: {
+          declaredPathPrefixes: ["fixtures/phase-07-fix-and-verify"],
+          mode: "managed_worktree",
+        },
       }],
       schemaVersion: 1,
       title: "Bounded worker Graph",
@@ -195,6 +222,11 @@ describe("Phase 19D bounded background worker", () => {
       stderr: resumeIo.readStderr(),
     })).toBe("awaiting_integration");
     expect(terminal.taskExecution?.nodes[0]?.attempts).toHaveLength(2);
-    expect(await readFile(join(workspace, "verify.mjs"), "utf8")).toContain("verified");
+    expect(
+      await readFile(
+        join(workspace, "fixtures", "phase-07-fix-and-verify", "verify.mjs"),
+        "utf8",
+      ),
+    ).toContain("phase7 clamp verification passed");
   }, 120_000);
 });

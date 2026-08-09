@@ -60,7 +60,7 @@ export async function persistTaskNodeReceipt(input: {
     nodeId: input.node.nodeId,
     schemaVersion: 1,
     status: receiptStatus(terminal),
-    structuredEvidence: [],
+    structuredEvidence: input.result.structuredEvidence ?? [],
     summary: `Node ${input.node.nodeId} attempt ${String(input.attemptNumber)} ended ${terminal}; model_steps=${String(input.result.budget.modelSteps)} command_executions=${String(input.result.budget.commandExecutions)} changed_files=${String(input.result.budget.changedFiles)}${input.result.diagnosticCode === undefined ? "" : ` diagnostic=${input.result.diagnosticCode.replace(/[^a-zA-Z0-9_.:-]/gu, "_").slice(0, 128)}`}.`,
     verificationGenerationId: input.verificationGenerationId,
     workspaceSnapshotSha256: input.workspaceSnapshotSha256,

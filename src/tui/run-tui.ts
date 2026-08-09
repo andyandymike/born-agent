@@ -40,6 +40,7 @@ import {
   executeGraphCancel,
   executeGraphEnqueue,
   executeGraphPromote,
+  executeGraphOriginVerify,
   executeGraphResume,
   executeGraphRun,
 } from "../commands/graph.js";
@@ -89,6 +90,8 @@ async function executeTuiGraphCommand(intent: TuiGraphIntent, runtime: CliRuntim
       return executeGraphResume({ background: intent.background, foreground: !intent.background, json: false, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256, takeover: false }, runtime, io);
     case "promote":
       return executeGraphPromote({ attemptId: intent.attemptId, json: false, nodeId: intent.nodeId, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
+    case "verify_origin":
+      return executeGraphOriginVerify({ json: false, promotionOperation: intent.promotionOperation, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
   }
 }
 

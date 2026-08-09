@@ -57,6 +57,7 @@ import { RepositorySourceSnapshotter } from "../repository-intelligence/source-s
 import { NodeGitWorktreePort } from "../worktrees/git-worktree-port.js";
 import { ManagedWorktreeManager } from "../worktrees/managed-worktree-manager.js";
 import { WorktreePromotionRuntime } from "../worktrees/promotion-runtime.js";
+import { OriginVerificationRuntime } from "../worktrees/origin-verification-runtime.js";
 import { resolveWorktreeUserStateRoot } from "../worktrees/managed-worktree-policy.js";
 import { BackgroundDeferredApprovalPrompt } from "../background/background-approval-prompt.js";
 import { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
@@ -355,6 +356,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                 purpose: "verify",
                 timeoutMs: input.node.budget.maxDurationMs,
               });
+              const permission = permissionEngine.evaluate(
+                prepared.actionIdentity,
+                createTrustedLocalFixturePermissionContext(prepared.actionIdentity) ?? {},
+              );
+              if (permission.effect === "deny") {
+                return zero("known_failed", undefined, permission.reasonCode);
+              }
               const prompt = deferredApproval ?? new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr });
               const decision = await prompt.request({
                 actionKind: "run_command",
@@ -431,6 +439,22 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                 }),
                 receiptArtifactId: null,
                 receiptSha256: null,
+                structuredEvidence: Object.freeze([
+                  Object.freeze({
+                    artifactRef: "task-graph/verification-action/v1",
+                    kind: "verification_action",
+                    sha256: prepared.actionSha256,
+                  }),
+                  Object.freeze({
+                    artifactRef: "task-graph/verification-command/v1",
+                    kind: "verification_command",
+                    sha256: sha256Canonical({
+                      argv: verificationNode.verification.argv,
+                      cwd: verificationNode.verification.cwd,
+                      purpose: verificationNode.verification.purpose,
+                    }),
+                  }),
+                ]),
                 ...(terminal === "succeeded" ? {} : { diagnosticCode: command.errorCode ?? command.termination }),
                 terminal,
                 usageCompleteness: "complete",
@@ -694,10 +718,37 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     createManagedWorktreeManager,
     createWorktreePromotionRuntime: async ({ io, sessionId }) => {
       const manager = await createManagedWorktreeManager({ io, sessionId });
+      const prompt = new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr });
+      const originVerification = new OriginVerificationRuntime({
+        context: taskContext(sessionId),
+        createExecutor: () => new LocalExecutor({
+          clock: { now: () => performance.now() },
+          platform: options.platform,
+          processTreeCleanup: createCleanup(),
+          redact: (value) => redactSensitiveText(value),
+          spawn: createNodeSpawnAdapter(spawn),
+          timers,
+        }),
+        createPreparer: async () => ExecutionPreparer.create({
+          hostEnvironment: options.env,
+          platform: options.platform,
+          registry: createDefaultExecutableRegistry({
+            execPath: options.execPath,
+            hostEnvironment: options.env,
+            platform: options.platform,
+          }),
+          workspace: options.cwd,
+        }),
+        environment: options.env,
+        permissionContext: (action) => createTrustedLocalFixturePermissionContext(action) ?? {},
+        permissionEngine,
+        prompt,
+      });
       return new WorktreePromotionRuntime({
         context: taskContext(sessionId),
         manager,
-        prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+        originVerification,
+        prompt,
         repositoryRulesSha256: await repositoryRuleIdentity(options.cwd),
       });
     },

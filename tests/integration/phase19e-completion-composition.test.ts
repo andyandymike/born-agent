@@ -298,7 +298,9 @@ describe("Phase 19E completion composition", () => {
       execution: session.taskExecution,
       graphEvents: session.events.filter((event) => event.scope === "session" && (
         event.type === "task_graph.terminal" ||
+        event.type === "goal.change.recorded" ||
         event.type === "task_node.attempt.terminal" ||
+        event.type.startsWith("task_origin_verification.") ||
         event.type.startsWith("task_worktree.promotion") ||
         event.type === "task_worktree.snapshot.accepted"
       )),
@@ -323,5 +325,43 @@ describe("Phase 19E completion composition", () => {
     expect(session.taskState.plans.find((candidate) => candidate.content.planId === plan.planId)?.status).toBe("completed");
     expect(session.taskState.goals.find((candidate) => candidate.content.goalId === goal.content.goalId)?.status).toBe("completed");
     expect(session.events.filter((event) => event.scope === "session" && event.type === "plan.item.status_changed")).toHaveLength(2);
+    const originEvents = session.events.filter((event) => event.scope === "session" && event.type.startsWith("task_origin_verification."));
+    expect(originEvents.map((event) => event.type)).toEqual([
+      "task_origin_verification.approved",
+      "task_origin_verification.requested",
+      "task_origin_verification.completed",
+    ]);
+    const completedOrigin = originEvents.at(-1);
+    expect(completedOrigin?.scope === "session" && completedOrigin.type === "task_origin_verification.completed"
+      ? {
+          after: completedOrigin.data.after_source_state_sha256,
+          before: completedOrigin.data.before_source_state_sha256,
+          status: completedOrigin.data.status,
+          target: completedOrigin.data.origin_source_snapshot_sha256,
+        }
+      : null).toEqual({
+        after: session.worktrees.promotions[0]!.originSourceSnapshotSha256,
+        before: session.worktrees.promotions[0]!.originSourceSnapshotSha256,
+        status: "passed",
+        target: session.worktrees.promotions[0]!.originSourceSnapshotSha256,
+      });
+    expect(session.worktrees.originVerifications).toHaveLength(1);
+    expect(session.worktrees.originVerifications[0]?.status).toBe("passed");
+    const promotionChange = session.events.find((event) => event.scope === "session" && event.type === "goal.change.recorded");
+    const appliedPromotion = session.events.find((event) => event.scope === "session" && event.type === "task_worktree.promotion.applied");
+    expect(promotionChange?.scope === "session" && promotionChange.type === "goal.change.recorded"
+      ? {
+          bundle: promotionChange.data.source.bundle_sha256,
+          kind: promotionChange.data.source.kind,
+          operation: promotionChange.data.source.operation_id,
+          paths: promotionChange.data.files.map((file) => file.path),
+        }
+      : null).toEqual({
+        bundle: session.worktrees.promotions[0]!.bundle.bundleSha256,
+        kind: "task_promotion",
+        operation: session.worktrees.promotions[0]!.operationId,
+        paths: [target],
+      });
+    expect(promotionChange!.sessionSeq).toBeLessThan(appliedPromotion!.sessionSeq);
   }, 120_000);
 });

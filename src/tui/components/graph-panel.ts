@@ -30,6 +30,11 @@ export function renderGraphPanel(view: TuiViewState): string[] {
       `GRAPH WORKSPACE | ${workspace.identity.workspaceId} | ${workspace.status} | source=${workspace.identity.sourceNodeId} | snapshot=${workspace.lastSnapshot?.sha256.slice(0, 12) ?? "none"}`,
     );
   }
+  for (const verification of view.worktrees.originVerifications) {
+    lines.push(
+      `GRAPH ORIGIN VERIFY | ${verification.verificationNodeId} | ${verification.status} | promotion=${verification.promotionOperationId} | receipt=${verification.receiptSha256?.slice(0, 12) ?? "none"}`,
+    );
+  }
   const worker = view.background.current ?? view.background.workers.at(-1) ?? null;
   if (worker !== null) {
     lines.push(

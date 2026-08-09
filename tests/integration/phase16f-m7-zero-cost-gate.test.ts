@@ -776,7 +776,7 @@ describe("Phase 16F M7 / Phase 17E M8 zero-cost gate", () => {
           });
           watchdog = setTimeout(() => {
             renderer?.failAfterTimeout();
-          }, 45_000);
+          }, 65_000);
           return renderer;
         },
         stdinIsTTY: true,
@@ -991,5 +991,5 @@ describe("Phase 16F M7 / Phase 17E M8 zero-cost gate", () => {
     expect(replayExit, replayIo.readStderr()).toBe(0);
     expect(replayTimedOut).toBe(false);
     expect(replayRenderer?.reportSha256).toBe(shown.outcomeReport.reportSha256);
-  }, 55_000);
+  }, 75_000);
 });

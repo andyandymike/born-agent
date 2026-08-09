@@ -4,7 +4,7 @@ import {
   decodeStoredEvents,
   StoredEventDecodeError,
 } from "../../src/events/event-decoder-registry.js";
-import { v2SessionEventDataSchemas } from "../../src/events/stored-event-v2.js";
+import { phase16TaskSessionEventDataSchemas } from "../../src/coordination/task-event-schema.js";
 import {
   GOAL,
   PLAN,
@@ -113,7 +113,7 @@ describe("Phase 16A task event decoder", () => {
       "plan.completed",
     ]);
     expect(
-      Object.keys(v2SessionEventDataSchemas).filter(
+      Object.keys(phase16TaskSessionEventDataSchemas).filter(
         (type) => type.startsWith("goal.") || type.startsWith("plan."),
       ),
     ).toHaveLength(9);

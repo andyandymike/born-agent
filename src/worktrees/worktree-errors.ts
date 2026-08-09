@@ -4,6 +4,7 @@ export type WorktreeErrorCode =
   | "worktree_git_unavailable"
   | "worktree_identity_stale"
   | "worktree_operation_incomplete"
+  | "worktree_origin_verification_unavailable"
   | "worktree_path_unsafe"
   | "worktree_promotion_stale"
   | "worktree_promotion_unsupported"
@@ -15,6 +16,7 @@ const exitCodes: Readonly<Record<WorktreeErrorCode, 1 | 2 | 3 | 8>> = Object.fre
   worktree_git_unavailable: 3,
   worktree_identity_stale: 8,
   worktree_operation_incomplete: 8,
+  worktree_origin_verification_unavailable: 8,
   worktree_path_unsafe: 8,
   worktree_promotion_stale: 8,
   worktree_promotion_unsupported: 8,

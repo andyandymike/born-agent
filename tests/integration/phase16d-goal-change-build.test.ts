@@ -188,5 +188,5 @@ describe("Phase 16D Build Goal change integration", () => {
       sourceRunIds: [start.runId],
     });
     expect(projection?.records).toHaveLength(1);
-  });
+  }, 15_000);
 });

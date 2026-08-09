@@ -196,6 +196,7 @@ interface RegistryEntry {
 
 interface RoutingFields {
   readonly schemaVersion: number;
+  readonly scope: "run" | "session";
   readonly type: string;
 }
 
@@ -204,8 +205,8 @@ interface MutableRunInvariantState {
   terminal: boolean;
 }
 
-function registryKey(schemaVersion: number, type: string): string {
-  return `${schemaVersion}:${type}`;
+function registryKey(schemaVersion: number, scope: "run" | "session", type: string): string {
+  return `${schemaVersion}:${scope}:${type}`;
 }
 
 function routingFields(value: unknown, eventNumber: number): RoutingFields {
@@ -239,7 +240,15 @@ function routingFields(value: unknown, eventNumber: number): RoutingFields {
       "stored event type must be a string",
     );
   }
-  return { schemaVersion, type: record.type };
+  const scope = schemaVersion === 1 ? "run" : record.scope;
+  if (scope !== "run" && scope !== "session") {
+    throw new StoredEventDecodeError(
+      "invalid_scope",
+      eventNumber,
+      "stored v2 event scope must be run or session",
+    );
+  }
+  return { schemaVersion, scope, type: record.type };
 }
 
 function zodFailureMessage(error: z.ZodError): string {
@@ -455,11 +464,11 @@ export class EventDecoderRegistry {
 
   public constructor() {
     for (const type of LEGACY_RUN_EVENT_TYPES) {
-      this.entries.set(registryKey(1, type), {
+      this.entries.set(registryKey(1, "run", type), {
         legacyCompatible: true,
         scope: "run",
       });
-      this.entries.set(registryKey(2, type), {
+      this.entries.set(registryKey(2, "run", type), {
         legacyCompatible: true,
         scope: "run",
       });
@@ -467,14 +476,14 @@ export class EventDecoderRegistry {
     for (const [type, dataSchema] of Object.entries(
       v2SessionEventDataSchemas,
     )) {
-      this.entries.set(registryKey(2, type), {
+      this.entries.set(registryKey(2, "session", type), {
         dataSchema,
         legacyCompatible: false,
         scope: "session",
       });
     }
     for (const [type, dataSchema] of Object.entries(v2RunEventDataSchemas)) {
-      this.entries.set(registryKey(2, type), {
+      this.entries.set(registryKey(2, "run", type), {
         dataSchema,
         legacyCompatible: false,
         scope: "run",
@@ -493,9 +502,18 @@ export class EventDecoderRegistry {
   private decodeOne(value: unknown, eventNumber: number): DecodedStoredEvent {
     const routing = routingFields(value, eventNumber);
     const entry = this.entries.get(
-      registryKey(routing.schemaVersion, routing.type),
+      registryKey(routing.schemaVersion, routing.scope, routing.type),
     );
     if (entry === undefined) {
+      const alternateScope = routing.scope === "run" ? "session" : "run";
+      const alternate = this.entries.get(registryKey(routing.schemaVersion, alternateScope, routing.type));
+      if (alternate !== undefined) {
+        throw new StoredEventDecodeError(
+          "invalid_scope",
+          eventNumber,
+          `${routing.type} must use ${alternate.scope} scope`,
+        );
+      }
       throw new StoredEventDecodeError(
         "unknown_event_type",
         eventNumber,

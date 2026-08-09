@@ -25,6 +25,10 @@ import { BackgroundError } from "../background/background-errors.js";
 import { taskNodeReceiptSchema } from "../task-graph/task-node-receipt.js";
 import { parseStrictJson } from "../system/strict-json.js";
 import { NodeGitWorktreePort } from "../worktrees/git-worktree-port.js";
+import {
+  originVerificationReceiptMatchesCompletedEvent,
+  originVerificationReceiptSchema,
+} from "../worktrees/origin-verification-receipt.js";
 
 export interface GraphValidateOptions { readonly file: string; readonly json: boolean }
 export interface GraphShowOptions { readonly json: boolean; readonly revision?: string; readonly sessionId: string }
@@ -78,6 +82,9 @@ export interface GraphWorktreeAllocateOptions extends GraphExecutionTargetOption
 export interface GraphPromoteOptions extends GraphExecutionTargetOptions {
   readonly attemptId: string;
   readonly nodeId: string;
+}
+export interface GraphOriginVerifyOptions extends GraphExecutionTargetOptions {
+  readonly promotionOperation: string;
 }
 export interface GraphWorktreeCleanupOptions extends GraphExecutionTargetOptions {
   readonly archiveAndRemove: boolean;
@@ -666,14 +673,34 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
     const after = graphLogCursor(options.cursor);
     const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
     const candidates = session.events.filter((event) =>
-      event.scope === "session" && event.type === "task_node.attempt.terminal" && event.sessionSeq > after &&
-      (options.node === undefined || event.data.node_id === options.node)
+      event.scope === "session" && event.sessionSeq > after && (
+        (event.type === "task_node.attempt.terminal" && (options.node === undefined || event.data.node_id === options.node)) ||
+        (event.type === "task_origin_verification.completed" && (options.node === undefined || event.data.verification_node_id === options.node))
+      )
     );
     const selected = candidates.slice(0, 20);
     const store = await ArtifactStore.create({ sessionId: options.sessionId, workspace: runtime.cwd });
     const records = [];
     for (const event of selected) {
-      if (event.scope !== "session" || event.type !== "task_node.attempt.terminal") continue;
+      if (event.scope !== "session") continue;
+      if (event.type === "task_origin_verification.completed") {
+        const artifact = await store.readVerified(event.data.receipt_artifact_id);
+        const receipt = originVerificationReceiptSchema.parse(parseStrictJson(artifact.bytes.toString("utf8")));
+        if (!originVerificationReceiptMatchesCompletedEvent(receipt, event.data)) {
+          throw new TaskGraphError("task_graph_artifact_invalid", "origin verification receipt does not exact-match its terminal event");
+        }
+        records.push({
+          kind: "origin_verification",
+          nodeId: event.data.verification_node_id,
+          promotionOperationId: event.data.promotion_operation_id,
+          receipt,
+          sessionSeq: event.sessionSeq,
+          status: event.data.status,
+          verificationId: event.data.verification_id,
+        });
+        continue;
+      }
+      if (event.type !== "task_node.attempt.terminal") continue;
       if (event.data.receipt_artifact_id === null || event.data.receipt_sha256 === null) {
         records.push({ attemptId: event.data.attempt_id, nodeId: event.data.node_id, receipt: null, sessionSeq: event.sessionSeq, terminal: event.data.terminal });
         continue;
@@ -695,7 +722,11 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
       io.stdout.write("Graph logs: no matching node receipts\n");
     } else {
       for (const record of records) {
-        io.stdout.write(`[${String(record.sessionSeq)}] ${record.nodeId}/${record.attemptId}: ${record.receipt?.summary ?? record.terminal}\n`);
+        if ("verificationId" in record) {
+          io.stdout.write(`[${String(record.sessionSeq)}] ${record.nodeId}/origin:${record.verificationId}: ${record.status}\n`);
+        } else {
+          io.stdout.write(`[${String(record.sessionSeq)}] ${record.nodeId}/${record.attemptId}: ${record.receipt?.summary ?? record.terminal}\n`);
+        }
       }
       if (nextCursor !== null) io.stdout.write(`Next cursor: ${nextCursor}\n`);
     }
@@ -717,6 +748,14 @@ export async function executeGraphWorktrees(options: GraphWorktreesOptions, runt
         nodeId: promotion.bundle.nodeId,
         status: promotion.status,
         workspaceId: promotion.bundle.workspaceId,
+      })),
+      originVerifications: session.worktrees.originVerifications.map((verification) => ({
+        promotionOperationId: verification.promotionOperationId,
+        receiptSha256: verification.receiptSha256,
+        status: verification.status,
+        verificationId: verification.verificationId,
+        verificationNodeId: verification.verificationNodeId,
+        workspaceId: verification.workspaceId,
       })),
       workspaces: session.worktrees.workspaces.map((workspace) => ({
         activeAttemptId: workspace.activeAttemptId,
@@ -785,8 +824,34 @@ export async function executeGraphPromote(options: GraphPromoteOptions, runtime:
         signal: controller.signal,
       });
       if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.promote", options.sessionId, null, result))}\n`);
-      else io.stdout.write(`Promotion applied: ${result.bundle.bundleSha256}\nPaths: ${result.changedPaths.join(", ")}\nOrigin snapshot: ${result.resultSnapshotSha256}\n`);
-      return 0;
+      else io.stdout.write(`Promotion applied: ${result.bundle.bundleSha256}\nPaths: ${result.changedPaths.join(", ")}\nOrigin snapshot: ${result.originSourceSnapshotSha256}\nOrigin verification: ${result.originVerification?.status ?? "not_required"}\n`);
+      return result.originVerification === null || result.originVerification.status === "passed" ? 0 : 8;
+    } finally {
+      stop();
+    }
+  } catch (error) {
+    return renderWorktreeFailure(error, io);
+  }
+}
+
+export async function executeGraphOriginVerify(options: GraphOriginVerifyOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
+  try {
+    assertCanonicalSessionId(options.sessionId);
+    assertCanonicalSessionId(options.promotionOperation);
+    const promotion = await runtime.createWorktreePromotionRuntime?.({ io, sessionId: options.sessionId });
+    if (promotion === undefined) throw new TaskGraphError("task_workspace_mode_unavailable", "runtime has no origin verification authority");
+    const controller = new AbortController();
+    const stop = runtime.onCancel(() => controller.abort());
+    try {
+      const result = await promotion.verifyOrigin({
+        graphRevision: positive(options.revision, "revision"),
+        graphSha256: sha(options.sha256),
+        promotionOperationId: options.promotionOperation,
+        signal: controller.signal,
+      });
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.verify-origin", options.sessionId, null, result))}\n`);
+      else io.stdout.write(`Origin verification ${result.status}: ${result.verificationId}\nReceipt: ${result.receiptSha256}\n`);
+      return result.status === "passed" ? 0 : 8;
     } finally {
       stop();
     }

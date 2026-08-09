@@ -261,9 +261,13 @@ async function main(): Promise<void> {
     let repositoryReady = false;
     let repositoryRefreshed = false;
     if (repositoryLifecycle) {
+      const firstRefreshOffset = visibleText(raw).length;
       terminal.write("/refresh\r");
       await waitFor(
-        (plain) => plain.includes("engine=typescript-language-service") && plain.includes("index=ready"),
+        (plain) => {
+          const refreshed = plain.slice(firstRefreshOffset);
+          return refreshed.includes("engine=typescript-language-service") && refreshed.includes("index=ready");
+        },
         "repository first refresh",
       );
       repositoryReady = true;
@@ -281,7 +285,11 @@ async function main(): Promise<void> {
       const dirtyOffset = visibleText(raw).lastIndexOf("index=dirty");
       // `/refresh` deliberately remains visible in the local draft. Re-submit it, then clear
       // the draft before the second ordinary task.
-      terminal.write("\r");
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        terminal.write("\r");
+        await delay(100);
+        if (visibleText(raw).indexOf("index=ready", dirtyOffset + 1) >= 0) break;
+      }
       await waitFor(
         (plain) => plain.indexOf("index=ready", dirtyOffset + 1) >= 0,
         "repository second refresh",

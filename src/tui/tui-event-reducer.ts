@@ -1296,6 +1296,9 @@ function reduceKnownEvent(
     case "task_worktree.promotion.approved":
     case "task_worktree.promotion.requested":
     case "task_worktree.promotion.applied":
+    case "task_origin_verification.approved":
+    case "task_origin_verification.requested":
+    case "task_origin_verification.completed":
     case "task_worktree.cleanup.requested":
     case "task_worktree.cleanup.completed":
     case "task_worktree.reconciled":

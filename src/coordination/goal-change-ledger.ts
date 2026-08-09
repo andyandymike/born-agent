@@ -503,8 +503,10 @@ export function projectGoalChangeLedgers(
 ): readonly GoalChangeLedgerProjection[] {
   const goalEvents = events.filter(
     (event) =>
-      event.type === "goal.execution.baseline.captured" ||
-      event.type === "goal.change.recorded",
+      event.scope === "run" && (
+        event.type === "goal.execution.baseline.captured" ||
+        event.type === "goal.change.recorded"
+      ),
   );
   if (goalEvents.length === 0) return Object.freeze([]);
   const sessionId = events[0]?.sessionId;

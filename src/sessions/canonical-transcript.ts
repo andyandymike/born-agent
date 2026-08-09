@@ -69,7 +69,7 @@ export interface VerificationFactTranscriptItem {
 
 export interface TaskGraphFactTranscriptItem {
   readonly bundleSha256?: string;
-  readonly fact: "approved" | "enqueued" | "node_terminal" | "promotion_applied" | "terminal";
+  readonly fact: "approved" | "enqueued" | "node_terminal" | "origin_verification" | "promotion_applied" | "promotion_attributed" | "terminal";
   readonly graphId: string;
   readonly graphRevision: number;
   readonly graphSha256: string;
@@ -273,6 +273,36 @@ export function buildCanonicalTranscript(
           kind: "task_graph",
           sessionSeq: event.sessionSeq,
           status: "applied",
+        });
+        break;
+      case "goal.change.recorded":
+        if (event.scope === "session") {
+          transcript.push({
+            bundleSha256: event.data.source.bundle_sha256,
+            fact: "promotion_attributed",
+            graphId: event.data.source.graph_id,
+            graphRevision: event.data.source.graph_revision,
+            graphSha256: event.data.source.graph_sha256,
+            kind: "task_graph",
+            nodeId: event.data.source.node_id,
+            receiptSha256: event.data.record_sha256,
+            sessionSeq: event.sessionSeq,
+            status: "task_promotion",
+          });
+        }
+        break;
+      case "task_origin_verification.completed":
+        transcript.push({
+          bundleSha256: event.data.bundle_sha256,
+          fact: "origin_verification",
+          graphId: event.data.graph_id,
+          graphRevision: event.data.graph_revision,
+          graphSha256: event.data.graph_sha256,
+          kind: "task_graph",
+          nodeId: event.data.verification_node_id,
+          receiptSha256: event.data.receipt_sha256,
+          sessionSeq: event.sessionSeq,
+          status: event.data.status,
         });
         break;
       case "task_graph.terminal":
