@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -237,6 +238,53 @@ try {
   if (internalWorkerBytes.byteLength === 0) {
     throw new Error("packed Phase 19 internal Graph worker is empty");
   }
+  const m11FixtureRoot = join(
+    packageRoot,
+    "fixtures",
+    "controlled-subagents",
+    "m11-canonical",
+  );
+  const requiredPhase20Assets = [
+    "fixture.json",
+    "delegation-template.json",
+    "expected/outcome-summary.json",
+    "workers/crash-points.json",
+    "repository-template/gitignore.txt",
+    "repository-template/README.md",
+    "repository-template/src/fact.txt",
+  ];
+  for (const relativePath of requiredPhase20Assets) {
+    const bytes = await readFile(
+      join(m11FixtureRoot, ...relativePath.split("/")),
+    );
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 20 M11 fixture asset is empty: ${relativePath}`);
+    }
+  }
+  const m11Fixture = JSON.parse(
+    await readFile(join(m11FixtureRoot, "fixture.json"), "utf8"),
+  );
+  if (
+    m11Fixture.id !== "m11-controlled-subagents-v1" ||
+    m11Fixture.delegationCount !== 2 ||
+    m11Fixture.maximumConcurrentChildren !== 2 ||
+    m11Fixture.networkRequired !== false ||
+    m11Fixture.remoteProvidersAllowed !== false ||
+    m11Fixture.model?.executionBackend !== "canonical_fake"
+  ) {
+    throw new Error("packed Phase 20 M11 fixture identity is not exact");
+  }
+  for (const relativePath of [
+    "dist/commands/internal-delegation-child.js",
+    "dist/delegation/runtime/canonical-fake-child-backend.js",
+    "dist/delegation/runtime/canonical-phase20-fixture.js",
+    "dist/delegation/runtime/child-session-shard.js",
+  ]) {
+    const bytes = await readFile(join(packageRoot, ...relativePath.split("/")));
+    if (bytes.byteLength === 0) {
+      throw new Error(`packed Phase 20 runtime is empty: ${relativePath}`);
+    }
+  }
   const internalHookSupervisorBytes = await readFile(
     join(packageRoot, "dist", "commands", "internal-hook-command-supervisor.js"),
   );
@@ -349,6 +397,29 @@ try {
     );
   }
 
+  const delegationHelp = spawnSync(
+    process.execPath,
+    [binaryPath, "delegations", "--help"],
+    { cwd: installRoot, encoding: "utf8", shell: false },
+  );
+  if (
+    delegationHelp.status !== 0 ||
+    !delegationHelp.stdout.includes("start") ||
+    !delegationHelp.stdout.includes("doctor") ||
+    !delegationHelp.stdout.includes("receipt")
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} delegations --help failed`,
+        delegationHelp.error?.message,
+        delegationHelp.stdout,
+        delegationHelp.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
   const packedGraphValidate = spawnSync(
     process.execPath,
     [
@@ -414,6 +485,175 @@ try {
   runCommand("git", ["config", "user.email", m10Fixture.fixedGit.email], m10RepositoryRoot, m10GitEnvironment);
   runCommand("git", ["add", "--all"], m10RepositoryRoot, m10GitEnvironment);
   runCommand("git", ["commit", "--no-verify", "-m", "M10 canonical baseline"], m10RepositoryRoot, m10GitEnvironment);
+
+  const m11RepositoryRoot = join(temporaryRoot, "m11-repository");
+  await cp(
+    join(m11FixtureRoot, "repository-template"),
+    m11RepositoryRoot,
+    { recursive: true },
+  );
+  await rename(
+    join(m11RepositoryRoot, "gitignore.txt"),
+    join(m11RepositoryRoot, ".gitignore"),
+  );
+  const m11StateRoot = join(temporaryRoot, "m11-state");
+  const m11Environment = {
+    ...process.env,
+    GIT_AUTHOR_DATE: "2026-08-10T00:00:00Z",
+    GIT_COMMITTER_DATE: "2026-08-10T00:00:00Z",
+    GIT_CONFIG_NOSYSTEM: "1",
+    LOCALAPPDATA: m11StateRoot,
+    TEMP: temporaryRoot,
+    TMP: temporaryRoot,
+    XDG_STATE_HOME: m11StateRoot,
+  };
+  for (const key of [
+    "BORN_BACKGROUND_WORKER",
+    "BORN_DELEGATION_CHILD_STATE_ROOT",
+    "BORN_MODEL",
+    "BORN_OLLAMA_BASE_URL",
+    "BORN_PROVIDER",
+    "BORN_WORKER_STATE_ROOT",
+  ]) {
+    delete m11Environment[key];
+  }
+  runCommand("git", ["init", "--initial-branch=main"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["config", "core.autocrlf", "false"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["config", "commit.gpgsign", "false"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["config", "user.name", "BornAgent M11 Fixture"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["config", "user.email", "m11-fixture@bornagent.local"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["add", "--all"], m11RepositoryRoot, m11Environment);
+  runCommand("git", ["commit", "--no-verify", "-m", "M11 canonical baseline"], m11RepositoryRoot, m11Environment);
+  const { createCanonicalPhase20Fixture } = await import(pathToFileURL(
+    join(
+      packageRoot,
+      "dist",
+      "delegation",
+      "runtime",
+      "canonical-phase20-fixture.js",
+    ),
+  ).href);
+  const m11Prepared = await createCanonicalPhase20Fixture({
+    count: 2,
+    environment: m11Environment,
+    platform: process.platform,
+    workspace: m11RepositoryRoot,
+  });
+  if (
+    m11Prepared.fixtureId !== m11Fixture.id ||
+    m11Prepared.delegationIds.length !== 2 ||
+    m11Prepared.networkRequired !== false ||
+    m11Prepared.remoteProvidersAllowed !== false
+  ) {
+    throw new Error("packed Phase 20 fixture preparation is not exact");
+  }
+  const delegationStart = spawnSync(
+    process.execPath,
+    [
+      binaryPath,
+      "delegations",
+      "start",
+      "--session",
+      m11Prepared.sessionId,
+      "--delegation",
+      m11Prepared.delegationIds[0],
+      "--json",
+    ],
+    {
+      cwd: m11RepositoryRoot,
+      encoding: "utf8",
+      env: m11Environment,
+      shell: false,
+      timeout: 90_000,
+    },
+  );
+  let delegationStartDocument;
+  try {
+    delegationStartDocument = JSON.parse(delegationStart.stdout);
+  } catch {
+    delegationStartDocument = null;
+  }
+  if (
+    delegationStart.status !== 0 ||
+    delegationStartDocument?.command !== "delegations.start" ||
+    delegationStartDocument?.result?.results?.length !== 2 ||
+    delegationStartDocument?.result?.results?.some((item) => item.status !== "succeeded") ||
+    delegationStartDocument?.result?.deferred?.length !== 0
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} delegations start M11 fixture --json failed`,
+        delegationStart.error?.message,
+        delegationStart.stdout,
+        delegationStart.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  const { SessionCatalog: PackedSessionCatalog } = await import(pathToFileURL(
+    join(packageRoot, "dist", "sessions", "session-catalog.js"),
+  ).href);
+  const m11Session = await new PackedSessionCatalog(m11RepositoryRoot).read(
+    m11Prepared.sessionId,
+  );
+  const m11Projection = m11Session.delegations;
+  const m11Barrier = m11Projection.barriers.at(-1);
+  if (
+    m11Projection.trackingMode !== "phase20" ||
+    m11Projection.revisions.length !== 2 ||
+    m11Projection.revisions.some((revision) =>
+      revision.status !== "accepted" ||
+      revision.receipt?.status !== "succeeded" ||
+      revision.receipt.claimStatuses.some((claim) => claim.status !== "verified")) ||
+    m11Projection.maximumObservedActiveChildren !== 2 ||
+    m11Projection.activeActorSlots.length !== 0 ||
+    m11Projection.activeConflictClaims.length !== 0 ||
+    m11Projection.waitingApprovals.length !== 0 ||
+    m11Barrier?.status !== "released" ||
+    m11Barrier.terminalStatus !== "completed" ||
+    m11Barrier.receiptSha256s.length !== 2 ||
+    m11Session.runs.filter((run) =>
+      run.started.data.delegated_child_binding !== undefined &&
+      run.status === "completed").length !== 2
+  ) {
+    throw new Error("packed Phase 20 M11 terminal projection is incomplete");
+  }
+  const delegationDoctor = spawnSync(
+    process.execPath,
+    [binaryPath, "delegations", "doctor", "--session", m11Prepared.sessionId, "--json"],
+    {
+      cwd: m11RepositoryRoot,
+      encoding: "utf8",
+      env: m11Environment,
+      shell: false,
+      timeout: 30_000,
+    },
+  );
+  let delegationDoctorDocument;
+  try {
+    delegationDoctorDocument = JSON.parse(delegationDoctor.stdout);
+  } catch {
+    delegationDoctorDocument = null;
+  }
+  if (
+    delegationDoctor.status !== 0 ||
+    delegationDoctorDocument?.command !== "delegations.doctor" ||
+    delegationDoctorDocument?.result?.valid !== true ||
+    delegationDoctorDocument?.result?.operations?.length !== 2 ||
+    delegationDoctorDocument?.result?.operations?.some((item) => item.state !== "reconciled")
+  ) {
+    throw new Error(
+      [
+        `${basename(binaryPath)} delegations doctor M11 fixture --json failed`,
+        delegationDoctor.error?.message,
+        delegationDoctor.stdout,
+        delegationDoctor.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
 
   const graphDoctor = spawnSync(
     process.execPath,
@@ -813,7 +1053,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, and the Phase 19 M10 canonical Graph fixture; ran born --help, executed the packed Hook supervisor with one redacted durable capture, validated the packed Graph hash, initialized its offline Git repository, passed Graph/worker doctor, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two offline real delegated child processes through sealed handshakes and isolated session shards, accepted two verified receipts, released the parent barrier and all actor/conflict claims, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

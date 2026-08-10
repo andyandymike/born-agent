@@ -20,10 +20,27 @@ export interface TuiPlanDecisionDialog {
   readonly sessionId: string;
 }
 
+export interface TuiDelegationDecisionDialog {
+  readonly action: "approve" | "cancel" | "reject" | "start_or_resume";
+  readonly delegationId: string;
+  readonly expectedSessionSeq: number;
+  readonly objective: string;
+  readonly reason: string | null;
+  readonly revision: number;
+  readonly sessionId: string;
+  readonly sha256: string;
+  readonly status: string;
+  readonly title: string;
+}
+
 export interface TuiEphemeralState {
   readonly approvalFocus: "allow" | "deny";
   readonly approvalRequestId: string | null;
   readonly coreDiagnostic: string | null;
+  readonly delegationPanelOpen: boolean;
+  readonly delegationReceiptOpen: boolean;
+  readonly delegationDecisionDialog: TuiDelegationDecisionDialog | null;
+  readonly delegationDecisionFocus: "cancel" | "confirm";
   readonly draftInput: string;
   readonly focusedItemId: string | null;
   readonly foldedItemIds: readonly string[];
@@ -32,6 +49,7 @@ export interface TuiEphemeralState {
   readonly scrollOffset: number;
   readonly selectedAgentMode: "build" | "plan";
   readonly selectedAgentModeSource: "explicit_tui" | "tui_default";
+  readonly selectedDelegationId: string | null;
   readonly sessionBusy: boolean;
 }
 
@@ -42,6 +60,10 @@ export function createInitialTuiEphemeralState(): TuiEphemeralState {
     approvalFocus: "deny",
     approvalRequestId: null,
     coreDiagnostic: null,
+    delegationPanelOpen: false,
+    delegationReceiptOpen: false,
+    delegationDecisionDialog: null,
+    delegationDecisionFocus: "cancel",
     draftInput: "",
     focusedItemId: null,
     foldedItemIds: [],
@@ -50,8 +72,59 @@ export function createInitialTuiEphemeralState(): TuiEphemeralState {
     scrollOffset: 0,
     selectedAgentMode: "plan",
     selectedAgentModeSource: "tui_default",
+    selectedDelegationId: null,
     sessionBusy: false,
   };
+}
+
+export function openDelegationDecisionDialog(
+  state: TuiEphemeralState,
+  dialog: TuiDelegationDecisionDialog,
+): TuiEphemeralState {
+  return {
+    ...state,
+    delegationDecisionDialog: dialog,
+    delegationDecisionFocus: "cancel",
+    draftInput: "",
+  };
+}
+
+export function closeDelegationDecisionDialog(
+  state: TuiEphemeralState,
+): TuiEphemeralState {
+  return { ...state, delegationDecisionDialog: null, delegationDecisionFocus: "cancel" };
+}
+
+export function setDelegationDecisionFocus(
+  state: TuiEphemeralState,
+  focus: "cancel" | "confirm",
+): TuiEphemeralState {
+  return { ...state, delegationDecisionFocus: focus };
+}
+
+export function setDelegationPanel(
+  state: TuiEphemeralState,
+  open: boolean,
+): TuiEphemeralState {
+  return {
+    ...state,
+    delegationPanelOpen: open,
+    delegationReceiptOpen: open ? state.delegationReceiptOpen : false,
+  };
+}
+
+export function selectDelegation(
+  state: TuiEphemeralState,
+  delegationId: string | null,
+): TuiEphemeralState {
+  return { ...state, delegationReceiptOpen: false, selectedDelegationId: delegationId };
+}
+
+export function setDelegationReceiptOpen(
+  state: TuiEphemeralState,
+  open: boolean,
+): TuiEphemeralState {
+  return { ...state, delegationReceiptOpen: open };
 }
 
 export function openPlanDecisionDialog(

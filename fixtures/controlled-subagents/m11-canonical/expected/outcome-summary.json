@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "m11-controlled-subagents-v1",
+  "delegationTrackingMode": "phase20",
+  "acceptedReceiptCount": 2,
+  "maximumObservedActiveChildren": 2,
+  "remainingActiveActorSlots": 0,
+  "remainingActiveConflictClaims": 0,
+  "requiredClaim": {
+    "claimId": "answer",
+    "status": "verified"
+  },
+  "remoteBillableRequests": 0
+}

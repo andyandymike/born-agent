@@ -26,6 +26,7 @@ import {
   TuiController,
   type TuiCorePort,
   type TuiCoreRunResult,
+  type TuiDelegationIntent,
   type TuiGraphIntent,
 } from "./tui-controller.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
@@ -44,6 +45,14 @@ import {
   executeGraphResume,
   executeGraphRun,
 } from "../commands/graph.js";
+import {
+  executeDelegationsApprove,
+  executeDelegationsCancel,
+  executeDelegationsPrepare,
+  executeDelegationsReject,
+  executeDelegationsResume,
+  executeDelegationsStart,
+} from "../commands/delegations.js";
 
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
@@ -93,6 +102,47 @@ async function executeTuiGraphCommand(intent: TuiGraphIntent, runtime: CliRuntim
     case "verify_origin":
       return executeGraphOriginVerify({ json: false, promotionOperation: intent.promotionOperation, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
   }
+}
+
+async function executeTuiDelegationCommand(
+  intent: TuiDelegationIntent,
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<number> {
+  const common = {
+    delegationId: intent.delegationId,
+    expectedSessionSeq: intent.expectedSessionSeq,
+    inputSurface: "tui" as const,
+    json: false,
+    sessionId: intent.sessionId,
+  };
+  if (intent.action === "approve") {
+    return executeDelegationsApprove({ ...common, queue: true, revision: String(intent.revision), sha256: intent.sha256 }, runtime, io);
+  }
+  if (intent.action === "reject") {
+    return executeDelegationsReject({ ...common, reason: intent.reason ?? "Rejected from TUI", revision: String(intent.revision), sha256: intent.sha256 }, runtime, io);
+  }
+  if (intent.action === "cancel") {
+    return executeDelegationsCancel({ ...common, reason: intent.reason ?? "Cancelled from TUI" }, runtime, io);
+  }
+  let state = await new SessionCatalog(runtime.cwd).read(intent.sessionId);
+  let revision = [...state.delegations.revisions].reverse().find((candidate) => candidate.delegationId === intent.delegationId);
+  if (revision?.status === "approved") {
+    const queued = await executeDelegationsResume(common, runtime, io);
+    if (queued !== 0) return queued;
+    state = await new SessionCatalog(runtime.cwd).read(intent.sessionId);
+    revision = [...state.delegations.revisions].reverse().find((candidate) => candidate.delegationId === intent.delegationId);
+  }
+  if (revision?.status === "queued" && revision.envelope === null) {
+    const prepared = await executeDelegationsPrepare({ ...common, expectedSessionSeq: state.delegations.lastSessionSeq }, runtime, io);
+    if (prepared !== 0) return prepared;
+  }
+  return executeDelegationsStart({
+    delegationId: intent.delegationId,
+    inputSurface: "tui",
+    json: false,
+    sessionId: intent.sessionId,
+  }, runtime, io);
 }
 
 function usage(io: CliIO, message: string): 2 {
@@ -582,6 +632,8 @@ export async function executeTui(
     cancelRepositoryRefresh: () => repositoryRefresh?.coordinator.cancel(),
     loadSession: async (sessionId) =>
       (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
+    delegationCommand: (intent) => captureCoreRun((coreIo) =>
+      executeTuiDelegationCommand(intent, tuiRuntime, coreIo)),
     graphCommand: (intent) => captureCoreRun((coreIo) => executeTuiGraphCommand(intent, tuiRuntime, coreIo)),
     selectMcpPrompt: async (selector: string, argumentsJson: string | undefined) => {
       const { parseExplicitMcpPromptSelection } = await import("../mcp/mcp-prompt-selection.js");

@@ -10,6 +10,7 @@
     "capabilities",
     "fixtures/capability-platform/m9-review-pack",
     "fixtures/task-orchestration/m10-durable-graph",
+    "fixtures/controlled-subagents/m11-canonical",
     "evals",
     "policies",
     "docker/artifacts"

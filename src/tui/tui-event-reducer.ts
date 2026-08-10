@@ -1440,6 +1440,33 @@ function reduceKnownEvent(
     case "task_worker.control.accepted":
     case "task_worker.terminal":
     case "task_worker.reconciled":
+    case "delegation.revision.proposed":
+    case "delegation.revision.replaced":
+    case "delegation.decision.recorded":
+    case "delegation.queued":
+    case "delegation.cancel.requested":
+    case "delegation.cancelled":
+    case "delegation.stale":
+    case "delegation.envelope.prepared":
+    case "delegation.parent.barrier.requested":
+    case "delegation.parent.barrier.suspended":
+    case "delegation.parent.barrier.released":
+    case "delegation.budget.reserved":
+    case "delegation.child.launch_requested":
+    case "delegation.child.started":
+    case "delegation.child.approval_waiting":
+    case "delegation.child.terminal":
+    case "delegation.effect.reconciled":
+    case "delegation.receipt.ready":
+    case "delegation.receipt.accepted":
+    case "delegation.budget.settled":
+    case "delegation.actor_slot.claimed":
+    case "delegation.actor_slot.released":
+    case "delegation.conflict_claim.granted":
+    case "delegation.conflict_claim.released":
+    case "delegation.group.lease.acquired":
+    case "delegation.group.takeover":
+    case "delegation.blocked":
       return state;
     default:
       return assertNever(event);

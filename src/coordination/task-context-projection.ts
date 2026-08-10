@@ -1,5 +1,6 @@
 import type { AgentMode } from "../agent/agent-mode.js";
 import type { PlanRevisionProjection, TaskStateProjection } from "./task-state-types.js";
+import type { AcceptedChildReceiptContextItemV1 } from "../delegation/receipts/parent-receipt-projector.js";
 
 const MAX_CHANGED_PATH_BYTES = 8 * 1024;
 
@@ -11,6 +12,7 @@ export interface TaskContextGoalChanges {
 }
 
 export interface TaskContextProjection {
+  readonly acceptedChildReceipts?: readonly AcceptedChildReceiptContextItemV1[];
   readonly agentMode: AgentMode;
   readonly currentPlan: null | {
     readonly items: readonly {
@@ -75,6 +77,7 @@ function boundedChangedPaths(paths: readonly string[]): {
 }
 
 export function projectTaskContext(input: {
+  readonly acceptedChildReceipts?: readonly AcceptedChildReceiptContextItemV1[];
   readonly agentMode: AgentMode;
   readonly goalChanges?: {
     readonly changedPaths: readonly string[];
@@ -99,6 +102,9 @@ export function projectTaskContext(input: {
     ? undefined
     : boundedChangedPaths(input.goalChanges.changedPaths);
   return Object.freeze({
+    ...(input.acceptedChildReceipts === undefined || input.acceptedChildReceipts.length === 0
+      ? {}
+      : { acceptedChildReceipts: Object.freeze([...input.acceptedChildReceipts]) }),
     agentMode: input.agentMode,
     currentPlan:
       plan === null

@@ -8,9 +8,11 @@ import type { TaskGraphProjectionV1 } from "../task-graph/task-graph-projector.j
 import type { TaskExecutionProjectionV1 } from "../scheduling/task-execution-projector.js";
 import type { WorktreeProjectionV1 } from "../worktrees/worktree-projector.js";
 import type { BackgroundProjectionV1 } from "../background/background-projector.js";
+import type { DelegationProjectionV1 } from "../delegation/delegation-projector.js";
 
 export interface Phase16TuiProjection {
   readonly background: BackgroundProjectionV1;
+  readonly delegations: DelegationProjectionV1;
   readonly outcomeReport: OutcomeReport;
   readonly taskExecution: TaskExecutionProjectionV1 | null;
   readonly taskGraph: TaskGraphProjectionV1;
@@ -51,6 +53,7 @@ export class Phase16TuiProjector {
       const session = reconstructMultiRunSession(this.#events);
       return {
         background: session.background,
+        delegations: session.delegations,
         outcomeReport: this.#outcomes.build(session),
         taskExecution: session.taskExecution,
         taskGraph: session.taskGraph,

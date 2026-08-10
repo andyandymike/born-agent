@@ -21,6 +21,7 @@ import type {
   Phase19TaskGraphSessionEventData,
   Phase19TaskGraphSessionEventType,
 } from "../task-graph/task-graph-event-schema.js";
+import type { DelegatedChildRunBindingV1 } from "../events/phase20-run-event-extension.js";
 
 export interface SessionWriter {
   readonly lockNonceSha256?: string;
@@ -50,7 +51,15 @@ export interface SessionWriter {
     runId: string,
     eventId: string,
     data: Extract<RunEvent, { type: "run.started" }>["data"] &
-      Phase16RunBinding,
+      Phase16RunBinding & { readonly delegated_child_binding?: DelegatedChildRunBindingV1 },
+    timestamp: string,
+  ): Promise<unknown>;
+  appendDelegatedChildRunStarted?(
+    runId: string,
+    eventId: string,
+    data: Extract<RunEvent, { type: "run.started" }>["data"] & {
+      readonly delegated_child_binding: DelegatedChildRunBindingV1;
+    },
     timestamp: string,
   ): Promise<unknown>;
   appendGoalChangeEvent?<TType extends Phase16GoalChangeRunEventType>(

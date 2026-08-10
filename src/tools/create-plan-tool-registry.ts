@@ -14,6 +14,7 @@ export async function createPlanToolRegistry(
   repositoryRules?: RepositoryRuleReadRuntime,
   repositoryNavigation?: RepositoryNavigationService,
   additionalTools: readonly ToolRegistration<unknown>[] = [],
+  delegationProposal?: ToolDefinition<unknown>,
 ): Promise<ToolRegistry> {
   if (updatePlan.name !== "update_plan") {
     throw new Error("Plan registry requires the package-owned update_plan tool");
@@ -21,10 +22,17 @@ export async function createPlanToolRegistry(
   const definitions = [
     ...(await createReadonlyToolDefinitions(workspace, artifacts, repositoryRules, repositoryNavigation)),
     ...additionalTools,
+    ...(delegationProposal === undefined ? [] : [delegationProposal]),
     updatePlan as ToolDefinition<unknown>,
   ];
   if (additionalTools.some((tool) => tool.capability !== "read")) {
     throw new Error("Plan registry capability extensions must be read-only");
+  }
+  if (
+    delegationProposal !== undefined &&
+    (delegationProposal.name !== "propose_delegation" || delegationProposal.capability !== "mutation")
+  ) {
+    throw new Error("Plan registry delegation control tool is not the package-owned proposal capability");
   }
   const names = definitions.map((definition) => definition.name).sort();
   const expected = [
@@ -34,6 +42,7 @@ export async function createPlanToolRegistry(
     ...(repositoryNavigation === undefined ? [] : ["repository_outline", "find_symbol", "find_references"]),
     ...(artifacts === undefined ? [] : ["read_artifact"]),
     ...additionalTools.map((tool) => tool.name),
+    ...(delegationProposal === undefined ? [] : ["propose_delegation"]),
     "update_plan",
   ].sort();
   if (names.join(",") !== expected.join(",")) {

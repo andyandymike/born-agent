@@ -15,6 +15,7 @@ import { renderOutcomeCard } from "./outcome-card.js";
 import { renderPlanPanel } from "./plan-panel.js";
 import { renderTodoList } from "./todo-list.js";
 import { renderGraphPanel } from "./graph-panel.js";
+import { renderDelegationPanel } from "./delegation-panel.js";
 
 const DEFAULT_TRANSCRIPT_VIEWPORT_ROWS = 16;
 const MAX_TRANSCRIPT_VIEWPORT_ROWS = 100;
@@ -99,6 +100,7 @@ export class BornAgentViewComponent implements Component {
         : [this.#line(this.#renderCapabilityStatus(), width)]),
       this.#line(this.#renderRepositoryStatus(), width),
       ...renderGraphPanel(this.#view).map((line) => this.#line(line, width)),
+      ...renderDelegationPanel(this.#view.delegations, this.#ephemeral).map((line) => this.#line(line, width)),
       ...phase16,
       ...this.#renderTranscript(width),
       ...this.#renderPlanDecision(width),

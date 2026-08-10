@@ -20,16 +20,23 @@ import type { TuiPersistedEvent } from "./tui-event-reducer.js";
 import { reducePersistedEvent } from "./tui-event-reducer.js";
 import {
   createInitialTuiEphemeralState,
+  closeDelegationDecisionDialog,
   closePlanDecisionDialog,
   enterApprovalDecision,
   openApprovalDialog,
+  openDelegationDecisionDialog,
   openPlanDecisionDialog,
   setApprovalFocus,
   setCoreDiagnostic,
+  selectDelegation,
+  setDelegationDecisionFocus,
+  setDelegationPanel,
+  setDelegationReceiptOpen,
   setDraftInput,
   setPlanDecisionFocus,
   setSessionBusy,
   type TuiEphemeralState,
+  type TuiDelegationDecisionDialog,
   type TuiPlanDecisionDialog,
 } from "./tui-ephemeral-state.js";
 import { Phase16TuiProjector } from "./phase16-tui-projector.js";
@@ -73,6 +80,7 @@ export interface TuiCorePort {
   startTask(task: string): Promise<TuiCoreRunResult>;
   refreshRepository?(): Promise<RepositoryStatusProjection>;
   graphCommand?(intent: TuiGraphIntent): Promise<TuiCoreRunResult>;
+  delegationCommand?(intent: TuiDelegationIntent): Promise<TuiCoreRunResult>;
   startIntent?(
     intent: Phase16StartIntent,
     selectedMode: "build" | "plan",
@@ -93,6 +101,16 @@ export type TuiGraphIntent =
   | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
   | { readonly promotionOperation: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "verify_origin" }
   | { readonly attemptId: string; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
+
+export type TuiDelegationIntent = {
+  readonly action: TuiDelegationDecisionDialog["action"];
+  readonly delegationId: string;
+  readonly expectedSessionSeq: number;
+  readonly reason: string | null;
+  readonly revision: number;
+  readonly sessionId: string;
+  readonly sha256: string;
+};
 
 export interface TuiCoreRunResult {
   readonly diagnostic: string | null;
@@ -251,6 +269,11 @@ export class TuiController {
     // Consuming releases here prevents duplicate submit/cancel/approval intents.
     if (isKeyRelease(data)) return { consume: true };
     if (matchesKey(data, Key.ctrl("c"))) {
+      if (this.ephemeralState.delegationDecisionDialog !== null) {
+        this.ephemeralState = closeDelegationDecisionDialog(this.ephemeralState);
+        this.scheduleRender();
+        return { consume: true };
+      }
       if (this.ephemeralState.planDecisionDialog !== null) {
         this.ephemeralState = closePlanDecisionDialog(this.ephemeralState);
         this.scheduleRender();
@@ -305,6 +328,27 @@ export class TuiController {
       return { consume: true };
     }
 
+    if (this.ephemeralState.delegationDecisionDialog !== null) {
+      if (matchesKey(data, Key.left)) {
+        this.ephemeralState = setDelegationDecisionFocus(this.ephemeralState, "cancel");
+      } else if (matchesKey(data, Key.right)) {
+        this.ephemeralState = setDelegationDecisionFocus(this.ephemeralState, "confirm");
+      } else if (matchesKey(data, Key.tab)) {
+        this.ephemeralState = setDelegationDecisionFocus(
+          this.ephemeralState,
+          this.ephemeralState.delegationDecisionFocus === "cancel" ? "confirm" : "cancel",
+        );
+      } else if (matchesKey(data, Key.escape)) {
+        this.ephemeralState = closeDelegationDecisionDialog(this.ephemeralState);
+      } else if (matchesKey(data, Key.enter)) {
+        void this.decideDelegationDecision();
+      } else {
+        return undefined;
+      }
+      this.scheduleRender();
+      return { consume: true };
+    }
+
     if (this.ephemeralState.planDecisionDialog !== null) {
       if (matchesKey(data, Key.left)) {
         this.ephemeralState = setPlanDecisionFocus(
@@ -356,6 +400,44 @@ export class TuiController {
       return { consume: true };
     }
 
+    if (
+      this.viewState.delegations.trackingMode === "phase20" &&
+      this.ephemeralState.draftInput.length === 0
+    ) {
+      if (matchesKey(data, "d")) {
+        const open = !this.ephemeralState.delegationPanelOpen;
+        this.ephemeralState = setDelegationPanel(this.ephemeralState, open);
+        if (open && this.ephemeralState.selectedDelegationId === null) {
+          this.ephemeralState = selectDelegation(this.ephemeralState, this.currentDelegations()[0]?.delegationId ?? null);
+        }
+        this.scheduleRender();
+        return { consume: true };
+      }
+      if (this.ephemeralState.delegationPanelOpen) {
+        if (matchesKey(data, "j") || matchesKey(data, Key.down)) {
+          this.moveDelegationSelection(1);
+        } else if (matchesKey(data, "k") || matchesKey(data, Key.up)) {
+          this.moveDelegationSelection(-1);
+        } else if (matchesKey(data, "v")) {
+          this.ephemeralState = setDelegationReceiptOpen(this.ephemeralState, !this.ephemeralState.delegationReceiptOpen);
+        } else if (matchesKey(data, "a")) {
+          this.openDelegationDecision("approve");
+        } else if (matchesKey(data, "r")) {
+          this.openDelegationDecision("reject", "Rejected from the TUI after exact review");
+        } else if (matchesKey(data, "s")) {
+          this.openDelegationDecision("start_or_resume");
+        } else if (matchesKey(data, "c")) {
+          this.openDelegationDecision("cancel", "Cancelled from the TUI after exact confirmation");
+        } else if (matchesKey(data, Key.escape)) {
+          this.ephemeralState = setDelegationPanel(this.ephemeralState, false);
+        } else {
+          return undefined;
+        }
+        this.scheduleRender();
+        return { consume: true };
+      }
+    }
+
     if (matchesKey(data, Key.enter)) {
       void this.submitDraft();
       return { consume: true };
@@ -400,6 +482,7 @@ export class TuiController {
         this.viewState = {
           ...this.viewState,
           background: projection.background,
+          delegations: projection.delegations,
           outcomeReport: projection.outcomeReport,
           taskExecution: projection.taskExecution,
           taskGraph: projection.taskGraph,
@@ -509,6 +592,124 @@ export class TuiController {
     this.watchedSessionId = null;
     this.options.source.close();
     this.options.renderer.stop();
+  }
+
+  private currentDelegations() {
+    const latest = new Map<string, (typeof this.viewState.delegations.revisions)[number]>();
+    for (const revision of this.viewState.delegations.revisions) {
+      if (revision.status !== "superseded") latest.set(revision.delegationId, revision);
+    }
+    return [...latest.values()].sort((left, right) =>
+      left.content.sequence - right.content.sequence ||
+      left.delegationId.localeCompare(right.delegationId, "en"));
+  }
+
+  private selectedDelegation() {
+    const rows = this.currentDelegations();
+    return rows.find((row) => row.delegationId === this.ephemeralState.selectedDelegationId) ?? rows[0] ?? null;
+  }
+
+  private moveDelegationSelection(delta: -1 | 1): void {
+    const rows = this.currentDelegations();
+    if (rows.length === 0) return;
+    const current = rows.findIndex((row) => row.delegationId === this.ephemeralState.selectedDelegationId);
+    const next = current < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, current + delta));
+    this.ephemeralState = selectDelegation(this.ephemeralState, rows[next]!.delegationId);
+  }
+
+  private openDelegationDecision(
+    action: TuiDelegationDecisionDialog["action"],
+    reason: string | null = null,
+  ): void {
+    const selected = this.selectedDelegation();
+    const sessionId = this.viewState.session.id;
+    if (selected === null || sessionId === null) {
+      this.showCommandDiagnostic("Delegation action requires an exact selected session revision.");
+      return;
+    }
+    const cancellationOfActiveChild =
+      action === "cancel" &&
+      this.activeCoreRun !== null &&
+      ["active", "waiting_approval", "cancelling", "reconciling"].includes(selected.status);
+    if (
+      ((this.ephemeralState.sessionBusy || this.viewState.session.actionBlocked) &&
+        !cancellationOfActiveChild) ||
+      (this.activeCoreRun !== null && !cancellationOfActiveChild)
+    ) {
+      this.showCommandDiagnostic("Delegation action is unavailable while the session writer or another core operation is active.");
+      return;
+    }
+    const allowed =
+      action === "approve" ? selected.status === "draft" :
+        action === "reject" ? selected.status === "draft" :
+          action === "start_or_resume" ? ["approved", "queued"].includes(selected.status) :
+            !["accepted", "failed", "blocked", "cancelled", "rejected", "stale"].includes(selected.status);
+    if (!allowed) {
+      this.showCommandDiagnostic(`Delegation ${action} is invalid while status=${selected.status}.`);
+      return;
+    }
+    this.ephemeralState = openDelegationDecisionDialog(this.ephemeralState, {
+      action,
+      delegationId: selected.delegationId,
+      expectedSessionSeq: this.viewState.session.lastSessionSeq,
+      objective: selected.content.objective,
+      reason,
+      revision: selected.delegationRevision,
+      sessionId,
+      sha256: selected.delegationSha256,
+      status: selected.status,
+      title: selected.content.title,
+    });
+  }
+
+  private async decideDelegationDecision(): Promise<void> {
+    const dialog = this.ephemeralState.delegationDecisionDialog;
+    if (dialog === null) return;
+    const confirmed = this.ephemeralState.delegationDecisionFocus === "confirm";
+    this.ephemeralState = closeDelegationDecisionDialog(this.ephemeralState);
+    if (!confirmed) {
+      this.scheduleRender();
+      return;
+    }
+    const selected = this.viewState.delegations.revisions.find((revision) =>
+      revision.delegationId === dialog.delegationId &&
+      revision.delegationRevision === dialog.revision &&
+      revision.delegationSha256 === dialog.sha256 &&
+      revision.status === dialog.status);
+    if (
+      selected === undefined ||
+      this.viewState.session.id !== dialog.sessionId ||
+      this.viewState.session.lastSessionSeq !== dialog.expectedSessionSeq
+    ) {
+      this.showCommandDiagnostic("Delegation decision became stale; no action was written.");
+      return;
+    }
+    if (
+      dialog.action === "cancel" &&
+      this.activeCoreRun !== null &&
+      ["active", "waiting_approval", "cancelling", "reconciling"].includes(selected.status)
+    ) {
+      // PHASE20: the foreground start owns the nonce-bound child control
+      // channel. Cancelling that exact core operation lets the launcher append
+      // the durable cancel request before sending IPC; a second CLI mutation
+      // cannot safely impersonate the live channel owner.
+      this.options.core.cancelActiveRun();
+      this.showCommandDiagnostic("Delegated child cancellation requested; waiting for durable reconciliation.");
+      return;
+    }
+    if (this.options.core.delegationCommand === undefined) {
+      this.showCommandDiagnostic("Delegation control is unavailable in this TUI runtime.");
+      return;
+    }
+    await this.startCoreRun(() => this.options.core.delegationCommand!({
+      action: dialog.action,
+      delegationId: dialog.delegationId,
+      expectedSessionSeq: dialog.expectedSessionSeq,
+      reason: dialog.reason,
+      revision: dialog.revision,
+      sessionId: dialog.sessionId,
+      sha256: dialog.sha256,
+    }));
   }
 
   private async decideApproval(force?: "deny"): Promise<void> {

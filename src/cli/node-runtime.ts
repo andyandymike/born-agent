@@ -54,7 +54,7 @@ import { executeAgent } from "../commands/agent.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { taskMutationBlocker } from "../coordination/task-control-plane.js";
 import type { PreparedTaskWorkspaceV1, TaskAttemptExecutionResultV1 } from "../scheduling/deterministic-task-scheduler.js";
-import { sha256Canonical } from "../completion/canonical-json.js";
+import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
 import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
 import { NodeGitWorktreePort } from "../worktrees/git-worktree-port.js";
 import { ManagedWorktreeManager } from "../worktrees/managed-worktree-manager.js";
@@ -71,13 +71,30 @@ import { sealBackgroundExecutable } from "../background/background-executable-de
 import { BackgroundWorkerTakeoverReconciler } from "../background/background-worker-takeover.js";
 import { ExecutionPreparationError, type ExecutionResult } from "../execution/execution-types.js";
 import { SessionCatalog } from "../sessions/session-catalog.js";
-import { NodeProcessIdentityProbe } from "../sessions/process-identity.js";
+import { currentProcessIdentity, NodeProcessIdentityProbe } from "../sessions/process-identity.js";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { taskNodeReceiptSchema } from "../task-graph/task-node-receipt.js";
 import { parseStrictJson } from "../system/strict-json.js";
 import { TaskGraphError } from "../task-graph/task-graph-errors.js";
 import type { TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-projector.js";
 import type { TaskNodeSpecV1 } from "../task-graph/task-graph-schema.js";
+import { DelegationChildRuntime } from "../delegation/runtime/delegation-child-runtime.js";
+import { nodeIpcDelegationChildChannel } from "../delegation/runtime/node-ipc-child-channel.js";
+import { DelegationChildLauncher } from "../delegation/runtime/child-launcher.js";
+import { sealDelegationChildExecutable } from "../delegation/runtime/child-executable-descriptor.js";
+import { capabilitySnapshotSchema } from "../capabilities/capability-snapshot.js";
+import { DelegationError } from "../delegation/delegation-errors.js";
+import { DelegationOperationStore } from "../delegation/delegation-operation-store.js";
+import { classifyDelegationReconcileOutcome } from "../delegation/delegation-reconciler.js";
+import {
+  DelegationApprovalPromptQueue,
+  DelegationSessionWriterQueue,
+} from "../delegation/runtime/child-session-shard.js";
+import {
+  isPhase20CanonicalFakeSelection,
+  Phase20CanonicalFakeChildBackend,
+  PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
+} from "../delegation/runtime/canonical-fake-child-backend.js";
 
 export interface NodeRuntimeOptions {
   readonly approvalPromptOverride?: ApprovalPrompt;
@@ -109,6 +126,19 @@ export interface NodeRuntimeOptions {
   readonly version: string;
   readonly worktreeUserStateRoot?: string;
   readonly workerUserStateRoot?: string;
+  readonly delegationUserStateRoot?: string;
+}
+
+class BoundedDelegationOutput {
+  #value = "";
+  constructor(private readonly maximumBytes: number) {}
+  write(value: string): void {
+    const remaining = this.maximumBytes - Buffer.byteLength(this.#value, "utf8");
+    if (remaining <= 0) return;
+    const bytes = Buffer.from(redactSensitiveText(value), "utf8");
+    this.#value += bytes.subarray(0, remaining).toString("utf8");
+  }
+  text(): string { return this.#value.trim(); }
 }
 
 function boundedGraphFact(value: string, maximum = 1_024): string {
@@ -220,6 +250,23 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     resolveWorktreeUserStateRoot({ env: options.env, platform: options.platform });
   const workerUserStateRoot = () => options.workerUserStateRoot ??
     resolveWorkerUserStateRoot({ env: options.env, platform: options.platform });
+  const delegationUserStateRoot = () => options.delegationUserStateRoot ?? workerUserStateRoot();
+  const delegationWriterQueues = new Map<string, DelegationSessionWriterQueue>();
+  const delegationApprovalQueues = new Map<string, DelegationApprovalPromptQueue>();
+  const delegationWriterQueue = (sessionId: string) => {
+    const current = delegationWriterQueues.get(sessionId);
+    if (current !== undefined) return current;
+    const created = new DelegationSessionWriterQueue();
+    delegationWriterQueues.set(sessionId, created);
+    return created;
+  };
+  const delegationApprovalQueue = (sessionId: string) => {
+    const current = delegationApprovalQueues.get(sessionId);
+    if (current !== undefined) return current;
+    const created = new DelegationApprovalPromptQueue();
+    delegationApprovalQueues.set(sessionId, created);
+    return created;
+  };
   const createPluginLifecycle = (workspace: string) => new PluginLifecycle({
     isProcessAlive,
     now: () => new Date().toISOString(),
@@ -227,8 +274,8 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     root: capabilityUserStateRoot,
     workspace,
   });
-  const taskContext = (sessionId: string) => ({
-    inputSurface: "cli" as const,
+  const taskContext = (sessionId: string, inputSurface: "cli" | "tui" = "cli") => ({
+    inputSurface,
     now: () => new Date().toISOString(),
     randomUuid: randomUUID,
     sessionId,
@@ -684,6 +731,209 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         cleanup: createCleanup(),
         operationRoot: hookOperationRoot,
       }).run(input),
+      runInternalDelegationChild: async (input) => new DelegationChildRuntime({
+        channel: nodeIpcDelegationChildChannel(),
+        envelopePath: input.envelopePath,
+        io: input.io,
+        nonce: input.nonce,
+        operationId: input.operationId,
+        operationRoot: delegationUserStateRoot(),
+        execute: {
+          execute: async ({ capsule, envelope, onCancel, operation, prompt, writer }) => {
+            const capabilityArtifact = await (await ArtifactStore.create({
+              sessionId: operation.sessionId,
+              workspace: operation.sessionWorkspacePath,
+            })).readVerified(
+              `sha256:${envelope.prepared.effectiveAuthority.capabilitySnapshotSha256}`,
+            );
+            if (
+              capabilityArtifact.metadata.sha256 !==
+                envelope.prepared.effectiveAuthority.capabilitySnapshotSha256 ||
+              capabilityArtifact.objectRef !==
+                envelope.prepared.effectiveAuthority.capabilitySnapshotRef
+            ) {
+              throw new DelegationError(
+                "delegation_artifact_invalid",
+                "delegated capability snapshot does not match the executable envelope",
+              );
+            }
+            const capabilitySnapshot = capabilitySnapshotSchema.parse(
+              parseStrictJson(capabilityArtifact.bytes.toString("utf8")),
+            );
+            const qualifiedCapabilities = new Set(capabilitySnapshot.plugins.flatMap((plugin) =>
+              plugin.components.map((component) => component.identity.qualifiedId)));
+            if (capsule.constraints.capabilityIds.some((id) => !qualifiedCapabilities.has(id))) {
+              throw new DelegationError(
+                "delegation_authority_expansion",
+                "delegated capability is absent from the frozen snapshot",
+              );
+            }
+            const stdout = new BoundedDelegationOutput(4 * 1024);
+            const stderr = new BoundedDelegationOutput(4 * 1024);
+            const canonicalFake =
+              envelope.prepared.model.executionBackend === "canonical_fake" &&
+              envelope.prepared.model.qualificationSha256 ===
+                PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256 &&
+              isPhase20CanonicalFakeSelection({
+                modelId: envelope.prepared.model.modelId,
+                policyProfileId: envelope.prepared.model.policyProfileId,
+                providerId: envelope.prepared.model.providerId,
+                taskProfile: envelope.prepared.effectiveAuthority.taskProfile,
+              });
+            if (
+              envelope.prepared.model.executionBackend === "canonical_fake" &&
+              !canonicalFake
+            ) {
+              throw new DelegationError(
+                "delegation_model_unqualified",
+                "canonical fake backend selection does not match its exact read-only fixture identity",
+              );
+            }
+            const childRuntime: CliRuntime = {
+              ...createNodeRuntime({
+                ...options,
+                approvalPromptOverride: prompt,
+                cwd: operation.executionWorkspacePath,
+                onCancel,
+              }),
+              ...options.taskAgentRuntimeOverrides,
+              ...(canonicalFake
+                ? {
+                    agentModelEvidence: () => ({
+                      backend: "fake" as const,
+                      endpointScope: "in_process" as const,
+                      kind: "contract_verified" as const,
+                      remoteBillableRequests: 0 as const,
+                    }),
+                    createModelBackend: () =>
+                      new Phase20CanonicalFakeChildBackend(),
+                  }
+                : {}),
+              hooksSuppressed: true,
+            };
+            const budget = envelope.prepared.budgetReservationPlan.ceiling;
+            const exitCode = await executeAgent({
+              commandApproval: envelope.prepared.effectiveAuthority.taskProfile === "coding" ? "ask" : "deny",
+              commandTimeoutMs: undefined,
+              completionPolicy: "verified",
+              editApproval: envelope.prepared.effectiveAuthority.taskProfile === "coding" ? "ask" : "deny",
+              maxDurationMs: String(budget.maxDurationMs),
+              // The generic Agent parser requires a representable command-output
+              // buffer even when command execution is physically absent. The
+              // sealed tool profile and maxCommandExecutions=0 remain the actual
+              // authority boundary for this read-only child.
+              maxCommandOutputBytes: String(Math.max(16 * 1024, budget.maxCommandOutputBytes)),
+              maxSteps: String(Math.max(1, budget.maxModelSteps)),
+              maxTokens: budget.maxReportedTokens === null ? undefined : String(Math.max(1, budget.maxReportedTokens)),
+              maxToolOutputBytes: String(Math.max(1, budget.maxArtifactBytes)),
+              mode: envelope.prepared.effectiveAuthority.taskProfile === "coding" ? "build" : "plan",
+              modeSource: "explicit_cli",
+              model: envelope.prepared.model.modelId,
+              policyProfile: envelope.prepared.model.policyProfileId,
+              provider: envelope.prepared.model.providerId,
+              ...(canonicalFake ? { providerSource: "in_process_test" as const } : {}),
+              reportFormat: "text",
+              requestTimeoutMs: undefined,
+              requireVerification: "auto",
+              task: capsule.objective,
+              taskProfile: envelope.prepared.effectiveAuthority.taskProfile,
+              verbose: false,
+            }, childRuntime, { stderr, stdout }, undefined, {
+              capabilitySnapshot,
+              delegatedCapabilityIds: capsule.constraints.capabilityIds,
+              delegatedChildBinding: {
+                actor_id: envelope.prepared.actor.actorId,
+                delegation_id: envelope.prepared.actor.delegationId,
+                delegation_revision: envelope.prepared.actor.delegationRevision,
+                delegation_sha256: envelope.prepared.actor.delegationSha256,
+                child_attempt_id: envelope.prepared.actor.attemptId,
+                child_attempt_number: envelope.prepared.actor.attemptNumber,
+                parent_actor_id: envelope.prepared.actor.parentActorId,
+                parent_run_id: envelope.prepared.actor.parentRunId,
+                envelope_sha256: envelope.envelopeSha256,
+                operation_nonce_sha256: operation.nonceSha256,
+              },
+              delegatedToolIds: envelope.prepared.effectiveAuthority.toolIds,
+              delegatedToolProfileSha256: envelope.prepared.preparation.toolProfileSha256,
+              modelTask: [
+                "You are a bounded delegated child. Return only the approved receipt scope.",
+                canonicalJson(capsule),
+              ].join("\n"),
+              runId: operation.childRunId,
+              sessionId: operation.sessionId,
+              writer,
+            });
+            const narrative = stdout.text() || stderr.text() || `delegated child exited with code ${String(exitCode)}`;
+            return {
+              exitCode,
+              summary: narrative,
+              candidateClaims: capsule.expectedReceipt.requiredClaims
+                .filter((claim) => claim.kind === "answer")
+                .map((claim) => ({
+                  claimId: claim.claimId,
+                  kind: claim.kind,
+                  narrative,
+                  evidence: [],
+                })),
+            };
+          },
+        },
+      }).run(),
+      doctorDelegationChild: async () => (await sealDelegationChildExecutable({
+        cliEntryPath: options.cliEntryPath!,
+        nodeExecutablePath: options.execPath,
+        nodeVersion: options.nodeVersion,
+      })).descriptor,
+      inspectDelegationOperations: async (sessionId) => {
+        const session = await new SessionCatalog(options.cwd).read(sessionId);
+        const stores = await DelegationOperationStore.listExisting(delegationUserStateRoot());
+        const probe = new NodeProcessIdentityProbe();
+        const results = [];
+        for (const store of stores) {
+          const operation = await store.read();
+          if (operation === null || operation.sessionId !== sessionId) continue;
+          const ownerObservation = operation.process === null
+            ? "not_started" as const
+            : await probe.probe({
+                pid: operation.process.pid,
+                startIdentity: operation.process.processStartIdentity,
+              });
+          const revision = [...session.delegations.revisions].reverse().find((candidate) =>
+            candidate.delegationId === operation.delegationId);
+          const run = session.runs.find((candidate) => candidate.runId === operation.childRunId);
+          results.push(Object.freeze({
+            childAttemptId: operation.childAttemptId,
+            childRunId: operation.childRunId,
+            delegationId: operation.delegationId,
+            operationId: operation.operationId,
+            operationSha256: operation.operationSha256,
+            ownerObservation,
+            reconcile: classifyDelegationReconcileOutcome({
+              operation,
+              ownerObservation,
+              ...(revision === undefined ? {} : { revision }),
+              ...(run === undefined ? {} : { run }),
+            }),
+            state: operation.state,
+          }));
+        }
+        return Object.freeze(results);
+      },
+      createDelegationChildLauncher: ({ inputSurface, io, sessionId }) => new DelegationChildLauncher({
+        approvalQueue: delegationApprovalQueue(sessionId),
+        cliEntryPath: options.cliEntryPath!,
+        context: taskContext(sessionId, inputSurface),
+        environment: options.env,
+        nodeExecutablePath: options.execPath,
+        nodeVersion: options.nodeVersion,
+        operationRoot: delegationUserStateRoot(),
+        prompt: options.approvalPromptOverride ?? new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+        sessionWriterQueue: delegationWriterQueue(sessionId),
+      }),
+      delegationCoordinatorIdentity: () => {
+        const identity = currentProcessIdentity();
+        return { pid: process.pid, processStartIdentity: identity.startIdentity };
+      },
       doctorBackgroundWorker: async () => (await sealBackgroundExecutable({
         cliEntryPath: options.cliEntryPath!,
         nodeExecutablePath: options.execPath,
@@ -832,13 +1082,17 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                 },
             registryOptions.repositoryNavigation,
             registryOptions.additionalTools ?? [],
+            registryOptions.delegationProposalTool,
           );
         }
         return createReadonlyToolRegistry(
           registryOptions.workspace,
           registryOptions.secrets ?? [],
           registryOptions.artifactRuntime,
-          registryOptions.additionalTools ?? [],
+          [
+            ...(registryOptions.additionalTools ?? []),
+            ...(registryOptions.delegationProposalTool === undefined ? [] : [registryOptions.delegationProposalTool]),
+          ],
           registryOptions.repositoryRules === undefined
             ? undefined
             : {
@@ -938,6 +1192,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     },
     createSessionWriter: V2SessionWriter.create,
     supportsPhase16TaskState: true,
+    supportsDelegationProposalTool: true,
     createRepositoryNavigationService: (workspace, secrets, events) =>
       DefaultRepositoryNavigationService.create(workspace, {
         ...(events === undefined ? {} : { events }),

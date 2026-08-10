@@ -23,6 +23,7 @@ import type {
   Phase9RunEventData,
 } from "./stored-event-v2.js";
 import type { Phase16RunBinding } from "./phase16-run-event-extension.js";
+import type { DelegatedChildRunBindingV1 } from "./phase20-run-event-extension.js";
 import type {
   Phase16GoalChangeRunEventData,
   Phase16GoalChangeRunEventType,
@@ -405,6 +406,7 @@ export class EventPublisher {
   async publishPhase16RunStarted(
     data: Extract<RunEvent, { type: "run.started" }>["data"],
     binding: Phase16RunBinding,
+    delegatedChildBinding?: DelegatedChildRunBindingV1,
   ): Promise<Extract<RunEvent, { type: "run.started" }>> {
     const draft = { data, type: "run.started" as const };
     this.validateTransition(draft);
@@ -426,7 +428,13 @@ export class EventPublisher {
       await this.options.writer.appendPhase16RunStarted(
         this.options.runId,
         event.event_id,
-        { ...event.data, ...binding },
+        {
+          ...event.data,
+          ...binding,
+          ...(delegatedChildBinding === undefined
+            ? {}
+            : { delegated_child_binding: delegatedChildBinding }),
+        },
         event.timestamp,
       );
     } catch (error) {
@@ -434,6 +442,42 @@ export class EventPublisher {
     }
     this.applyTransition(event);
     this.phase16AgentMode = binding.agent_mode;
+    this.persistedEvents.push(event);
+    await this.options.renderer.render(event);
+    return event;
+  }
+
+  async publishDelegatedChildRunStarted(
+    data: Extract<RunEvent, { type: "run.started" }>["data"],
+    binding: DelegatedChildRunBindingV1,
+  ): Promise<Extract<RunEvent, { type: "run.started" }>> {
+    const draft = { data, type: "run.started" as const };
+    this.validateTransition(draft);
+    if (this.options.writer.appendDelegatedChildRunStarted === undefined) {
+      throw new EventPersistenceError(
+        new TypeError("session writer does not support delegated child run binding"),
+      );
+    }
+    const event = runEventSchema.parse({
+      ...draft,
+      event_id: this.options.randomUUID(),
+      run_id: this.options.runId,
+      schema_version: 1,
+      seq: this.seq + 1,
+      session_id: this.options.sessionId,
+      timestamp: this.options.timestamp(),
+    }) as Extract<RunEvent, { type: "run.started" }>;
+    try {
+      await this.options.writer.appendDelegatedChildRunStarted(
+        this.options.runId,
+        event.event_id,
+        { ...event.data, delegated_child_binding: binding },
+        event.timestamp,
+      );
+    } catch (error) {
+      throw new EventPersistenceError(error);
+    }
+    this.applyTransition(event);
     this.persistedEvents.push(event);
     await this.options.renderer.render(event);
     return event;

@@ -84,6 +84,20 @@ import {
 } from "../commands/graph.js";
 import { executeInternalGraphWorker } from "../commands/internal-graph-worker.js";
 import { executeInternalHookCommandSupervisor } from "../commands/internal-hook-command-supervisor.js";
+import { executeInternalDelegationChild } from "../commands/internal-delegation-child.js";
+import {
+  executeDelegationsApprove,
+  executeDelegationsCancel,
+  executeDelegationsDoctor,
+  executeDelegationsList,
+  executeDelegationsPrepare,
+  executeDelegationsPropose,
+  executeDelegationsReceipt,
+  executeDelegationsReject,
+  executeDelegationsResume,
+  executeDelegationsShow,
+  executeDelegationsStart,
+} from "../commands/delegations.js";
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
@@ -118,6 +132,139 @@ export async function runCli(
         invocationId: options.invocation,
         runId: options.run,
         sessionId: options.session,
+      }, runtime, io);
+    });
+
+  const delegations = program
+    .command("delegations")
+    .description("Review and run approved, authority-attenuated child-agent delegations.");
+
+  delegations
+    .command("list")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .option("--status <status>", "filter by exact projected status")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean; session: string; status?: string }) => {
+      commandExitCode = await executeDelegationsList({
+        json: options.json,
+        sessionId: options.session,
+        ...(options.status === undefined ? {} : { status: options.status }),
+      }, runtime, io);
+    });
+
+  delegations
+    .command("show")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .requiredOption("--delegation <uuid>", "delegation ID")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { delegation: string; json: boolean; session: string }) => {
+      commandExitCode = await executeDelegationsShow({ delegationId: options.delegation, json: options.json, sessionId: options.session }, runtime, io);
+    });
+
+  delegations
+    .command("propose")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .requiredOption("--file <path>", "workspace-local delegation JSON document")
+    .option("--base-revision <revision>", "exact revision being replaced")
+    .option("--base-sha256 <digest>", "exact SHA-256 being replaced")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { baseRevision?: string; baseSha256?: string; file: string; json: boolean; session: string }) => {
+      commandExitCode = await executeDelegationsPropose({
+        ...(options.baseRevision === undefined ? {} : { baseRevision: options.baseRevision }),
+        ...(options.baseSha256 === undefined ? {} : { baseSha256: options.baseSha256 }),
+        file: options.file,
+        json: options.json,
+        sessionId: options.session,
+      }, runtime, io);
+    });
+
+  delegations
+    .command("approve")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .requiredOption("--delegation <uuid>", "delegation ID")
+    .requiredOption("--revision <revision>", "exact revision")
+    .requiredOption("--sha256 <digest>", "exact delegation SHA-256")
+    .option("--queue", "also make the approved revision runnable", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { delegation: string; json: boolean; queue: boolean; revision: string; session: string; sha256: string }) => {
+      commandExitCode = await executeDelegationsApprove({
+        delegationId: options.delegation,
+        json: options.json,
+        queue: options.queue,
+        revision: options.revision,
+        sessionId: options.session,
+        sha256: options.sha256,
+      }, runtime, io);
+    });
+
+  delegations
+    .command("reject")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .requiredOption("--delegation <uuid>", "delegation ID")
+    .requiredOption("--revision <revision>", "exact revision")
+    .requiredOption("--sha256 <digest>", "exact delegation SHA-256")
+    .option("--reason <text>", "bounded rejection reason")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { delegation: string; json: boolean; reason?: string; revision: string; session: string; sha256: string }) => {
+      commandExitCode = await executeDelegationsReject({
+        delegationId: options.delegation,
+        json: options.json,
+        ...(options.reason === undefined ? {} : { reason: options.reason }),
+        revision: options.revision,
+        sessionId: options.session,
+        sha256: options.sha256,
+      }, runtime, io);
+    });
+
+  for (const [name, description, execute] of [
+    ["prepare", "Freeze a minimal context capsule and child envelope without launching.", executeDelegationsPrepare],
+    ["resume", "Queue an approved delegation for execution.", executeDelegationsResume],
+    ["start", "Launch one prepared queued child with a sealed runtime.", executeDelegationsStart],
+    ["receipt", "Read and verify the immutable structured child receipt.", executeDelegationsReceipt],
+  ] as const) {
+    delegations
+      .command(name)
+      .description(description)
+      .requiredOption("--session <uuid>", "parent session ID")
+      .requiredOption("--delegation <uuid>", "delegation ID")
+      .option("--json", "write versioned JSON", false)
+      .action(async (options: { delegation: string; json: boolean; session: string }) => {
+        commandExitCode = await execute({ delegationId: options.delegation, json: options.json, sessionId: options.session }, runtime, io);
+      });
+  }
+
+  delegations
+    .command("cancel")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .requiredOption("--delegation <uuid>", "delegation ID")
+    .requiredOption("--reason <text>", "bounded cancellation reason")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { delegation: string; json: boolean; reason: string; session: string }) => {
+      commandExitCode = await executeDelegationsCancel({ delegationId: options.delegation, json: options.json, reason: options.reason, sessionId: options.session }, runtime, io);
+    });
+
+  delegations
+    .command("doctor")
+    .requiredOption("--session <uuid>", "parent session ID")
+    .option("--delegation <uuid>", "restrict operation inspection to one delegation")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { delegation?: string; json: boolean; session: string }) => {
+      commandExitCode = await executeDelegationsDoctor({
+        json: options.json,
+        sessionId: options.session,
+        ...(options.delegation === undefined ? {} : { delegationId: options.delegation }),
+      }, runtime, io);
+    });
+  internal
+    .command("delegation-child", { hidden: true })
+    .requiredOption("--operation <uuid>")
+    .requiredOption("--envelope <path>")
+    .requiredOption("--nonce <value>")
+    .action(async (options: { operation: string; envelope: string; nonce: string }) => {
+      commandExitCode = await executeInternalDelegationChild({
+        envelopePath: options.envelope,
+        nonce: options.nonce,
+        operationId: options.operation,
       }, runtime, io);
     });
   internal

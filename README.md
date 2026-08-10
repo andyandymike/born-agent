@@ -121,3 +121,30 @@ calls, Hooks, worktree allocation, promotion, verification, and cleanup retain
 their independent policy and approval boundaries. Phase 19 remains a single
 Agent: it does not add subagents, parallel model loops, a daemon, remote workers,
 automatic commits/pushes/PRs, or unsafe worktree deletion.
+
+## Controlled subagents
+
+Phase 20 adds an implementation candidate for explicit, authority-attenuated
+delegation. A user reviews one exact delegation revision; the Host then freezes
+a minimal typed context capsule and independent model, tool, capability, budget,
+workspace, environment, and approval envelope. A sealed local Node child cannot
+inherit the parent transcript, secrets, approvals, leases, or delegation tools.
+
+The current Windows candidate can run up to two conflict-free children while
+the parent is suspended behind a durable barrier. Each child writes an isolated
+session shard, and the Host imports durable events and accepts only a canonical,
+verified structured receipt. Useful surfaces include:
+
+```powershell
+corepack pnpm dev delegations list --session <id> --json
+corepack pnpm dev delegations prepare --session <id> --delegation <id> --json
+corepack pnpm dev delegations start --session <id> --delegation <id> --json
+corepack pnpm dev delegations receipt --session <id> --delegation <id> --json
+corepack pnpm dev delegations doctor --session <id> --json
+```
+
+M11 is not yet marked passed. Exact-commit Linux, Phase 20-specific PTY and
+crash/takeover coverage, automatic pre-effect attempt-two retry, and Phase 19
+background-worker ownership integration remain closure gates. Nested agents,
+daemon/remote workers, automatic routing, promotion, commit, push, and PR remain
+unsupported.

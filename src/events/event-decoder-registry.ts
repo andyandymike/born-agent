@@ -23,6 +23,10 @@ import {
   phase16RunBindingSchema,
   type Phase16RunBinding,
 } from "./phase16-run-event-extension.js";
+import {
+  delegatedChildRunBindingSchema,
+  type DelegatedChildRunBindingV1,
+} from "./phase20-run-event-extension.js";
 
 const LEGACY_RUN_EVENT_TYPES = [
   "run.started",
@@ -83,7 +87,9 @@ type ResumeRunExtension =
 
 export type CurrentRunStartedData = LegacyRunStartedData &
   ResumeRunExtension &
-  (Phase16RunBinding | Record<string, never>);
+  (Phase16RunBinding | Record<string, never>) & {
+    readonly delegated_child_binding?: DelegatedChildRunBindingV1;
+  };
 
 interface DecodedEventBase<TType extends string, TData> {
   readonly data: TData;
@@ -302,6 +308,15 @@ function phase16ExtensionFromData(
   return phase16RunBindingSchema.parse(extension);
 }
 
+function phase20ExtensionFromData(
+  data: unknown,
+): { readonly delegated_child_binding?: DelegatedChildRunBindingV1 } {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return {};
+  const record = data as Readonly<Record<string, unknown>>;
+  if (!Object.hasOwn(record, "delegated_child_binding")) return {};
+  return { delegated_child_binding: delegatedChildRunBindingSchema.parse(record.delegated_child_binding) };
+}
+
 function withoutRunStartExtensions(data: unknown): unknown {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     return data;
@@ -310,6 +325,7 @@ function withoutRunStartExtensions(data: unknown): unknown {
   delete copy.resume_mode;
   delete copy.resume_of_run_id;
   for (const field of PHASE16_RUN_BINDING_KEYS) delete copy[field];
+  delete copy.delegated_child_binding;
   return copy;
 }
 
@@ -323,6 +339,10 @@ function parseLegacyCompatibleV2Data(
   const phase16Extension =
     envelope.type === "run.started"
       ? phase16ExtensionFromData(envelope.data)
+      : ({} as const);
+  const phase20Extension =
+    envelope.type === "run.started"
+      ? phase20ExtensionFromData(envelope.data)
       : ({} as const);
   const parsed = runEventSchema.parse({
     data:
@@ -342,6 +362,7 @@ function parseLegacyCompatibleV2Data(
     ...parsed.data,
     ...extension,
     ...phase16Extension,
+    ...phase20Extension,
   } as CurrentRunStartedData;
 }
 

@@ -43,6 +43,10 @@ import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import type { HookCommandOperationReconciliationResult } from "../hooks/hook-command-operation-reconciler.js";
 import type { PluginLeaseReconciliationResultV1 } from "../plugins/plugin-lifecycle.js";
 import type { BackgroundWorkerTakeoverResultV1 } from "../background/background-worker-takeover.js";
+import type { DelegationChildTerminalFrameV1 } from "../delegation/runtime/child-handshake-schema.js";
+import type { DelegationChildLauncher } from "../delegation/runtime/child-launcher.js";
+import type { DelegationChildExecutableDescriptorV1 } from "../delegation/runtime/child-executable-descriptor.js";
+import type { DelegationOperationInspectionV1 } from "../delegation/delegation-reconciler.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -55,6 +59,7 @@ export interface CliIO {
 
 export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   readonly hooksSuppressed?: boolean;
+  readonly supportsDelegationProposalTool?: true;
   agentModelEvidence(provider: ChatProvider): ModelEvidence | null;
   createAgentToolRegistry(
     options: AgentToolRegistryOptions,
@@ -108,6 +113,23 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly operationId: string;
     readonly repositoryId: string;
   }) => Promise<BackgroundWorkerRuntimeResultV1>;
+  readonly runInternalDelegationChild?: (options: {
+    readonly envelopePath: string;
+    readonly io: CliIO;
+    readonly nonce: string;
+    readonly operationId: string;
+  }) => Promise<DelegationChildTerminalFrameV1>;
+  readonly createDelegationChildLauncher?: (options: {
+    readonly io: CliIO;
+    readonly inputSurface?: "cli" | "tui";
+    readonly sessionId: string;
+  }) => DelegationChildLauncher;
+  readonly delegationCoordinatorIdentity?: () => {
+    readonly pid: number;
+    readonly processStartIdentity: string;
+  };
+  readonly doctorDelegationChild?: () => Promise<DelegationChildExecutableDescriptorV1>;
+  readonly inspectDelegationOperations?: (sessionId: string) => Promise<readonly DelegationOperationInspectionV1[]>;
   readonly observeBackgroundWorkerLive?: (options: {
     readonly sessionId: string;
   }) => Promise<BackgroundWorkerLiveObservationV1 | null>;

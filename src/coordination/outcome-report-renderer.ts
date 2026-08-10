@@ -36,6 +36,9 @@ export function renderOutcomeReport(
     `Task Graph: ${report.taskOrchestration === null
       ? "none"
       : `${report.taskOrchestration.graph.status} ${report.taskOrchestration.graph.id} rev ${String(report.taskOrchestration.graph.revision)} (${String(report.taskOrchestration.nodes.filter((node) => node.status === "succeeded").length)}/${String(report.taskOrchestration.nodes.length)} nodes)`}`,
+    `Controlled delegation: ${report.controlledDelegation === undefined
+      ? "none"
+      : `${String(report.controlledDelegation.delegations.filter((delegation) => delegation.status === "accepted").length)}/${String(report.controlledDelegation.delegations.length)} accepted | children<=${String(report.controlledDelegation.limits.maximumActiveChildren)} | held-attempts=${String(report.controlledDelegation.budget.held.attempts)}`}`,
     `Reasons: ${report.outcomeReasons.join(", ") || "none"}`,
   ];
   return `${lines.join("\n")}\n`;

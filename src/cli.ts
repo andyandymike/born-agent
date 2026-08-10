@@ -74,6 +74,9 @@ try {
       ...(process.env.BORN_BACKGROUND_WORKER === "1" && process.env.BORN_WORKTREE_STATE_ROOT !== undefined
         ? { worktreeUserStateRoot: process.env.BORN_WORKTREE_STATE_ROOT }
         : {}),
+      ...(process.env.BORN_DELEGATION_CHILD_STATE_ROOT !== undefined
+        ? { delegationUserStateRoot: process.env.BORN_DELEGATION_CHILD_STATE_ROOT }
+        : {}),
     }),
   );
 } catch (error) {

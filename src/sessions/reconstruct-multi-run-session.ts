@@ -21,6 +21,7 @@ import {
   phase16RunBindingSchema,
   stripPhase16RunBinding,
 } from "../events/phase16-run-event-extension.js";
+import { stripPhase20RunBinding } from "../events/phase20-run-event-extension.js";
 import { TaskStateMachine } from "../coordination/task-state-machine.js";
 import { TaskStateProjectionError } from "../coordination/task-state-error.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
@@ -40,6 +41,11 @@ import { WorktreeProjector, type WorktreeProjectionV1 } from "../worktrees/workt
 import { WorktreeError } from "../worktrees/worktree-errors.js";
 import { BackgroundProjector, type BackgroundProjectionV1 } from "../background/background-projector.js";
 import { BackgroundError } from "../background/background-errors.js";
+import {
+  DelegationProjector,
+  type DelegationProjectionV1,
+} from "../delegation/delegation-projector.js";
+import { DelegationError } from "../delegation/delegation-errors.js";
 
 export type ReconstructedRunStatus =
   | "budget_exceeded"
@@ -86,6 +92,7 @@ export interface ReconstructedMultiRunSession {
   readonly taskExecution: TaskExecutionProjectionV1 | null;
   readonly worktrees: WorktreeProjectionV1;
   readonly background: BackgroundProjectionV1;
+  readonly delegations: DelegationProjectionV1;
 }
 
 interface MutableRunProjection {
@@ -224,7 +231,7 @@ function toLegacyDomainEvent(
   return runEventSchema.parse({
     data:
       event.type === "run.started"
-        ? stripPhase16RunBinding(event.data)
+        ? stripPhase16RunBinding(stripPhase20RunBinding(event.data))
         : event.type === "run.completed" &&
             event.data.completion_mode === "plan_ready"
           ? { ...event.data, completion_mode: "model_final" }
@@ -408,6 +415,13 @@ function resumeMetadata(data: CurrentRunStartedData):
   };
 }
 
+function delegatedChildParentRunId(data: CurrentRunStartedData): string | undefined {
+  const binding = (data as Readonly<Record<string, unknown>>).delegated_child_binding;
+  if (binding === null || typeof binding !== "object" || Array.isArray(binding)) return undefined;
+  const parentRunId = (binding as Readonly<Record<string, unknown>>).parent_run_id;
+  return typeof parentRunId === "string" ? parentRunId : undefined;
+}
+
 function sourceRunId(event: DecodedStoredEvent): string | undefined {
   switch (event.type) {
     case "approval.expired":
@@ -467,18 +481,35 @@ export function reconstructMultiRunSession(
 
     if (event.type === "run.started") {
       const metadata = resumeMetadata(event.data);
+      const delegatedParentRunId = delegatedChildParentRunId(event.data);
+      if (delegatedParentRunId !== undefined && metadata !== undefined) {
+        throw new SessionProjectionError(
+          "delegated child run cannot also claim ordinary resume authority",
+        );
+      }
+      if (delegatedParentRunId !== undefined) {
+        const durableStart = sessionEvents.find((candidate) =>
+          candidate.type === "delegation.child.started" &&
+          candidate.data.child_run_id === event.runId &&
+          candidate.data.parent_run_id === delegatedParentRunId);
+        if (durableStart === undefined || delegatedParentRunId === event.runId) {
+          throw new SessionProjectionError(
+            "delegated child run has no exact prior Host child-start fact",
+          );
+        }
+      }
       if (runOrder.length === 0 && metadata !== undefined) {
         throw new SessionProjectionError(
           "the first run in a session cannot resume an unseen run",
         );
       }
       if (runOrder.length > 0) {
-        if (metadata === undefined) {
+        if (metadata === undefined && delegatedParentRunId === undefined) {
           throw new SessionProjectionError(
             "every later run must declare resume_of_run_id and resume_mode",
           );
         }
-        if (!knownRunIds.has(metadata.resumeOfRunId)) {
+        if (metadata !== undefined && !knownRunIds.has(metadata.resumeOfRunId)) {
           throw new SessionProjectionError(
             `run.started references unknown resume source ${metadata.resumeOfRunId}`,
           );
@@ -608,6 +639,19 @@ export function reconstructMultiRunSession(
     throw error;
   }
 
+  let delegations: DelegationProjectionV1;
+  try {
+    delegations = DelegationProjector.project(events);
+  } catch (error) {
+    if (error instanceof DelegationError) {
+      throw new SessionProjectionError(
+        `delegation projection failed (${error.code}): ${error.message}`,
+        { cause: error, code: error.code },
+      );
+    }
+    throw error;
+  }
+
   if (
     lastRun === null &&
     (taskState.trackingMode !== "phase16" || taskState.goals.length === 0)
@@ -619,6 +663,7 @@ export function reconstructMultiRunSession(
 
   return {
     background,
+    delegations,
     artifacts,
     events,
     lastRun,

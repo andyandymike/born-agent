@@ -11,6 +11,7 @@ import { phase17RepositoryIntelligenceRunEventDataSchemas } from "../repository-
 import { phase18SkillRunEventDataSchemas } from "../skills/skill-event-schema.js";
 import { phase18HookRunEventDataSchemas } from "../hooks/hook-event-schema.js";
 import { phase19TaskGraphSessionEventDataSchemas } from "../task-graph/task-graph-event-schema.js";
+import { phase20DelegationSessionEventDataSchemas } from "../delegation/delegation-event-schema.js";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
@@ -231,6 +232,7 @@ export const v2SessionEventDataSchemas = {
   ...phase9SessionEventDataSchemas,
   ...phase16TaskSessionEventDataSchemas,
   ...phase19TaskGraphSessionEventDataSchemas,
+  ...phase20DelegationSessionEventDataSchemas,
 } as const;
 
 export const v2RunEventDataSchemas = {

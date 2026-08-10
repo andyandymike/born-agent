@@ -5,6 +5,7 @@ import type { TaskGraphProjectionV1 } from "../task-graph/task-graph-projector.j
 import type { TaskExecutionProjectionV1 } from "../scheduling/task-execution-projector.js";
 import type { WorktreeProjectionV1 } from "../worktrees/worktree-projector.js";
 import type { BackgroundProjectionV1 } from "../background/background-projector.js";
+import type { DelegationProjectionV1 } from "../delegation/delegation-projector.js";
 
 export type TuiRunStatus =
   | "budget_exceeded"
@@ -218,6 +219,7 @@ export interface TuiViewState {
   readonly approval: ApprovalView | null;
   readonly background: BackgroundProjectionV1;
   readonly context: ContextView;
+  readonly delegations: DelegationProjectionV1;
   readonly outcomeReport: OutcomeReport | null;
   readonly repository: RepositoryStatusProjection;
   readonly run: RunView | null;
@@ -243,6 +245,24 @@ export function createInitialTuiViewState(): TuiViewState {
       epoch: 0,
       estimatedInputTokens: null,
       protectedEstimatedTokens: null,
+    },
+    delegations: {
+      activeActorSlots: [],
+      activeConflictClaims: [],
+      barriers: [],
+      budget: {
+        held: { artifactBytes: 0, attempts: 0, changedBytes: 0, changedFiles: 0, commandExecutions: 0, commandOutputBytes: 0, durationMs: 0, modelSteps: 0, reportedTokens: 0 },
+        released: { artifactBytes: 0, attempts: 0, changedBytes: 0, changedFiles: 0, commandExecutions: 0, commandOutputBytes: 0, durationMs: 0, modelSteps: 0, reportedTokens: 0 },
+        reserved: { artifactBytes: 0, attempts: 0, changedBytes: 0, changedFiles: 0, commandExecutions: 0, commandOutputBytes: 0, durationMs: 0, modelSteps: 0, reportedTokens: 0 },
+        used: { artifactBytes: 0, attempts: 0, changedBytes: 0, changedFiles: 0, commandExecutions: 0, commandOutputBytes: 0, durationMs: 0, modelSteps: 0, reportedTokens: 0 },
+      },
+      lastSessionSeq: 0,
+      maximumObservedActiveChildren: 0,
+      revisions: [],
+      takeoverCount: 0,
+      trackingMode: "none",
+      waitingApprovals: [],
+      workspaceConflictDeferrals: 0,
     },
     outcomeReport: null,
     repository: initialRepositoryStatusProjection(),

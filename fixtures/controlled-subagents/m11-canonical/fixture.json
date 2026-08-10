@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "m11-controlled-subagents-v1",
+  "description": "Offline packaged fixture for two bounded delegated child processes.",
+  "delegationCount": 2,
+  "maximumConcurrentChildren": 2,
+  "networkRequired": false,
+  "remoteProvidersAllowed": false,
+  "model": {
+    "executionBackend": "canonical_fake",
+    "policyProfileId": "local-free-v1",
+    "providerId": "ollama",
+    "modelId": "qwen3:1.7b"
+  },
+  "expected": {
+    "acceptedReceiptCount": 2,
+    "maximumObservedActiveChildren": 2,
+    "activeActorSlotsAfterTerminal": 0,
+    "activeConflictClaimsAfterTerminal": 0,
+    "barrierStatus": "released",
+    "terminalStatus": "succeeded"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "m11-controlled-subagents-v1",
+  "points": [
+    "before_process_spawn",
+    "after_handshake_before_start_barrier",
+    "after_start_barrier_before_provider",
+    "after_child_terminal_before_receipt_acceptance",
+    "after_receipt_acceptance_before_budget_settlement"
+  ],
+  "unknownEffectPolicy": "fail_closed_reconciliation_required",
+  "automaticRetryScope": "proven_pre_effect_prefix_only"
+}

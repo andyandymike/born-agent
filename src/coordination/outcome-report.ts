@@ -110,6 +110,47 @@ const taskOrchestrationOutcomeSchema = z.object({
   }).strict()).max(8),
 }).strict();
 
+const controlledDelegationOutcomeSchema = z.object({
+  schemaVersion: z.literal(1),
+  parent: z.object({
+    actorId: uuid,
+    runId: uuid,
+    barrierCount: z.number().int().nonnegative(),
+  }).strict(),
+  limits: z.object({
+    maximumActiveChildren: z.literal(2),
+    maximumModelActors: z.literal(2),
+    maximumDepth: z.literal(1),
+  }).strict(),
+  delegations: z.array(z.object({
+    delegationId: uuid,
+    revision: z.number().int().positive(),
+    sha256,
+    sequence: z.number().int().positive().max(8),
+    status: z.string().min(1).max(64),
+    attempts: z.number().int().nonnegative().max(2),
+    childActorIds: z.array(uuid).max(2),
+    contextCapsuleSha256: sha256.nullable(),
+    envelopeSha256: sha256.nullable(),
+    workspaceId: z.string().min(1).max(256),
+    receiptSha256: sha256.nullable(),
+    verifiedClaimIds: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u)).max(16),
+    blockerCodes: z.array(z.string().regex(/^[a-z0-9_]{1,128}$/u)).max(16),
+  }).strict()).max(8),
+  budget: z.object({
+    reserved: taskBudgetCountersSchema,
+    used: taskBudgetCountersSchema,
+    released: taskBudgetCountersSchema,
+    held: taskBudgetCountersSchema,
+  }).strict(),
+  concurrency: z.object({
+    maximumObservedActiveChildren: z.number().int().min(0).max(2),
+    workspaceConflictDeferrals: z.number().int().nonnegative(),
+    takeoverCount: z.number().int().nonnegative(),
+  }).strict(),
+  unsupported: z.array(z.string().min(1).max(128)).max(16),
+}).strict();
+
 const outcomeWithoutHashSchema = z
   .object({
     capabilities: z
@@ -145,6 +186,7 @@ const outcomeWithoutHashSchema = z
         })
         .strict(),
     ).max(256),
+    controlledDelegation: controlledDelegationOutcomeSchema.optional(),
     evidenceEventIds: z.array(uuid).max(2048),
     goal: z
       .object({
@@ -282,6 +324,7 @@ const REASON_ORDER = Object.freeze([
   "unresolved_effect",
   "goal_change_recovery_required",
   "completion_recovery_required",
+  "delegation_incomplete",
   "interrupted_run",
   "task_blocked",
   "budget_exceeded",
@@ -811,6 +854,96 @@ function projectTaskOrchestration(session: ReconstructedMultiRunSession) {
   };
 }
 
+function projectControlledDelegation(
+  session: ReconstructedMultiRunSession,
+  goal: ReturnType<typeof lastGoal>,
+) {
+  if (session.delegations.trackingMode !== "phase20") return null;
+  const currentById = new Map<string, (typeof session.delegations.revisions)[number]>();
+  for (const revision of session.delegations.revisions) {
+    if (
+      revision.status === "superseded" ||
+      (goal !== null && (
+        revision.binding.goalId !== goal.content.goalId ||
+        revision.binding.goalRevision !== goal.content.revision
+      ))
+    ) continue;
+    currentById.set(revision.delegationId, revision);
+  }
+  const all = [...currentById.values()];
+  if (all.length === 0) return null;
+  const latestParent = [...all].sort((left, right) =>
+    right.createdEventId.localeCompare(left.createdEventId, "en"))[0]!;
+  const selected = all
+    .filter((revision) => revision.parentRunId === latestParent.parentRunId)
+    .sort((left, right) =>
+      left.content.sequence - right.content.sequence ||
+      left.delegationId.localeCompare(right.delegationId, "en"));
+  const budget = session.delegations.budget;
+  return {
+    schemaVersion: 1 as const,
+    parent: {
+      actorId: latestParent.parentActorId,
+      runId: latestParent.parentRunId,
+      barrierCount: session.delegations.barriers.filter((barrier) =>
+        barrier.parentRunId === latestParent.parentRunId).length,
+    },
+    limits: {
+      maximumActiveChildren: 2 as const,
+      maximumModelActors: 2 as const,
+      maximumDepth: 1 as const,
+    },
+    delegations: selected.map((revision) => ({
+      attempts: revision.attempts.length,
+      blockerCodes: [
+        ...revision.blockerCodes,
+        ...(revision.receipt !== null && revision.receipt.status !== "succeeded"
+          ? [`receipt_${revision.receipt.status}`]
+          : []),
+      ],
+      childActorIds: revision.attempts.flatMap((attempt) =>
+        attempt.actorId === null ? [] : [attempt.actorId]),
+      contextCapsuleSha256: revision.envelope?.contextCapsuleSha256 ?? null,
+      delegationId: revision.delegationId,
+      envelopeSha256: revision.envelope?.envelopeSha256 ?? null,
+      receiptSha256: revision.receipt?.sha256 ?? null,
+      revision: revision.delegationRevision,
+      sequence: revision.content.sequence,
+      sha256: revision.delegationSha256,
+      status: revision.status,
+      verifiedClaimIds: revision.receipt?.claimStatuses
+        .filter((claim) => claim.status === "verified")
+        .map((claim) => claim.claimId) ?? [],
+      workspaceId: revision.content.workspace.managedWorkspaceId ?? revision.binding.parentWorkspaceLineageId,
+    })),
+    budget,
+    concurrency: {
+      maximumObservedActiveChildren: session.delegations.maximumObservedActiveChildren,
+      workspaceConflictDeferrals: session.delegations.workspaceConflictDeferrals,
+      takeoverCount: session.delegations.takeoverCount,
+    },
+    unsupported: [
+      "automatic_publish",
+      "daemon",
+      "nested_delegation",
+      "remote_worker",
+    ],
+  };
+}
+
+function delegationBlocksCompletion(
+  controlled: ReturnType<typeof projectControlledDelegation>,
+): boolean {
+  if (controlled === null) return false;
+  return controlled.delegations.some((delegation) => {
+    if (["draft", "approved", "rejected", "stale"].includes(delegation.status)) return false;
+    const revision = controlled.delegations.find((candidate) => candidate.delegationId === delegation.delegationId);
+    return revision?.status !== "accepted" ||
+      revision.verifiedClaimIds.length === 0 ||
+      revision.blockerCodes.length > 0;
+  }) || controlled.budget.held.attempts > 0;
+}
+
 function eventEvidenceIds(input: {
   readonly changeLedger: GoalChangeLedgerProjection | null;
   readonly evaluation: CompletionEvaluationEvent | undefined;
@@ -861,6 +994,9 @@ function eventEvidenceIds(input: {
     if (event.type.startsWith("skill.")) add(event.eventId);
     if (event.type.startsWith("hook.")) add(event.eventId);
     if (event.type.startsWith("mcp.resource.") || event.type.startsWith("mcp.prompt.") || event.type === "mcp.server.negotiated") add(event.eventId);
+  }
+  for (const event of input.session.events) {
+    if (event.scope === "session" && event.type.startsWith("delegation.")) add(event.eventId);
   }
   if (input.evaluation !== undefined) {
     const evaluation = input.evaluation;
@@ -961,7 +1097,8 @@ export class OutcomeReportBuilder {
         (run?.status === "interrupted" ||
           goal?.status !== "completed" ||
           run?.terminal?.type !== "run.completed");
-      const classified = classifyOutcome({
+      const controlledDelegation = projectControlledDelegation(session, goal);
+      const baseClassification = classifyOutcome({
         completionCrash,
         gap,
         goal,
@@ -969,6 +1106,10 @@ export class OutcomeReportBuilder {
         session,
         unresolved: hasUnresolvedEffect(run, session.events),
       });
+      const classified =
+        baseClassification.outcome === "completed" && delegationBlocksCompletion(controlledDelegation)
+          ? { outcome: "blocked" as const, reasons: orderedReasons(["delegation_incomplete"]) }
+          : baseClassification;
       const usageEvent = [...(run?.events ?? [])]
         .reverse()
         .find((event) => event.type === "usage");
@@ -1005,6 +1146,7 @@ export class OutcomeReportBuilder {
               },
         changeAttribution: attribution,
         changes,
+        ...(controlledDelegation === null ? {} : { controlledDelegation }),
         evidenceEventIds: eventEvidenceIds({
           changeLedger: ledger,
           evaluation,

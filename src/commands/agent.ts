@@ -40,6 +40,7 @@ import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
   FatalToolExecutionError,
+  type ToolDefinition,
   type ToolRegistration,
 } from "../tools/tool-types.js";
 import { McpConfigLoader } from "../mcp/mcp-config-loader.js";
@@ -160,6 +161,12 @@ import { projectHookDurableFacts } from "../hooks/hook-durable-facts.js";
 import type { CapabilityContentLease } from "../plugins/plugin-lifecycle.js";
 import { createFrozenCapabilityMcpConfig } from "../mcp/mcp-capability-config.js";
 import { parseExplicitMcpPromptSelection } from "../mcp/mcp-prompt-selection.js";
+import { createProposeDelegationTool } from "../delegation/propose-delegation-tool.js";
+import { RestrictedToolRegistry } from "../tools/restricted-tool-registry.js";
+import { projectAcceptedChildReceipts } from "../delegation/receipts/parent-receipt-projector.js";
+import type { DelegatedChildRunBindingV1 } from "../events/phase20-run-event-extension.js";
+import { buildChildToolProfile } from "../delegation/context/child-tool-profile.js";
+import { delegatedRuntimeToolCatalog } from "../delegation/context/delegated-tool-catalog.js";
 
 export interface ResumedAgentExecution {
   readonly backend: ModelBackend;
@@ -176,12 +183,17 @@ export interface ResumedAgentExecution {
 }
 
 export interface FreshTaskExecution {
+  readonly capabilitySnapshot?: CapabilitySnapshotV1;
+  readonly delegatedCapabilityIds?: readonly string[];
   readonly modelTask: string;
   readonly onTaskNodeStarted?: () => void;
   readonly runId: string;
   readonly sessionId: string;
   readonly sourceRunId?: string;
   readonly taskNodeBinding?: NonNullable<Extract<RunEvent, { type: "run.started" }>["data"]["task_node_binding"]>;
+  readonly delegatedChildBinding?: DelegatedChildRunBindingV1;
+  readonly delegatedToolIds?: readonly string[];
+  readonly delegatedToolProfileSha256?: string;
   readonly writer: SessionWriter;
 }
 
@@ -278,7 +290,13 @@ export async function executeAgent(
   // PHASE16: the legacy CLI default remains the pre-Phase16 Build behavior.
   // Phase16 authority is entered only through an explicit Plan/Build surface;
   // the continuous TUI passes its visible default as an explicit host choice.
-  const phase16Requested = options.mode !== undefined;
+  const explicitModeRequested = options.mode !== undefined;
+  const delegatedChildExecution =
+    freshTaskExecution?.delegatedChildBinding !== undefined;
+  // A delegated child is bound by its sealed capsule/envelope, not by the
+  // parent's Phase 16 Goal/Plan state machine. Keeping these authorities
+  // separate prevents the child model from inheriting the parent task graph.
+  const phase16Requested = explicitModeRequested && !delegatedChildExecution;
   const modeTaskProfile =
     selectedAgentMode.mode === "plan" ? "read-only" : "coding";
   if (
@@ -322,7 +340,7 @@ export async function executeAgent(
   }
   let resolvedOptions: AgentCommandOptions = {
     ...options,
-    ...(phase16Requested ? { taskProfile: modeTaskProfile } : {}),
+    ...(explicitModeRequested ? { taskProfile: modeTaskProfile } : {}),
   };
   const requestedExecutor = options.executor ?? runtime.env.BORN_EXECUTOR;
   if (requestedExecutor === "docker") {
@@ -434,6 +452,7 @@ export async function executeAgent(
   const runId =
     resumedExecution?.runId ?? freshTaskExecution?.runId ?? runtime.randomUUID();
   const taskNodeExecution = freshTaskExecution?.taskNodeBinding !== undefined;
+  const independentTaskExecution = taskNodeExecution || delegatedChildExecution;
   let writer: SessionWriter;
   try {
     writer =
@@ -445,8 +464,19 @@ export async function executeAgent(
     renderer.renderStorageError();
     return 1;
   }
+  if (
+    delegatedChildExecution &&
+    writer.appendDelegatedChildRunStarted === undefined
+  ) {
+    renderer.renderDiagnostic(
+      "delegation_child_protocol_invalid: session writer does not support delegated child run binding",
+    );
+    await writer.close().catch(() => undefined);
+    return 2;
+  }
 
-  let capabilitySnapshot = resumedExecution?.capabilitySnapshot;
+  let capabilitySnapshot =
+    resumedExecution?.capabilitySnapshot ?? freshTaskExecution?.capabilitySnapshot;
   let capabilityPlatform: CapabilityPlatformLike | undefined;
   let preparedCapabilitySnapshot: PreparedCapabilityRunSnapshot | undefined;
   if (runtime.createCapabilityPlatform !== undefined || capabilitySnapshot !== undefined) {
@@ -800,6 +830,10 @@ export async function executeAgent(
         },
       );
     }
+    const delegationProposalEnabled =
+      runtime.supportsDelegationProposalTool === true &&
+      phase16Binding !== undefined &&
+      !independentTaskExecution;
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
     const runStartedData: Extract<
       RunEvent,
@@ -890,7 +924,10 @@ export async function executeAgent(
         request_timeout_ms: config.requestTimeoutMs,
         task_profile: config.taskProfile,
         tools:
-          phase16Binding?.agent_mode === "plan"
+          (freshTaskExecution?.delegatedToolIds === undefined
+            ? undefined
+            : [...freshTaskExecution.delegatedToolIds]) ??
+          (phase16Binding?.agent_mode === "plan"
             ? [
                 "list_files",
                 "read_file",
@@ -901,7 +938,8 @@ export async function executeAgent(
                   ? []
                   : ["repository_outline", "find_symbol", "find_references"]),
                 "search",
-                ...(taskNodeExecution ? [] : ["update_plan"]),
+                ...(delegationProposalEnabled ? ["propose_delegation"] : []),
+                ...(independentTaskExecution ? [] : ["update_plan"]),
               ]
             : config.taskProfile === "read-only"
             ? [
@@ -914,6 +952,7 @@ export async function executeAgent(
                   ? []
                   : ["repository_outline", "find_symbol", "find_references"]),
                 "search",
+                ...(delegationProposalEnabled ? ["propose_delegation"] : []),
               ]
             : [
                 "apply_patch",
@@ -928,8 +967,9 @@ export async function executeAgent(
                   : ["repository_outline", "find_symbol", "find_references"]),
                 "run_command",
                 "search",
-                ...(phase16Binding === undefined || taskNodeExecution ? [] : ["update_plan"]),
-              ],
+                ...(delegationProposalEnabled ? ["propose_delegation"] : []),
+                ...(phase16Binding === undefined || independentTaskExecution ? [] : ["update_plan"]),
+              ]),
         tools_enabled: true,
         workspace: runtime.cwd,
         ...(workspaceResumeFingerprint === undefined
@@ -953,15 +993,20 @@ export async function executeAgent(
     };
     // PHASE18: the exact snapshot object is durable before run.started, while
     // the event is the sole authority that selects those bytes for this run.
-    const runStarted = phase16Binding === undefined
-      ? await publisher.publish({
+    const runStarted = delegatedChildExecution
+      ? await publisher.publishDelegatedChildRunStarted(
+          capabilityBoundRunStartedData,
+          freshTaskExecution!.delegatedChildBinding!,
+        )
+      : phase16Binding === undefined
+        ? await publisher.publish({
           data: capabilityBoundRunStartedData,
           type: "run.started",
         })
-      : await publisher.publishPhase16RunStarted(
-        capabilityBoundRunStartedData,
-        phase16Binding,
-      );
+        : await publisher.publishPhase16RunStarted(
+            capabilityBoundRunStartedData,
+            phase16Binding,
+          );
     if (freshTaskExecution?.taskNodeBinding !== undefined) {
       if (writer.appendTaskGraphEvent === undefined) {
         throw new EventPersistenceError(new TypeError("Graph node run requires a TaskGraph-aware session writer"));
@@ -1026,17 +1071,51 @@ export async function executeAgent(
         "Phase 10 production writer is missing durable event capabilities",
       );
     }
-    const decodedEvents = () => writer.readDecodedEvents?.() ?? publisher.events;
+    const decodedEvents = () => {
+      const durable = writer.readDecodedEvents?.();
+      if (durable !== undefined) {
+        return delegatedChildExecution
+          ? durable.filter(
+              (event) => event.scope === "run" && event.runId === runId,
+            )
+          : durable;
+      }
+      return delegatedChildExecution
+        ? publisher.events.filter((event) => event.run_id === runId)
+        : publisher.events;
+    };
     const runInstructions =
       phase16Binding === undefined
         ? config.taskProfile === "read-only"
           ? READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS
           : AGENT_SYSTEM_INSTRUCTIONS
         : systemInstructionsForAgentMode(phase16Binding.agent_mode);
+    const exactPlanBinding =
+      phase16Binding !== undefined &&
+      phase16Binding.plan_id !== null &&
+      phase16Binding.plan_revision !== null &&
+      phase16Binding.plan_sha256 !== null
+        ? {
+            goalId: phase16Binding.goal_id,
+            goalRevision: phase16Binding.goal_revision,
+            planId: phase16Binding.plan_id,
+            planRevision: phase16Binding.plan_revision,
+            planSha256: phase16Binding.plan_sha256,
+          }
+        : null;
     const phase16TaskState =
       phase16Binding === undefined || writer.readDecodedEvents === undefined
         ? undefined
         : () => TaskStateMachine.project(writer.readDecodedEvents!());
+    const acceptedChildReceipts =
+      exactPlanBinding === null || writer.readDecodedEvents === undefined
+        ? Object.freeze([])
+        : await projectAcceptedChildReceipts({
+            workspace: runtime.cwd,
+            sessionId,
+            projection: reconstructMultiRunSession(writer.readDecodedEvents()).delegations,
+            goalBinding: exactPlanBinding,
+          });
     const artifactRuntime =
       writer.appendArtifactEvent === undefined
         ? undefined
@@ -1504,6 +1583,9 @@ export async function executeAgent(
                 );
                 return {
                   projection: projectTaskContext({
+                    ...(acceptedChildReceipts.length === 0
+                      ? {}
+                      : { acceptedChildReceipts }),
                     agentMode: phase16Binding.agent_mode,
                     ...(goalChanges === null
                       ? {}
@@ -1597,7 +1679,14 @@ export async function executeAgent(
         configs: selected,
         reservedModelNames:
           config.taskProfile === "read-only"
-            ? ["list_files", "read_artifact", "read_file", "search", ...additionalTools.map((tool) => tool.name)]
+            ? [
+                "list_files",
+                "read_artifact",
+                "read_file",
+                "search",
+                ...(delegationProposalEnabled ? ["propose_delegation"] : []),
+                ...additionalTools.map((tool) => tool.name),
+              ]
             : [
                 "apply_patch",
                 "finish_task",
@@ -1606,6 +1695,7 @@ export async function executeAgent(
                 "read_file",
                 "run_command",
                 "search",
+                ...(delegationProposalEnabled ? ["propose_delegation"] : []),
                 ...(phase16Binding === undefined ? [] : ["update_plan"]),
                 ...additionalTools.map((tool) => tool.name),
               ],
@@ -1676,7 +1766,7 @@ export async function executeAgent(
       throw new TypeError("Docker executor requires durable Phase 13 event storage");
     }
     const updatePlanTool =
-      phase16Binding === undefined || taskNodeExecution
+      phase16Binding === undefined || independentTaskExecution
         ? undefined
         : (() => {
             if (!(writer instanceof V2SessionWriter) || phase16TaskState === undefined) {
@@ -1701,6 +1791,23 @@ export async function executeAgent(
               }),
               store: new DurableAgentPlanStore(runtime.randomUUID),
             });
+          })();
+    const delegationProposalTool =
+      !delegationProposalEnabled
+        ? undefined
+        : (() => {
+            if (!(writer instanceof V2SessionWriter)) {
+              throw new TypeError(
+                "Phase 20 propose_delegation requires the durable V2 session writer",
+              );
+            }
+            return createProposeDelegationTool({
+              parentRunId: runId,
+              randomUuid: runtime.randomUUID,
+              sessionId,
+              workspace: runtime.cwd,
+              writer,
+            }) as ToolDefinition<unknown>;
           })();
     const repositoryNavigation = runtime.createRepositoryNavigationService === undefined
       ? undefined
@@ -1736,7 +1843,7 @@ export async function executeAgent(
         ) throw error;
       }
     }
-    const tools = await runtime.createAgentToolRegistry({
+    const baseTools = await runtime.createAgentToolRegistry({
       ...(additionalTools.length === 0 ? {} : { additionalTools }),
       approvalMode: config.editApproval,
       approvalPrompt: runtime.createApprovalPrompt(io),
@@ -1785,10 +1892,12 @@ export async function executeAgent(
                 }
                 assertGoalChangePlanPreflight(ledger, plan, runId);
               },
-              completionPolicy: taskNodeExecution
+              completionPolicy: independentTaskExecution
                 ? new VerifiedCompletionPolicy()
                 : new CollaborativeCompletionPolicy({
                     base: new VerifiedCompletionPolicy(),
+                    delegations: () =>
+                      reconstructMultiRunSession(writer.readDecodedEvents!()).delegations,
                     goalChanges: async () => {
                       const ledger = projectGoalChangeLedger(
                         writer.readDecodedEvents!(),
@@ -1838,12 +1947,31 @@ export async function executeAgent(
       ...(sandboxEvents === undefined ? {} : { sandboxEvents }),
       secrets,
       taskProfile: config.taskProfile,
-      ...(taskNodeExecution ? { taskNodeExecution: true } : {}),
+        ...(independentTaskExecution ? { taskNodeExecution: true } : {}),
+      ...(delegationProposalTool === undefined ? {} : { delegationProposalTool }),
       ...(updatePlanTool === undefined ? {} : { updatePlanTool }),
       sessionId,
       timestamp: runtime.timestamp,
       workspace: runtime.cwd,
     });
+    if (
+      freshTaskExecution?.delegatedToolIds !== undefined &&
+      freshTaskExecution.delegatedToolProfileSha256 !== undefined
+    ) {
+      const runtimeProfile = buildChildToolProfile({
+        taskProfile: config.taskProfile,
+        requestedToolIds: freshTaskExecution.delegatedToolIds,
+        policyToolIds: freshTaskExecution.delegatedToolIds,
+        parentDelegableToolIds: freshTaskExecution.delegatedToolIds,
+        catalog: delegatedRuntimeToolCatalog(baseTools.modelDefinitions),
+      });
+      if (runtimeProfile.profileSha256 !== freshTaskExecution.delegatedToolProfileSha256) {
+        throw new TypeError("delegated tool schemas differ from the frozen child profile");
+      }
+    }
+    const tools = freshTaskExecution?.delegatedToolIds === undefined
+      ? baseTools
+      : new RestrictedToolRegistry(baseTools, freshTaskExecution.delegatedToolIds);
     const turnBoundaryRecorder = createTurnBoundaryRecorder(
       writer,
       backend,
@@ -1894,7 +2022,7 @@ export async function executeAgent(
                 );
               },
             }),
-        ...(taskNodeExecution || phase16Binding?.agent_mode !== "build" ||
+        ...(independentTaskExecution || phase16Binding?.agent_mode !== "build" ||
         phase16TaskState === undefined ||
         writer.appendTaskEvent === undefined
           ? {}

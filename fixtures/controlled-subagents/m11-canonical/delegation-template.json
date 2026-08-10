@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "title": "Canonical read-only child",
+  "objective": "Return a bounded answer through the controlled-subagent receipt contract.",
+  "expectedReceipt": {
+    "kind": "analysis",
+    "requiredClaims": [
+      {
+        "claimId": "answer",
+        "kind": "answer",
+        "description": "A Host-verifiable bounded answer artifact",
+        "required": true
+      }
+    ]
+  },
+  "authorityRequest": {
+    "taskProfile": "read-only",
+    "toolIds": [],
+    "capabilityIds": []
+  },
+  "workspace": {
+    "mode": "origin_read_only",
+    "declaredPathPrefixes": ["src"]
+  },
+  "retry": {
+    "maxAttempts": 1,
+    "automaticOn": []
+  }
+}

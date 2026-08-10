@@ -9,9 +9,11 @@ import type { GoalChangeLedgerProjection } from "../coordination/goal-change-led
 import { goalChangeAttributionScope } from "../coordination/goal-change-seed.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
 import type { Phase16RunBinding } from "../events/phase16-run-event-extension.js";
+import type { DelegationProjectionV1 } from "../delegation/delegation-projector.js";
 
 export interface CollaborativeCompletionPolicyOptions {
   readonly base: CompletionPolicy;
+  readonly delegations?: () => DelegationProjectionV1;
   readonly goalChanges: () => Promise<GoalChangeLedgerProjection>;
   readonly runBinding: Phase16RunBinding;
   readonly taskState: () => TaskStateProjection;
@@ -64,6 +66,40 @@ export class CollaborativeCompletionPolicy implements CompletionPolicy {
       !task.readyForCompletion
     ) {
       return { effect: "incomplete", reason: "plan_incomplete" };
+    }
+    const delegations = this.options.delegations?.();
+    if (delegations !== undefined) {
+      const required = delegations.revisions.filter((revision) =>
+        revision.status !== "superseded" &&
+        revision.status !== "rejected" &&
+        revision.binding.goalId === this.options.runBinding.goal_id &&
+        revision.binding.goalRevision === this.options.runBinding.goal_revision &&
+        revision.binding.planId === this.options.runBinding.plan_id &&
+        revision.binding.planRevision === this.options.runBinding.plan_revision &&
+        revision.binding.planSha256 === this.options.runBinding.plan_sha256 &&
+        (revision.envelope !== null || revision.attempts.length > 0 || [
+          "queued",
+          "active",
+          "waiting_approval",
+          "cancelling",
+          "reconciling",
+          "receipt_ready",
+          "accepted",
+          "failed",
+          "blocked",
+          "cancelled",
+          "stale",
+        ].includes(revision.status)));
+      const unresolved = required.some((revision) =>
+        revision.status !== "accepted" ||
+        revision.receipt?.status !== "succeeded" ||
+        revision.receipt.acceptedEventId === null ||
+        revision.receipt.claimStatuses.some((claim) => claim.status !== "verified"));
+      const heldBudget = Object.values(delegations.budget.held).some((value) =>
+        typeof value === "number" && value > 0);
+      if (unresolved || heldBudget || delegations.activeActorSlots.length > 0) {
+        return { effect: "incomplete", reason: "plan_incomplete" };
+      }
     }
     return base;
   }

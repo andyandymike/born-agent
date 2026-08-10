@@ -58,6 +58,7 @@ export interface AgentToolRegistryOptions {
   readonly commandApprovalMode: CommandApprovalMode;
   readonly commandTimeoutMs: number;
   readonly dockerSandbox?: ResolvedDockerSandboxConfig;
+  readonly delegationProposalTool?: ToolDefinition<unknown>;
   readonly executorKind?: ExecutionBackendKind;
   readonly maxCommandOutputBytes: number;
   readonly modelEvidence: ModelEvidence;
@@ -227,6 +228,9 @@ export async function createAgentToolRegistry(
     ...(options.updatePlanTool === undefined
       ? []
       : [options.updatePlanTool as ToolDefinition<unknown>]),
+    ...(options.delegationProposalTool === undefined
+      ? []
+      : [options.delegationProposalTool]),
     ...(options.additionalTools ?? []),
   ];
 
@@ -239,8 +243,8 @@ export async function createAgentToolRegistry(
   );
   const expectedMutations =
     completion === undefined
-      ? `apply_patch,run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`
-      : `apply_patch,finish_task,run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`;
+      ? `apply_patch${options.delegationProposalTool === undefined ? "" : ",propose_delegation"},run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`
+      : `apply_patch,finish_task${options.delegationProposalTool === undefined ? "" : ",propose_delegation"},run_command${options.updatePlanTool === undefined ? "" : ",update_plan"}`;
   if (
     mutations.map((definition) => definition.name).sort().join(",") !==
     expectedMutations

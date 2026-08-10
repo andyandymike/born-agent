@@ -48,6 +48,13 @@ import { TaskGraphProjector } from "../task-graph/task-graph-projector.js";
 import { TaskExecutionProjector } from "../scheduling/task-execution-projector.js";
 import { WorktreeProjector } from "../worktrees/worktree-projector.js";
 import { BackgroundProjector } from "../background/background-projector.js";
+import {
+  phase20DelegationSessionEventDataSchemas,
+  type Phase20DelegationSessionEventData,
+  type Phase20DelegationSessionEventType,
+} from "../delegation/delegation-event-schema.js";
+import { DelegationProjector } from "../delegation/delegation-projector.js";
+import type { DelegatedChildRunBindingV1 } from "../events/phase20-run-event-extension.js";
 
 export interface V2SessionWriterOptions {
   readonly afterDurableEvent?: (event: DecodedStoredEvent) => void;
@@ -260,6 +267,27 @@ export class V2SessionWriter implements SessionWriter {
     return this.appendEnvelope(envelope);
   }
 
+  /** Phase 20 delegation facts retain a distinct authority/write port. */
+  async appendDelegationEvent<TType extends Phase20DelegationSessionEventType>(
+    type: TType,
+    data: Phase20DelegationSessionEventData<TType>,
+  ): Promise<DecodedStoredEvent> {
+    phase20DelegationSessionEventDataSchemas[type].parse(data);
+    const eventId = this.createEventId();
+    if (!isCanonicalUuid(eventId)) throw new Error("event id must be a canonical UUID");
+    const envelope = storedEventEnvelopeV2Schema.parse({
+      data,
+      event_id: eventId,
+      schema_version: 2,
+      scope: "session",
+      session_id: this.sessionId,
+      session_seq: this.rawValues.length + 1,
+      timestamp: this.timestamp(),
+      type,
+    });
+    return this.appendEnvelope(envelope);
+  }
+
   async appendArtifactEvent(
     runId: string,
     event: Phase10ArtifactEvent,
@@ -323,7 +351,7 @@ export class V2SessionWriter implements SessionWriter {
     runId: string,
     eventId: string,
     data: Extract<RunEvent, { type: "run.started" }>["data"] &
-      Phase16RunBinding,
+      Phase16RunBinding & { readonly delegated_child_binding?: DelegatedChildRunBindingV1 },
     timestamp: string,
   ): Promise<DecodedStoredEvent> {
     if (!isCanonicalUuid(eventId)) {
@@ -336,6 +364,71 @@ export class V2SessionWriter implements SessionWriter {
       timestamp,
       type: "run.started",
     });
+  }
+
+  async appendDelegatedChildRunStarted(
+    runId: string,
+    eventId: string,
+    data: Extract<RunEvent, { type: "run.started" }>["data"] & {
+      readonly delegated_child_binding: DelegatedChildRunBindingV1;
+    },
+    timestamp: string,
+  ): Promise<DecodedStoredEvent> {
+    if (!isCanonicalUuid(eventId)) {
+      throw new Error("event id must be a canonical UUID");
+    }
+    return this.appendRunEnvelope({
+      data,
+      eventId,
+      runId,
+      timestamp,
+      type: "run.started",
+    });
+  }
+
+  /**
+   * Import one already-validated v2 fact into a Host-owned session while
+   * preserving its event/run identity and assigning only a new session_seq.
+   * Phase 20 uses this to merge a completed minimal child session shard; it is
+   * deliberately not part of the general SessionWriter port.
+   */
+  async appendImportedEvent(event: DecodedStoredEvent): Promise<DecodedStoredEvent> {
+    if (event.sessionId !== this.sessionId || event.sourceSchemaVersion !== 2) {
+      throw new Error("imported event must be a schema v2 fact for this exact session");
+    }
+    if (!isCanonicalUuid(event.eventId)) {
+      throw new Error("imported event id must be a canonical UUID");
+    }
+    if (this.decoded.some((candidate) => candidate.eventId === event.eventId)) {
+      throw new Error("imported event id already exists in the destination session");
+    }
+    if (event.scope === "session") {
+      const envelope = storedEventEnvelopeV2Schema.parse({
+        data: event.data,
+        event_id: event.eventId,
+        schema_version: 2,
+        scope: "session",
+        session_id: this.sessionId,
+        session_seq: this.rawValues.length + 1,
+        timestamp: event.timestamp,
+        type: event.type,
+      });
+      return this.appendEnvelope(envelope);
+    }
+    const next = this.nextRunSequence.get(event.runId) ?? 1;
+    if (event.runSeq !== next) {
+      throw new Error(
+        `imported run sequence is not contiguous (expected ${String(next)}, received ${String(event.runSeq)})`,
+      );
+    }
+    const imported = await this.appendRunEnvelope({
+      data: event.data,
+      eventId: event.eventId,
+      runId: event.runId,
+      timestamp: event.timestamp,
+      type: event.type,
+    });
+    return imported;
   }
 
   async withOwnedLock<T>(
@@ -408,6 +501,7 @@ export class V2SessionWriter implements SessionWriter {
     TaskExecutionProjector.project(decoded);
     WorktreeProjector.project(decoded);
     BackgroundProjector.project(decoded);
+    DelegationProjector.project(decoded);
     assertGoalChangeLedgerSemantics(decoded);
     const event = decoded.at(-1);
     if (event === undefined) throw new Error("stored envelope produced no event");
