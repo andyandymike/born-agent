@@ -314,11 +314,21 @@ export class ManagedWorktreeManager {
 
   async acceptSnapshot(input: {
     readonly attemptId: string;
+    readonly expectedSnapshotSha256?: string;
     readonly graph: TaskGraphRevisionProjectionV1;
     readonly nodeId: string;
   }): Promise<AcceptedWorkspaceSnapshotV1> {
     const workspace = await this.locate({ graphId: input.graph.graphId, graphRevision: input.graph.revision, graphSha256: input.graph.graphSha256, nodeId: input.nodeId });
     const snapshot = await captureWorkspaceSnapshot({ baselineManifestSha256: workspace.baselineManifestSha256, workspaceId: workspace.identity.workspaceId, workspaceRoot: workspace.workspacePath });
+    if (
+      input.expectedSnapshotSha256 !== undefined &&
+      snapshot.manifest.snapshotSha256 !== input.expectedSnapshotSha256
+    ) {
+      throw new WorktreeError(
+        "worktree_promotion_stale",
+        "managed workspace no longer matches the accepted delegated child receipt",
+      );
+    }
     const baseline = await this.#baselineEntries(workspace.identity.workspaceId);
     const before = new Map(baseline.entries.map((entry) => [entry.path, entry]));
     const after = new Map(snapshot.manifest.entries.map((entry) => [entry.path, entry]));

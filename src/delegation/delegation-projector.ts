@@ -43,6 +43,8 @@ export interface DelegationAttemptProjectionV1 {
   readonly executableEnvelopeSha256: string | null;
   readonly operationId: string | null;
   readonly reservationId: string;
+  readonly budgetUsage: DelegationBudgetCountersProjectionV1 | null;
+  readonly budgetSettlementEventId: string | null;
   readonly startedEventId: string | null;
   readonly terminalEventId: string | null;
   readonly terminal: "succeeded" | "known_failed" | "pre_effect_infrastructure_failure" | "cancelled_clean" | "blocked_unknown_effect" | null;
@@ -71,6 +73,7 @@ export interface DelegationRevisionProjectionV1 {
     readonly envelope: DelegationArtifactRefV1;
     readonly envelopeSha256: string;
   } | null;
+  readonly envelopePreparationCount: number;
   readonly parentActorId: string;
   readonly parentRunId: string;
   readonly receipt: {
@@ -165,6 +168,8 @@ interface MutableAttempt {
   executableEnvelopeSha256: string | null;
   operationId: string | null;
   reservationId: string;
+  budgetUsage: DelegationBudgetCountersProjectionV1 | null;
+  budgetSettlementEventId: string | null;
   startedEventId: string | null;
   terminalEventId: string | null;
   terminal: DelegationAttemptProjectionV1["terminal"];
@@ -184,6 +189,7 @@ interface MutableRevision {
   delegationRevision: number;
   delegationSha256: string;
   envelope: DelegationRevisionProjectionV1["envelope"];
+  envelopePreparationCount: number;
   parentActorId: string;
   parentRunId: string;
   receipt: DelegationRevisionProjectionV1["receipt"];
@@ -359,6 +365,8 @@ function attemptProjection(value: MutableAttempt): DelegationAttemptProjectionV1
     executableEnvelopeSha256: value.executableEnvelopeSha256,
     operationId: value.operationId,
     reservationId: value.reservationId,
+    budgetUsage: value.budgetUsage,
+    budgetSettlementEventId: value.budgetSettlementEventId,
     startedEventId: value.startedEventId,
     terminalEventId: value.terminalEventId,
     terminal: value.terminal,
@@ -380,6 +388,7 @@ function revisionProjection(value: MutableRevision): DelegationRevisionProjectio
     delegationRevision: value.delegationRevision,
     delegationSha256: value.delegationSha256,
     envelope: value.envelope,
+    envelopePreparationCount: value.envelopePreparationCount,
     parentActorId: value.parentActorId,
     parentRunId: value.parentRunId,
     receipt: value.receipt,
@@ -486,6 +495,7 @@ export class DelegationProjector {
             delegationRevision: value.delegation_revision,
             delegationSha256: value.delegation_sha256,
             envelope: null,
+            envelopePreparationCount: 0,
             parentActorId: value.parent_actor_id,
             parentRunId: value.parent_run_id,
             receipt: null,
@@ -535,6 +545,7 @@ export class DelegationProjector {
             delegationRevision: value.delegation_revision,
             delegationSha256: value.delegation_sha256,
             envelope: null,
+            envelopePreparationCount: 0,
             parentActorId: value.parent_actor_id,
             parentRunId: value.parent_run_id,
             receipt: null,
@@ -583,8 +594,28 @@ export class DelegationProjector {
         case "delegation.envelope.prepared": {
           const value = data(event, "delegation.envelope.prepared");
           const revision = exact(event);
-          if (!(["approved", "queued"] as const).includes(revision.status as "approved" | "queued") || revision.envelope !== null) {
-            throw new DelegationError("delegation_revision_conflict", "child envelope can be prepared exactly once after approval");
+          const previousAttempt = revision.attempts.at(-1);
+          const retryPreparation =
+            revision.status === "queued" &&
+            revision.envelope !== null &&
+            revision.envelopePreparationCount === 1 &&
+            previousAttempt?.terminal === "pre_effect_infrastructure_failure" &&
+            previousAttempt.budgetSettlementEventId !== null &&
+            revision.attempts.length < revision.content.retry.maxAttempts &&
+            revision.content.retry.automaticOn.includes("pre_effect_infrastructure_failure");
+          const initialPreparation =
+            (["approved", "queued"] as const).includes(revision.status as "approved" | "queued") &&
+            revision.envelope === null &&
+            revision.envelopePreparationCount === 0;
+          if (!initialPreparation && !retryPreparation) {
+            throw new DelegationError("delegation_revision_conflict", "child envelope is neither an initial preparation nor an eligible durable retry");
+          }
+          if (
+            retryPreparation &&
+            (revision.envelope?.envelopeSha256 === value.envelope_sha256 ||
+              revision.envelope?.contextCapsuleSha256 === value.context_capsule_sha256)
+          ) {
+            throw new DelegationError("delegation_binding_stale", "automatic retry must create a fresh capsule and envelope identity");
           }
           revision.envelope = Object.freeze({
             contextCapsule: artifact(value.context_capsule_artifact),
@@ -592,6 +623,7 @@ export class DelegationProjector {
             envelope: artifact(value.envelope_artifact),
             envelopeSha256: value.envelope_sha256,
           });
+          revision.envelopePreparationCount += 1;
           break;
         }
         case "delegation.budget.reserved": {
@@ -615,6 +647,8 @@ export class DelegationProjector {
             executableEnvelopeSha256: null,
             operationId: null,
             reservationId: value.reservation_id,
+            budgetUsage: null,
+            budgetSettlementEventId: null,
             startedEventId: null,
             terminalEventId: null,
             terminal: null,
@@ -693,24 +727,47 @@ export class DelegationProjector {
           const value = data(event, "delegation.child.terminal");
           const revision = exact(event);
           const attempt = exactAttempt(revision, value.child_attempt_id);
-          if (
+          const usage = budgetCounters(value.budget_usage);
+          const preEffect = value.terminal === "pre_effect_infrastructure_failure";
+          if (preEffect) {
+            const zeroExceptAttempt =
+              usage.attempts === 1 && usage.artifactBytes === 0 && usage.changedBytes === 0 &&
+              usage.changedFiles === 0 && usage.commandExecutions === 0 && usage.commandOutputBytes === 0 &&
+              usage.durationMs === 0 && usage.modelSteps === 0 &&
+              (usage.reportedTokens === 0 || usage.reportedTokens === null);
+            if (
+              revision.status !== "queued" || attempt.startedEventId !== null ||
+              attempt.terminalEventId !== null || attempt.actorId !== value.child_actor_id ||
+              attempt.childRunId !== null || attempt.operationId !== value.operation_id ||
+              value.unresolved_effect_ids.length > 0 || !zeroExceptAttempt
+            ) {
+              throw new DelegationError("delegation_child_protocol_invalid", "pre-effect terminal is not a zero-effect launch failure");
+            }
+            attempt.childRunId = value.child_run_id;
+          } else if (
             !["active", "waiting_approval", "cancelling", "reconciling"].includes(revision.status) ||
-            attempt.startedEventId === null ||
-            attempt.terminalEventId !== null ||
-            attempt.actorId !== value.child_actor_id ||
-            attempt.childRunId !== value.child_run_id ||
+            attempt.startedEventId === null || attempt.terminalEventId !== null ||
+            attempt.actorId !== value.child_actor_id || attempt.childRunId !== value.child_run_id ||
             attempt.operationId !== value.operation_id
           ) {
             throw new DelegationError("delegation_child_protocol_invalid", "child terminal is duplicate or does not match the active attempt");
           }
           attempt.terminal = value.terminal;
           attempt.terminalEventId = event.eventId;
+          attempt.budgetUsage = usage;
           attempt.unresolvedEffectIds = [...value.unresolved_effect_ids];
           for (const [requestId, approval] of waitingApprovals) {
             if (approval.childAttemptId === value.child_attempt_id) waitingApprovals.delete(requestId);
           }
           revision.terminalEventId = event.eventId;
-          revision.status = value.terminal === "blocked_unknown_effect" || value.unresolved_effect_ids.length > 0
+          const automaticRetryReady = preEffect &&
+            revision.attempts.length < revision.content.retry.maxAttempts &&
+            revision.content.retry.automaticOn.includes("pre_effect_infrastructure_failure");
+          revision.status = automaticRetryReady
+            ? "queued"
+            : preEffect
+              ? "failed"
+              : value.terminal === "blocked_unknown_effect" || value.unresolved_effect_ids.length > 0
             ? "reconciling"
             : value.terminal === "cancelled_clean"
               ? "cancelled"
@@ -770,7 +827,12 @@ export class DelegationProjector {
             throw new DelegationError("delegation_receipt_invalid", "receipt acceptance does not bind the exact ready receipt");
           }
           revision.receipt = Object.freeze({ ...revision.receipt, acceptedEventId: event.eventId });
-          revision.status = "accepted";
+          // Receipt acceptance proves the Host verified the artifact and its
+          // lineage; it does not rewrite a failed, blocked, or cancelled child
+          // into a successful delegation outcome.
+          revision.status = revision.receipt.status === "succeeded"
+            ? "accepted"
+            : revision.receipt.status;
           break;
         }
         case "delegation.cancelled": {
@@ -956,6 +1018,7 @@ export class DelegationProjector {
             throw new DelegationError("delegation_budget_exhausted", "budget settlement has no exact terminal reservation");
           }
           settlements.set(value.reservation_id, Object.freeze({ held, released, used }));
+          attempt.budgetSettlementEventId = event.eventId;
           break;
         }
       }

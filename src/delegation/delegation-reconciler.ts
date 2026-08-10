@@ -7,6 +7,7 @@ export type DelegationReconcileOutcomeV1 =
   | { readonly kind: "resume_same_child"; readonly attemptId: string }
   | { readonly kind: "terminal_backfilled"; readonly receiptSha256: string }
   | { readonly kind: "retry_pre_effect_allowed" }
+  | { readonly kind: "pre_effect_failure_terminal"; readonly attemptId: string }
   | { readonly kind: "cancelled_clean"; readonly receiptSha256: string }
   | { readonly kind: "blocked_unknown_effect"; readonly evidenceRefs: readonly string[] }
   | { readonly kind: "corrupt"; readonly code: string };
@@ -29,14 +30,24 @@ export function classifyDelegationReconcileOutcome(input: {
   readonly run?: ReconstructedRunProjection;
 }): DelegationReconcileOutcomeV1 {
   const { operation, revision, run } = input;
+  const attempt = revision?.attempts.find((candidate) =>
+    candidate.attemptId === operation.childAttemptId &&
+    candidate.operationId === operation.operationId);
+  const preEffectRecorded =
+    operation.failure !== undefined && operation.failure !== null &&
+    operation.failure.phase !== "after_start_barrier" &&
+    (operation.process === null || (
+      operation.processCleanup !== undefined && operation.processCleanup !== null &&
+      operation.processCleanup.verified && operation.processCleanup.pid === operation.process.pid
+    ));
   if (
     (revision !== undefined && (
       revision.delegationId !== operation.delegationId ||
       revision.parentRunId !== operation.parentRunId ||
-      !revision.attempts.some((attempt) =>
-        attempt.actorId === operation.childActorId &&
-        attempt.attemptId === operation.childAttemptId &&
-        attempt.childRunId === operation.childRunId))) ||
+      attempt === undefined ||
+      attempt.actorId !== operation.childActorId ||
+      (attempt.childRunId !== operation.childRunId &&
+        !(preEffectRecorded && attempt.childRunId === null)))) ||
     (run !== undefined && run.runId !== operation.childRunId)
   ) {
     return Object.freeze({ kind: "corrupt", code: "delegation_operation_binding_mismatch" });
@@ -46,6 +57,20 @@ export function classifyDelegationReconcileOutcome(input: {
       return Object.freeze({ kind: "cancelled_clean", receiptSha256: revision.receipt.sha256 });
     }
     return Object.freeze({ kind: "terminal_backfilled", receiptSha256: revision.receipt.sha256 });
+  }
+  const automaticRetryEligible =
+    preEffectRecorded &&
+    attempt?.terminal === "pre_effect_infrastructure_failure" &&
+    attempt.budgetSettlementEventId !== null &&
+    revision?.status === "queued" &&
+    revision.content.retry.maxAttempts === 2 &&
+    revision.content.retry.automaticOn.includes("pre_effect_infrastructure_failure") &&
+    revision.attempts.length < revision.content.retry.maxAttempts;
+  if (automaticRetryEligible) {
+    return Object.freeze({ kind: "retry_pre_effect_allowed" });
+  }
+  if (preEffectRecorded && attempt?.terminal === "pre_effect_infrastructure_failure") {
+    return Object.freeze({ kind: "pre_effect_failure_terminal", attemptId: operation.childAttemptId });
   }
   if (operation.state === "reconciled") {
     return Object.freeze({ kind: "corrupt", code: "delegation_reconciled_without_receipt" });
@@ -57,19 +82,6 @@ export function classifyDelegationReconcileOutcome(input: {
     run?.terminal === undefined
   ) {
     return Object.freeze({ kind: "resume_same_child", attemptId: operation.childAttemptId });
-  }
-  const definitelyPreEffect = run === undefined && (
-    operation.state === "requested" ||
-    operation.state === "spawned" ||
-    operation.state === "handshaken"
-  );
-  if (
-    definitelyPreEffect &&
-    (input.ownerObservation === "not_started" ||
-      input.ownerObservation === "missing" ||
-      input.ownerObservation === "different")
-  ) {
-    return Object.freeze({ kind: "retry_pre_effect_allowed" });
   }
   // PHASE20: exit code, PID liveness, heartbeat age, and an IPC disconnect do
   // not prove provider/tool/effect terminality. Unless a durable receipt or a

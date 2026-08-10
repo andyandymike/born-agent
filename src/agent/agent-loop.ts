@@ -12,11 +12,13 @@ import type {
 } from "../model/model-events.js";
 import type { ProviderFailure } from "../model/provider-failure.js";
 import { redactSensitiveText } from "../security/redact.js";
-import type {
-  CompletionControlSignal,
-  ToolControlSignal,
-  ToolExecution,
-  ToolRegistryLike,
+import { serializeToolError, toolError } from "../tools/tool-errors.js";
+import {
+  FatalToolExecutionError,
+  type CompletionControlSignal,
+  type ToolControlSignal,
+  type ToolExecution,
+  type ToolRegistryLike,
 } from "../tools/tool-types.js";
 import type { AgentMode } from "./agent-mode.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
@@ -1065,16 +1067,36 @@ export async function runAgentLoop(
 
       const toolStartedAt = clock.now();
       // PHASE4: 所有 step 共用 run AbortSignal，Ctrl+C/global deadline 能终止正在运行的 rg。
-      const execution = await deps.tools.execute(
-        {
-          argumentsJson: turn.call.argumentsJson,
-          callId: turn.call.callId,
-          name: turn.call.name,
-          originEventId: requestedEvent.event_id,
-          step,
-        },
-        runController.signal,
-      );
+      let execution: ToolExecution;
+      try {
+        execution = await deps.tools.execute(
+          {
+            argumentsJson: turn.call.argumentsJson,
+            callId: turn.call.callId,
+            name: turn.call.name,
+            originEventId: requestedEvent.event_id,
+            step,
+          },
+          runController.signal,
+        );
+      } catch (error) {
+        if (
+          error instanceof FatalToolExecutionError &&
+          error.kind === "user_cancelled" &&
+          !error.workspaceMayHaveChanged
+        ) {
+          // A cancelled approval is a proven pre-effect terminal, not an
+          // unresolved tool call. Close the exact call before run.cancelled so
+          // replay and delegated receipt reconciliation reach the same result.
+          abortRun("user");
+          execution = serializeToolError(
+            toolError("cancelled", "tool_cancelled", "tool execution was cancelled"),
+            deps.secrets ?? [],
+          );
+        } else {
+          throw error;
+        }
+      }
       await publisher.publish({
         // PHASE7: execute 返回即代表这次 requested call 已有结果；必须先闭合
         // tool.call.completed，再处理执行期间发生的取消/deadline。finish_task 还会在

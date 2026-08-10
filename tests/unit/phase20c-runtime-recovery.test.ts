@@ -11,7 +11,7 @@ import { createDelegationChildOperation } from "../../src/delegation/delegation-
 import { DelegationOperationStore } from "../../src/delegation/delegation-operation-store.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
 import { RestrictedToolRegistry } from "../../src/tools/restricted-tool-registry.js";
-import { IDS, SHA, phase20Budget, phase20Content } from "../phase20-test-helpers.js";
+import { IDS, SHA, phase20Budget, phase20Content, phase20Revision } from "../phase20-test-helpers.js";
 import { delegationRevisionContentSchema } from "../../src/delegation/delegation-schema.js";
 import {
   delegationApprovalIdentity,
@@ -31,7 +31,10 @@ import {
 const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
-function operation(state: "requested" | "running" = "requested") {
+function operation(
+  state: "requested" | "running" | "reconciled" = "requested",
+  preEffectFailure = false,
+) {
   return createDelegationChildOperation({
     schemaVersion: 1,
     revision: 1,
@@ -56,7 +59,9 @@ function operation(state: "requested" | "running" = "requested") {
     requestedAt: "2026-08-10T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
     state,
-    process: state === "requested" ? null : { pid: 42, processStartIdentity: SHA },
+    process: state === "requested" || preEffectFailure ? null : { pid: 42, processStartIdentity: SHA },
+    processCleanup: null,
+    failure: preEffectFailure ? { code: "delegation_handshake_failed", phase: "before_spawn" } : null,
     boundedResultRef: null,
     boundedResultSha256: null,
   });
@@ -83,7 +88,40 @@ describe("Phase 20C runtime authority and recovery", () => {
   });
 
   it("allows retry only for a proven pre-effect prefix and blocks unknown running effects", () => {
-    expect(classifyDelegationReconcileOutcome({ operation: operation(), ownerObservation: "not_started" })).toEqual({ kind: "retry_pre_effect_allowed" });
+    expect(classifyDelegationReconcileOutcome({ operation: operation(), ownerObservation: "not_started" })).toMatchObject({ kind: "blocked_unknown_effect" });
+    const revision = {
+      ...phase20Revision({ envelope: true, retry: true, status: "queued" }),
+      attempts: [{
+        actorId: IDS.actor,
+        attemptId: IDS.attempt,
+        attemptNumber: 1,
+        budgetSettlementEventId: "a0000000-0000-4000-8000-000000000030",
+        budgetUsage: {
+          artifactBytes: 0,
+          attempts: 1,
+          changedBytes: 0,
+          changedFiles: 0,
+          commandExecutions: 0,
+          commandOutputBytes: 0,
+          durationMs: 0,
+          modelSteps: 0,
+          reportedTokens: 0,
+        },
+        childRunId: IDS.run,
+        executableEnvelopeSha256: SHA,
+        operationId: "a0000000-0000-4000-8000-000000000020",
+        reservationId: "a0000000-0000-4000-8000-000000000021",
+        startedEventId: null,
+        terminal: "pre_effect_infrastructure_failure" as const,
+        terminalEventId: "a0000000-0000-4000-8000-000000000029",
+        unresolvedEffectIds: [],
+      }],
+    };
+    expect(classifyDelegationReconcileOutcome({
+      operation: operation("reconciled", true),
+      ownerObservation: "not_started",
+      revision,
+    })).toEqual({ kind: "retry_pre_effect_allowed" });
     expect(classifyDelegationReconcileOutcome({ operation: operation("running"), ownerObservation: "unknown" })).toMatchObject({ kind: "blocked_unknown_effect" });
   });
 

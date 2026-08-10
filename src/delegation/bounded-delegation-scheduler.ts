@@ -51,6 +51,7 @@ export class BoundedDelegationScheduler {
     readonly maximumChildren?: 0 | 1 | 2;
     readonly activeClaims?: readonly DelegationConflictClaimV1[];
     readonly activeChildCount?: number;
+    readonly activeActorSlots?: readonly (1 | 2)[];
   }): DelegationAdmissionResultV1 {
     const ordered = [...input.ready].filter((candidate) =>
       candidate.revision.status === "queued" && candidate.revision.envelope !== null)
@@ -68,8 +69,25 @@ export class BoundedDelegationScheduler {
       input.parentModelActive ? 1 : 2,
     );
     let active = input.activeChildCount ?? 0;
+    const occupiedSlots = new Set<1 | 2>(
+      input.activeActorSlots ?? Array.from({ length: active }, (_, index) => (index + 1) as 1 | 2),
+    );
+    if (
+      input.activeActorSlots !== undefined &&
+      (occupiedSlots.size !== input.activeActorSlots.length || occupiedSlots.size !== active)
+    ) {
+      throw new DelegationError(
+        "delegation_lease_busy",
+        "active child count and exact actor slot ownership are inconsistent",
+      );
+    }
     for (const candidate of ordered) {
       if (active >= maximumChildren) {
+        deferred.push({ delegationId: candidate.revision.delegationId, reason: "actor_limit" });
+        continue;
+      }
+      const actorSlot = ([1, 2] as const).find((slot) => !occupiedSlots.has(slot));
+      if (actorSlot === undefined) {
         deferred.push({ delegationId: candidate.revision.delegationId, reason: "actor_limit" });
         continue;
       }
@@ -110,9 +128,9 @@ export class BoundedDelegationScheduler {
         }
         throw error;
       }
-      const actorSlot = (active + 1) as 1 | 2;
       admitted.push(Object.freeze({ actorSlot, candidate, conflictClaim: claim, reservation }));
       activeClaims.push(claim);
+      occupiedSlots.add(actorSlot);
       active += 1;
     }
     return Object.freeze({ admitted: Object.freeze(admitted), deferred: Object.freeze(deferred) });

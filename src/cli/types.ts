@@ -47,6 +47,9 @@ import type { DelegationChildTerminalFrameV1 } from "../delegation/runtime/child
 import type { DelegationChildLauncher } from "../delegation/runtime/child-launcher.js";
 import type { DelegationChildExecutableDescriptorV1 } from "../delegation/runtime/child-executable-descriptor.js";
 import type { DelegationOperationInspectionV1 } from "../delegation/delegation-reconciler.js";
+import type { DelegationPreEffectRecoveryResultV1 } from "../delegation/delegation-pre-effect-recovery.js";
+import type { DelegationGroupLeaseRecordV1 } from "../delegation/delegation-group-lease-store.js";
+import type { DelegationGroupTakeoverResultV1 } from "../delegation/delegation-group-takeover.js";
 
 export interface OutputWriter {
   write(value: string): void;
@@ -120,16 +123,51 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly operationId: string;
   }) => Promise<DelegationChildTerminalFrameV1>;
   readonly createDelegationChildLauncher?: (options: {
+    readonly approvalPrompt?: ApprovalPrompt;
     readonly io: CliIO;
     readonly inputSurface?: "cli" | "tui";
+    readonly observeSessionWriter?: (writer: SessionWriter) => void;
     readonly sessionId: string;
   }) => DelegationChildLauncher;
+  readonly delegationWriterFactory?: TaskMutationWriterFactory;
   readonly delegationCoordinatorIdentity?: () => {
+    readonly backgroundOperationId?: string;
+    readonly kind?: "foreground" | "phase19_background_worker";
     readonly pid: number;
     readonly processStartIdentity: string;
   };
   readonly doctorDelegationChild?: () => Promise<DelegationChildExecutableDescriptorV1>;
   readonly inspectDelegationOperations?: (sessionId: string) => Promise<readonly DelegationOperationInspectionV1[]>;
+  readonly reconcileDelegationPreEffectOperation?: (input: {
+    readonly inputSurface?: "cli" | "tui";
+    readonly operationId: string;
+    readonly sessionId: string;
+  }) => Promise<DelegationPreEffectRecoveryResultV1>;
+  readonly acquireDelegationGroupLease?: (input: {
+    readonly graphBindingSha256: string | null;
+    readonly groupId: string;
+    readonly nonceSha256: string;
+    readonly ownerBackgroundOperationId: string | null;
+    readonly ownerKind: "foreground" | "phase19_background_worker";
+    readonly ownerPid: number;
+    readonly ownerProcessStartIdentity: string;
+    readonly parentActorId: string;
+    readonly parentRunId: string;
+    readonly repositoryId: string;
+    readonly sessionId: string;
+  }) => Promise<DelegationGroupLeaseRecordV1>;
+  readonly releaseDelegationGroupLease?: (input: {
+    readonly effectsReconciled: boolean;
+    readonly expectedLeaseSha256?: string;
+    readonly groupId: string;
+    readonly reason: "terminal" | "cancelled" | "reconciled";
+    readonly sessionId: string;
+  }) => Promise<DelegationGroupLeaseRecordV1>;
+  readonly reconcileDelegationGroupTakeover?: (input: {
+    readonly delegationId: string;
+    readonly inputSurface?: "cli" | "tui";
+    readonly sessionId: string;
+  }) => Promise<DelegationGroupTakeoverResultV1>;
   readonly observeBackgroundWorkerLive?: (options: {
     readonly sessionId: string;
   }) => Promise<BackgroundWorkerLiveObservationV1 | null>;

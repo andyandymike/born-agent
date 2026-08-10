@@ -57,6 +57,7 @@ import {
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
   readonly allowDegradedResume: boolean;
+  readonly inspectSessionId?: string;
   readonly resumeSessionId: string | undefined;
   readonly task: string | undefined;
 }
@@ -546,8 +547,11 @@ export async function executeTui(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<0 | 1 | 2> {
-  if (options.task !== undefined && options.resumeSessionId !== undefined) {
-    return usage(io, "task and --resume are mutually exclusive");
+  if (options.task !== undefined && (options.resumeSessionId !== undefined || options.inspectSessionId !== undefined)) {
+    return usage(io, "task, --resume, and --inspect-session are mutually exclusive");
+  }
+  if (options.resumeSessionId !== undefined && options.inspectSessionId !== undefined) {
+    return usage(io, "--resume and --inspect-session are mutually exclusive");
   }
   if (
     options.mode !== undefined &&
@@ -732,9 +736,10 @@ export async function executeTui(
       : {}),
   };
   let initialSnapshot: readonly TuiPersistedEvent[] = [];
-  if (options.resumeSessionId !== undefined) {
+  const initialSessionId = options.inspectSessionId ?? options.resumeSessionId;
+  if (initialSessionId !== undefined) {
     try {
-      initialSnapshot = await core.loadSession(options.resumeSessionId);
+      initialSnapshot = await core.loadSession(initialSessionId);
     } catch {
       io.stderr.write("born tui: could not load the requested session\n");
       return 1;
@@ -799,7 +804,7 @@ export async function executeTui(
     // PHASE11: run exit codes stay in durable events. The app remains alive
     // after completion/cancellation and returns only its own 0/1 lifecycle code.
     await controller.runInitial({
-      ...(options.resumeSessionId === undefined
+      ...(options.resumeSessionId === undefined || options.inspectSessionId !== undefined
         ? {}
         : { resumeSessionId: options.resumeSessionId }),
       ...(options.task === undefined ? {} : { task: options.task }),

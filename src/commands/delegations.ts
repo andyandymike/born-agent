@@ -18,22 +18,34 @@ import { contextCapsuleSchema } from "../delegation/context/context-capsule-sche
 import { preparedChildEnvelopeSchema } from "../delegation/context/child-envelope-schema.js";
 import { DelegationBudgetLedger } from "../delegation/delegation-budget-ledger.js";
 import {
+  delegationRemainingBudget,
+  preEffectInfrastructureUsage,
+} from "../delegation/delegation-retry.js";
+import {
   BoundedDelegationScheduler,
   type DelegationAdmissionV1,
 } from "../delegation/bounded-delegation-scheduler.js";
 import { readVerifiedChildReceipt } from "../delegation/receipts/child-receipt-verifier.js";
 import { SessionCatalog, SessionCatalogError } from "../sessions/session-catalog.js";
 import { SessionLockError } from "../sessions/session-lock.js";
-import { SessionProjectionError } from "../sessions/reconstruct-multi-run-session.js";
+import {
+  reconstructMultiRunSession,
+  SessionProjectionError,
+} from "../sessions/reconstruct-multi-run-session.js";
 import { assertCanonicalSessionId } from "../sessions/session-path-policy.js";
 import { parseStrictJson } from "../system/strict-json.js";
 import { NodeGitWorktreePort } from "../worktrees/git-worktree-port.js";
 import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
 import { captureWorkspaceSnapshot } from "../worktrees/workspace-baseline.js";
-import type {
-  DelegationChildLaunchResultV1,
-  DelegationWorkspaceFinalizationV1,
+import {
+  DelegationChildLaunchFailure,
+  type DelegationWorkspaceFinalizationV1,
 } from "../delegation/runtime/child-launcher.js";
+import {
+  isPhase20CanonicalFakeSelection,
+  PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256,
+  PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
+} from "../delegation/runtime/canonical-fake-child-backend.js";
 import { createCapabilitySnapshot } from "../capabilities/capability-snapshot.js";
 import type { TaskGraphBudgetV1 } from "../task-graph/task-graph-schema.js";
 
@@ -82,6 +94,55 @@ export interface DelegationSummaryJsonV1 {
 
 type DelegationSession = Awaited<ReturnType<SessionCatalog["read"]>>;
 type DelegationRevision = DelegationSession["delegations"]["revisions"][number];
+
+function delegationWriterFactory(runtime: CliRuntime) {
+  if (runtime.delegationWriterFactory === undefined) return taskWriterFactory(runtime);
+  return async (context: Parameters<NonNullable<CliRuntime["delegationWriterFactory"]>>[0]) => {
+    const writer = await runtime.delegationWriterFactory!(context);
+    runtime.observeSessionWriter?.(writer);
+    return writer;
+  };
+}
+
+async function queuedDelegationSnapshot(
+  runtime: CliRuntime,
+  options: DelegationsListOptions,
+) {
+  const writer = await delegationWriterFactory(runtime)(
+    delegationMutationContext(runtime, options),
+  );
+  try {
+    return reconstructMultiRunSession(writer.events);
+  } finally {
+    await writer.close();
+  }
+}
+
+function internalDelegationIO(): { readonly io: CliIO; readonly stderr: () => string } {
+  let error = "";
+  return {
+    io: {
+      stderr: {
+        write: (value) => {
+          if (Buffer.byteLength(error, "utf8") < 8 * 1024) error += value;
+        },
+      },
+      stdout: { write: () => undefined },
+    },
+    stderr: () => error,
+  };
+}
+
+function delegationContinuationOptions(
+  options: DelegationsShowOptions,
+): DelegationsShowOptions {
+  return {
+    delegationId: options.delegationId,
+    ...(options.inputSurface === undefined ? {} : { inputSurface: options.inputSurface }),
+    json: options.json,
+    sessionId: options.sessionId,
+  };
+}
 
 async function summary(
   runtime: CliRuntime,
@@ -288,7 +349,7 @@ export async function executeDelegationsPropose(options: DelegationsProposeOptio
     const current = await session(runtime, options.sessionId);
     if (current.lastRun === null) throw new DelegationError("delegation_parent_not_active", "session has no parent run");
     const loaded = await new DelegationFileLoader().load(runtime.cwd, options.file);
-    const result = await new DelegationControlPlane(taskWriterFactory(runtime)).replace({
+    const result = await new DelegationControlPlane(delegationWriterFactory(runtime)).replace({
       base: options.baseRevision === undefined ? null : { revision: positive(options.baseRevision, "base revision"), sha256: sha(options.baseSha256!) },
       context: delegationMutationContext(runtime, options),
       parentRunId: current.lastRun.runId,
@@ -302,7 +363,7 @@ export async function executeDelegationsPropose(options: DelegationsProposeOptio
 
 export async function executeDelegationsApprove(options: DelegationsDecisionOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    const result = await new DelegationControlPlane(taskWriterFactory(runtime)).approve({
+    const result = await new DelegationControlPlane(delegationWriterFactory(runtime)).approve({
       context: delegationMutationContext(runtime, options),
       delegationId: options.delegationId,
       revision: positive(options.revision, "revision"),
@@ -317,7 +378,7 @@ export async function executeDelegationsApprove(options: DelegationsDecisionOpti
 
 export async function executeDelegationsReject(options: DelegationsDecisionOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    const result = await new DelegationControlPlane(taskWriterFactory(runtime)).reject({
+    const result = await new DelegationControlPlane(delegationWriterFactory(runtime)).reject({
       context: delegationMutationContext(runtime, options),
       delegationId: options.delegationId,
       revision: positive(options.revision, "revision"),
@@ -331,7 +392,7 @@ export async function executeDelegationsReject(options: DelegationsDecisionOptio
 
 export async function executeDelegationsCancel(options: DelegationsCancelOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    const result = await new DelegationControlPlane(taskWriterFactory(runtime)).cancel({
+    const result = await new DelegationControlPlane(delegationWriterFactory(runtime)).cancel({
       context: delegationMutationContext(runtime, options),
       delegationId: options.delegationId,
       reason: options.reason,
@@ -341,17 +402,89 @@ export async function executeDelegationsCancel(options: DelegationsCancelOptions
   } catch (error) { return failure(error, io); }
 }
 
-export async function executeDelegationsResume(options: DelegationsShowOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
+export async function executeDelegationsResume(options: DelegationsShowOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
   try {
-    const current = await session(runtime, options.sessionId);
-    const revision = [...current.delegations.revisions].reverse().find((candidate) =>
+    let current = await session(runtime, options.sessionId);
+    let revision = [...current.delegations.revisions].reverse().find((candidate) =>
       candidate.delegationId === options.delegationId);
     if (revision === undefined) {
       throw new DelegationError("delegation_revision_conflict", "delegation was not found");
     }
+    const inspections = await runtime.inspectDelegationOperations?.(options.sessionId) ?? [];
+    const latestOperationId = revision.attempts.at(-1)?.operationId;
+    let observation = latestOperationId === null || latestOperationId === undefined
+      ? undefined
+      : inspections.find((candidate) => candidate.operationId === latestOperationId);
+    if (
+      observation !== undefined && (
+        observation.state === "pre_effect_terminal" ||
+        observation.reconcile.kind === "retry_pre_effect_allowed" ||
+        observation.reconcile.kind === "pre_effect_failure_terminal"
+      )
+    ) {
+      const recovery = await (runtime.reconcileDelegationPreEffectOperation?.({
+        ...(options.inputSurface === undefined ? {} : { inputSurface: options.inputSurface }),
+        operationId: observation.operationId,
+        sessionId: options.sessionId,
+      }) ?? Promise.reject(new DelegationError(
+        "delegation_effect_reconciliation_required",
+        "runtime has no durable pre-effect operation reconciler",
+      )));
+      current = await session(runtime, options.sessionId);
+      revision = [...current.delegations.revisions].reverse().find((candidate) =>
+        candidate.delegationId === options.delegationId);
+      if (revision === undefined) {
+        throw new DelegationError("delegation_revision_conflict", "reconciled delegation disappeared");
+      }
+      if (recovery.retryEligible) {
+        const retryOptions = delegationContinuationOptions(options);
+        if (revision.envelopePreparationCount === 1) {
+          const internal = internalDelegationIO();
+          const prepared = await executeDelegationsPrepare(retryOptions, runtime, internal.io);
+          if (prepared !== 0) {
+            io.stderr.write(internal.stderr());
+            return prepared;
+          }
+        } else if (revision.envelopePreparationCount !== 2) {
+          throw new DelegationError(
+            "delegation_child_protocol_invalid",
+            "automatic retry has an invalid envelope preparation count",
+          );
+        }
+        return executeDelegationsStart(retryOptions, runtime, io);
+      }
+      const refreshed = await runtime.inspectDelegationOperations?.(options.sessionId) ?? [];
+      observation = refreshed.find((candidate) => candidate.operationId === recovery.operation.operationId);
+      writeResult(io, options.json, "delegations.resume", {
+        operationId: recovery.operation.operationId,
+        reconciled: recovery.changed,
+        retryEligible: false,
+        ...(observation === undefined ? {} : { observation }),
+      }, `Delegation pre-effect failure reconciled; retry is not eligible\nOperation: ${recovery.operation.operationId}\n`);
+      return 8;
+    }
+    const latestActorId = revision.attempts.at(-1)?.actorId;
+    const hasOrphanedAdmission = latestActorId !== null && latestActorId !== undefined && (
+      current.delegations.activeActorSlots.some((claim) => claim.actorId === latestActorId) ||
+      current.delegations.activeConflictClaims.some((claim) => claim.actorId === latestActorId)
+    );
+    if (
+      hasOrphanedAdmission && observation?.state === "reconciled" &&
+      ["accepted", "failed", "cancelled"].includes(revision.status)
+    ) {
+      const takeover = await (runtime.reconcileDelegationGroupTakeover?.({
+        delegationId: revision.delegationId,
+        ...(options.inputSurface === undefined ? {} : { inputSurface: options.inputSurface }),
+        sessionId: options.sessionId,
+      }) ?? Promise.reject(new DelegationError(
+        "delegation_effect_reconciliation_required",
+        "runtime has no durable delegation group takeover reconciler",
+      )));
+      writeResult(io, options.json, "delegations.resume", takeover,
+        `Delegation coordinator takeover reconciled\nGroup: ${takeover.groupId}\n`);
+      return revision.status === "accepted" ? 0 : 8;
+    }
     if (["active", "waiting_approval", "cancelling", "reconciling", "blocked"].includes(revision.status)) {
-      const observation = (await runtime.inspectDelegationOperations?.(options.sessionId))
-        ?.find((candidate) => candidate.delegationId === options.delegationId);
       if (observation === undefined) {
         throw new DelegationError("delegation_effect_reconciliation_required", "delegation has no exact recoverable operation journal");
       }
@@ -359,7 +492,15 @@ export async function executeDelegationsResume(options: DelegationsShowOptions, 
         `Delegation recovery: ${observation.reconcile.kind}\nOperation: ${observation.operationId}\n`);
       return observation.reconcile.kind === "terminal_backfilled" || observation.reconcile.kind === "cancelled_clean" ? 0 : 8;
     }
-    const result = await new DelegationControlPlane(taskWriterFactory(runtime)).enqueue({
+    if (revision.status === "queued") {
+      const retryOptions = delegationContinuationOptions(options);
+      if (revision.envelope === null) {
+        const prepared = await executeDelegationsPrepare(retryOptions, runtime, io);
+        if (prepared !== 0) return prepared;
+      }
+      return executeDelegationsStart(retryOptions, runtime, io);
+    }
+    const result = await new DelegationControlPlane(delegationWriterFactory(runtime)).enqueue({
       context: delegationMutationContext(runtime, options),
       delegationId: options.delegationId,
     });
@@ -573,9 +714,31 @@ export async function executeDelegationsPrepare(options: DelegationsShowOptions,
     const delegation = [...state.delegations.revisions].reverse().find((candidate) =>
       candidate.delegationId === options.delegationId && ["approved", "queued"].includes(candidate.status));
     if (delegation === undefined) throw new DelegationError("delegation_revision_conflict", "prepare requires an approved delegation");
+    if (delegation.envelopePreparationCount >= 2) {
+      throw new DelegationError(
+        "delegation_revision_conflict",
+        "automatic retry envelope is already prepared",
+      );
+    }
+    const previousEnvelope = delegation.envelope === null
+      ? null
+      : preparedChildEnvelopeSchema.parse(parseStrictJson((await (
+          await ArtifactStore.create({ sessionId: options.sessionId, workspace: runtime.cwd })
+        ).readVerified(delegation.envelope.envelope.artifactId)).bytes.toString("utf8")));
+    const canonicalRetryQualification = delegation.content.authorityRequest.taskProfile === "coding"
+      ? PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256
+      : PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256;
+    const canonicalRetry = previousEnvelope?.model.executionBackend === "canonical_fake" &&
+      previousEnvelope.model.qualificationSha256 === canonicalRetryQualification &&
+      isPhase20CanonicalFakeSelection({
+        modelId: previousEnvelope.model.modelId,
+        policyProfileId: previousEnvelope.model.policyProfileId,
+        providerId: previousEnvelope.model.providerId,
+        taskProfile: delegation.content.authorityRequest.taskProfile,
+      });
     const parent = state.runs.find((run) => run.runId === delegation.parentRunId);
     const policy = parent?.started.data.runtime_policy;
-    if (parent === undefined || policy === undefined || parent.started.data.model_qualification_sha256 === undefined) {
+    if (parent === undefined || (!canonicalRetry && (policy === undefined || parent.started.data.model_qualification_sha256 === undefined))) {
       throw new DelegationError("delegation_model_unqualified", "parent run has no exact policy/model qualification evidence");
     }
     const source = await (await RepositorySourceSnapshotter.create(runtime.cwd, { environment: runtime.env })).snapshot();
@@ -597,10 +760,18 @@ export async function executeDelegationsPrepare(options: DelegationsShowOptions,
     }
     const repository = await new NodeGitWorktreePort({ environment: runtime.env }).observe(runtime.cwd);
     const capabilities = await storeCapabilitySnapshot(runtime, options.sessionId, delegation.delegationId, delegation.content.authorityRequest.capabilityIds);
-    const model = delegation.content.model.strategy === "same_as_parent"
+    const model = canonicalRetry
+      ? {
+          executionBackend: "canonical_fake" as const,
+          policyProfileId: previousEnvelope.model.policyProfileId,
+          providerId: previousEnvelope.model.providerId,
+          modelId: previousEnvelope.model.modelId,
+          qualificationSha256: canonicalRetryQualification,
+        }
+      : delegation.content.model.strategy === "same_as_parent"
       ? {
           executionBackend: "provider" as const,
-          policyProfileId: policy.profile_id,
+          policyProfileId: policy!.profile_id,
           providerId: parent.started.data.provider,
           modelId: parent.started.data.model,
           qualificationSha256: parent.started.data.model_qualification_sha256,
@@ -613,7 +784,7 @@ export async function executeDelegationsPrepare(options: DelegationsShowOptions,
           qualificationSha256: (await (runtime.modelQualificationGate?.requireQualified({
             mode: delegation.content.authorityRequest.taskProfile === "coding" ? "build" : "plan",
             model: delegation.content.model.exactModelId,
-            policyHash: policy.profile_sha256,
+            policyHash: policy!.profile_sha256,
             policyProfileId: delegation.content.model.exactProfileId,
             provider: delegation.content.model.exactProviderId,
           }) ?? Promise.reject(new DelegationError("delegation_model_unqualified", "runtime has no exact model qualification gate")))).evidenceSha256,
@@ -646,7 +817,8 @@ export async function executeDelegationsPrepare(options: DelegationsShowOptions,
       parentDelegableToolIds: parentTools,
       catalog: TOOL_CATALOG,
     });
-    const result = await new DelegationPreparationRuntime(taskWriterFactory(runtime)).prepare({
+    const remainingBudget = delegationRemainingBudget(delegation);
+    const result = await new DelegationPreparationRuntime(delegationWriterFactory(runtime)).prepare({
       context: delegationMutationContext(runtime, options),
       delegationId: delegation.delegationId,
       authority,
@@ -676,16 +848,18 @@ export async function executeDelegationsPrepare(options: DelegationsShowOptions,
         qualificationId: `qualification:${model.qualificationSha256}`,
         qualificationSha256: model.qualificationSha256,
         contextCapacity: null,
-        networkEligibility: policy.profile_mode === "local_free" ? "local_only" : "remote_explicit",
+        networkEligibility: canonicalRetry
+          ? previousEnvelope.model.networkEligibility
+          : policy!.profile_mode === "local_free" ? "local_only" : "remote_explicit",
       },
       budget: {
         parentLedgerRevision: 0,
         graphLedgerRevision: delegation.binding.graphRevision,
-        parentRemaining: delegation.content.budget,
-        graphRemaining: delegation.binding.graphId === null ? null : delegation.content.budget,
+        parentRemaining: remainingBudget,
+        graphRemaining: delegation.binding.graphId === null ? null : remainingBudget,
       },
       environmentPolicy: buildChildEnvironmentPolicy({ requestedVariableNames: [] }),
-      policySha256: policy.profile_sha256,
+      policySha256: canonicalRetry ? previousEnvelope.preparation.policySha256 : policy!.profile_sha256,
       systemAndResponseReserveBytes: 16 * 1024,
     });
     writeResult(io, options.json, "delegations.prepare", {
@@ -707,6 +881,16 @@ interface PreparedStartCandidate {
   readonly delegation: DelegationRevision;
   readonly envelope: ReturnType<typeof preparedChildEnvelopeSchema.parse>;
   readonly managed: Awaited<ReturnType<typeof managedExecution>> | null;
+}
+
+class DelegationRetryMutationQueue {
+  #tail: Promise<void> = Promise.resolve();
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.#tail.then(operation, operation);
+    this.#tail = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
 }
 
 function addBudgets(values: readonly TaskGraphBudgetV1[]): TaskGraphBudgetV1 {
@@ -857,15 +1041,48 @@ export async function executeDelegationsStart(options: DelegationsShowOptions, r
     if (identity === undefined) {
       throw new DelegationError("delegation_handshake_failed", "runtime has no exact coordinator process identity");
     }
+    const coordinatorKind = identity.kind ?? "foreground";
+    const ownerBackgroundOperationId = identity.backgroundOperationId ?? null;
+    if (coordinatorKind === "phase19_background_worker" && ownerBackgroundOperationId === null) {
+      throw new DelegationError(
+        "delegation_handshake_failed",
+        "background delegation coordinator has no exact Phase 19 worker operation",
+      );
+    }
     const barrierId = runtime.randomUUID();
     const leaseNonceSha256 = sha256Canonical({ groupId, nonce: runtime.randomUUID(), sessionId: options.sessionId });
+    const durableGroupLease = await (runtime.acquireDelegationGroupLease?.({
+      graphBindingSha256: delegation.binding.graphId === null
+        ? null
+        : sha256Canonical({
+            graphId: delegation.binding.graphId,
+            graphRevision: delegation.binding.graphRevision,
+            graphSha256: delegation.binding.graphSha256,
+            nodeAttemptId: delegation.binding.nodeAttemptId,
+            nodeId: delegation.binding.nodeId,
+          }),
+      groupId,
+      nonceSha256: leaseNonceSha256,
+      ownerBackgroundOperationId,
+      ownerKind: coordinatorKind,
+      ownerPid: identity.pid,
+      ownerProcessStartIdentity: identity.processStartIdentity,
+      parentActorId: delegation.parentActorId,
+      parentRunId: delegation.parentRunId,
+      repositoryId: admission.admitted[0]!.candidate.conflict.repositoryId,
+      sessionId: options.sessionId,
+    }) ?? Promise.reject(new DelegationError(
+      "delegation_lease_busy",
+      "runtime has no durable repository delegation group lease",
+    )));
     const slotClaims = new Map<string, { readonly claimId: string; readonly admission: DelegationAdmissionV1 }>();
-    const writerFactory = taskWriterFactory(runtime);
+    const retryMutations = new DelegationRetryMutationQueue();
+    const writerFactory = delegationWriterFactory(runtime);
     const mutationContext = delegationMutationContext(runtime, options);
     let writer = await writerFactory(mutationContext);
     try {
       await writer.appendDelegationEvent("delegation.group.lease.acquired", {
-        coordinator_kind: "foreground",
+        coordinator_kind: coordinatorKind,
         coordinator_process_id: identity.pid,
         coordinator_process_start_identity: identity.processStartIdentity,
         group_id: groupId,
@@ -910,58 +1127,230 @@ export async function executeDelegationsStart(options: DelegationsShowOptions, r
     } finally {
       await writer.close();
     }
-    const settled = await scheduler.execute(admission.admitted, async (item) => {
-      const candidate = preparedById.get(item.candidate.revision.delegationId)!;
-      const launcher = runtime.createDelegationChildLauncher?.({
-        inputSurface: options.inputSurface ?? "cli",
-        io,
-        sessionId: options.sessionId,
-      });
-      if (launcher === undefined) {
-        throw new DelegationError("delegation_handshake_failed", "runtime has no sealed delegated child launcher");
+    const settled = await scheduler.execute(admission.admitted, async (initialAdmission) => {
+      let item = initialAdmission;
+      let candidate = preparedById.get(item.candidate.revision.delegationId)!;
+      while (true) {
+        const launcher = runtime.createDelegationChildLauncher?.({
+          approvalPrompt: runtime.createApprovalPrompt(io),
+          inputSurface: options.inputSurface ?? "cli",
+          io,
+          ...(runtime.observeSessionWriter === undefined
+            ? {}
+            : { observeSessionWriter: runtime.observeSessionWriter }),
+          sessionId: options.sessionId,
+        });
+        if (launcher === undefined) {
+          throw new DelegationError("delegation_handshake_failed", "runtime has no sealed delegated child launcher");
+        }
+        try {
+          return await launcher.launch({
+            delegation: candidate.delegation,
+            preparedEnvelope: candidate.envelope,
+            capsule: candidate.capsule,
+            reservation: item.reservation,
+            executionWorkspacePath: candidate.managed?.executionWorkspacePath ?? runtime.cwd,
+            ...(candidate.managed === null ? {} : { finalizeWorkspace: candidate.managed.finalizeWorkspace }),
+            schedulerLeaseNonceSha256: leaseNonceSha256,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (!(error instanceof DelegationChildLaunchFailure)) throw error;
+          const retry = await retryMutations.run(async () => {
+            const delegationId = item.candidate.revision.delegationId;
+            const resources = slotClaims.get(delegationId);
+            if (resources === undefined || resources.admission.reservation.reservationId !== item.reservation.reservationId) {
+              throw new DelegationError("delegation_lease_busy", "automatic retry lost its exact active admission");
+            }
+            ledger.settle({
+              expectedRevision: ledger.state.revision,
+              reservationId: item.reservation.reservationId,
+              usage: preEffectInfrastructureUsage(),
+              unresolvedEffect: false,
+            });
+            let retryWriter = await writerFactory(mutationContext);
+            try {
+              await retryWriter.appendDelegationEvent("delegation.conflict_claim.released", {
+                actor_id: item.conflictClaim.actorId,
+                claim_id: item.conflictClaim.claimId,
+                group_id: groupId,
+              });
+              await retryWriter.appendDelegationEvent("delegation.actor_slot.released", {
+                actor_id: item.candidate.childActorId,
+                claim_id: resources.claimId,
+                group_id: groupId,
+                release_reason: "reconciled",
+              });
+            } finally {
+              await retryWriter.close();
+            }
+            slotClaims.delete(delegationId);
+            if (!error.retryEligible) return null;
+
+            const internal = internalDelegationIO();
+            const retryOptions = delegationContinuationOptions({
+              ...options,
+              delegationId,
+            });
+            const preparedExit = await executeDelegationsPrepare(
+              retryOptions,
+              runtime,
+              internal.io,
+            );
+            if (preparedExit !== 0) {
+              throw new DelegationError(
+                "delegation_effect_reconciliation_required",
+                `automatic retry could not prepare a fresh child envelope (${internalDiagnosticIdentity(internal.stderr())})`,
+              );
+            }
+            const nextState = await queuedDelegationSnapshot(runtime, retryOptions);
+            const nextRevision = [...nextState.delegations.revisions].reverse().find((value) =>
+              value.delegationId === delegationId && value.status === "queued" && value.envelope !== null);
+            if (nextRevision === undefined) {
+              throw new DelegationError("delegation_binding_stale", "automatic retry preparation did not project a queued envelope");
+            }
+            const nextCandidate = await loadStartCandidate(
+              runtime,
+              io,
+              options.sessionId,
+              nextRevision,
+              currentSource.snapshot.sourceStateSha256,
+            );
+            const active = [...slotClaims.values()];
+            const nextAdmission = scheduler.admit({
+              activeActorSlots: active.map((value) => value.admission.actorSlot),
+              activeChildCount: active.length,
+              activeClaims: active.map((value) => value.admission.conflictClaim),
+              parentModelActive: false,
+              ready: [{
+                revision: nextCandidate.delegation,
+                childActorId: nextCandidate.envelope.actor.actorId,
+                childAttemptId: nextCandidate.envelope.actor.attemptId,
+                requestedBudget: nextCandidate.envelope.budgetReservationPlan.ceiling,
+                conflict: {
+                  access: nextCandidate.envelope.effectiveAuthority.taskProfile === "coding" ? "write" : "read",
+                  repositoryId: nextCandidate.capsule.repository.repositoryId,
+                  workspaceId: nextCandidate.envelope.workspace.mode === "managed_worktree"
+                    ? nextCandidate.envelope.workspace.logicalWorkspaceId
+                    : null,
+                  sourceLineageId: nextCandidate.envelope.workspace.lineageId,
+                  sourceSnapshotSha256: nextCandidate.envelope.workspace.sourceSnapshotSha256,
+                  pathPrefixes: nextCandidate.envelope.workspace.declaredPathPrefixes,
+                },
+              }],
+            }).admitted[0];
+            if (nextAdmission === undefined) {
+              throw new DelegationError("delegation_parallel_limit", "automatic retry could not reacquire its bounded actor slot");
+            }
+            const nextClaimId = runtime.randomUUID();
+            retryWriter = await writerFactory(mutationContext);
+            try {
+              await retryWriter.appendDelegationEvent("delegation.actor_slot.claimed", {
+                actor_id: nextAdmission.candidate.childActorId,
+                actor_kind: "child",
+                claim_id: nextClaimId,
+                group_id: groupId,
+                slot: nextAdmission.actorSlot,
+              });
+              await retryWriter.appendDelegationEvent("delegation.conflict_claim.granted", {
+                access: nextAdmission.conflictClaim.access,
+                actor_id: nextAdmission.conflictClaim.actorId,
+                claim_id: nextAdmission.conflictClaim.claimId,
+                group_id: groupId,
+                path_prefixes: [...nextAdmission.conflictClaim.canonicalPathPrefixes],
+                repository_id: nextAdmission.conflictClaim.repositoryId,
+                source_lineage_id: nextAdmission.conflictClaim.sourceLineageId,
+                source_snapshot_sha256: nextAdmission.conflictClaim.sourceSnapshotSha256,
+                workspace_id: nextAdmission.conflictClaim.workspaceId,
+              });
+            } finally {
+              await retryWriter.close();
+            }
+            slotClaims.set(delegationId, { admission: nextAdmission, claimId: nextClaimId });
+            return Object.freeze({ admission: nextAdmission, candidate: nextCandidate });
+          });
+          if (retry === null) throw error;
+          item = retry.admission;
+          candidate = retry.candidate;
+        }
       }
-      return launcher.launch({
-        delegation: candidate.delegation,
-        preparedEnvelope: candidate.envelope,
-        capsule: candidate.capsule,
-        reservation: item.reservation,
-        executionWorkspacePath: candidate.managed?.executionWorkspacePath ?? runtime.cwd,
-        ...(candidate.managed === null ? {} : { finalizeWorkspace: candidate.managed.finalizeWorkspace }),
-        schedulerLeaseNonceSha256: leaseNonceSha256,
-        signal: controller.signal,
-      });
     });
+    let releaseReason: "terminal" | "cancelled" | null = null;
     writer = await writerFactory(mutationContext);
     try {
       for (const [index, outcome] of settled.entries()) {
         if (outcome.status !== "fulfilled") continue;
         const item = admission.admitted[index]!;
-        const claims = slotClaims.get(item.candidate.revision.delegationId)!;
+        const delegationId = item.candidate.revision.delegationId;
+        const claims = slotClaims.get(delegationId);
+        if (claims === undefined) {
+          throw new DelegationError(
+            "delegation_lease_busy",
+            "terminal child lost its exact active admission claims",
+          );
+        }
+        const activeAdmission = claims.admission;
         await writer.appendDelegationEvent("delegation.conflict_claim.released", {
-          actor_id: item.conflictClaim.actorId,
-          claim_id: item.conflictClaim.claimId,
+          actor_id: activeAdmission.conflictClaim.actorId,
+          claim_id: activeAdmission.conflictClaim.claimId,
           group_id: groupId,
         });
         await writer.appendDelegationEvent("delegation.actor_slot.released", {
-          actor_id: item.candidate.childActorId,
+          actor_id: activeAdmission.candidate.childActorId,
           claim_id: claims.claimId,
           group_id: groupId,
           release_reason: outcome.value.receipt.status === "cancelled" ? "cancelled" : "terminal",
         });
+        slotClaims.delete(delegationId);
       }
-      if (settled.every((outcome) => outcome.status === "fulfilled")) {
-        const results = settled.map((outcome) =>
-          (outcome as PromiseFulfilledResult<DelegationChildLaunchResultV1>).value);
+      const projected = reconstructMultiRunSession(writer.events);
+      const required = admission.admitted.map((item) =>
+        [...projected.delegations.revisions].reverse().find((candidate) =>
+          candidate.delegationId === item.candidate.revision.delegationId &&
+          candidate.parentRunId === delegation.parentRunId));
+      const groupHasActiveAdmission = projected.delegations.activeActorSlots.some((claim) =>
+        claim.groupId === groupId) || projected.delegations.activeConflictClaims.some((claim) =>
+        claim.groupId === groupId);
+      const allKnown = required.every((candidate) =>
+        candidate !== undefined && ["accepted", "failed", "blocked", "cancelled"].includes(candidate.status));
+      if (!groupHasActiveAdmission && allKnown) {
+        const fulfilled = settled.flatMap((outcome) =>
+          outcome.status === "fulfilled" ? [outcome.value] : []);
         await writer.appendDelegationEvent("delegation.parent.barrier.released", {
           barrier_id: barrierId,
           parent_actor_id: delegation.parentActorId,
           parent_run_id: delegation.parentRunId,
-          receipt_sha256s: results.map((result) => result.receipt.receiptSha256),
-          status: results.every((result) => result.receipt.status === "succeeded") ? "completed" : "blocked",
+          receipt_sha256s: required.flatMap((candidate) =>
+            candidate?.receipt?.acceptedEventId === null || candidate?.receipt === null || candidate?.receipt === undefined
+              ? []
+              : [candidate.receipt.sha256]),
+          status: fulfilled.length === settled.length && fulfilled.every((result) =>
+            result.receipt.status === "succeeded")
+            ? "completed"
+            : fulfilled.length === settled.length && fulfilled.every((result) =>
+              result.receipt.status === "cancelled")
+              ? "cancelled"
+              : "blocked",
         });
+        releaseReason = fulfilled.length === settled.length && fulfilled.every((result) =>
+          result.receipt.status === "cancelled")
+          ? "cancelled"
+          : "terminal";
       }
     } finally {
       await writer.close();
+    }
+    if (releaseReason !== null) {
+      await (runtime.releaseDelegationGroupLease?.({
+        effectsReconciled: true,
+        expectedLeaseSha256: durableGroupLease.leaseSha256,
+        groupId,
+        reason: releaseReason,
+        sessionId: options.sessionId,
+      }) ?? Promise.reject(new DelegationError(
+        "delegation_lease_busy",
+        "runtime cannot release the terminal durable delegation group lease",
+      )));
     }
     const results = settled.map((outcome, index) => outcome.status === "fulfilled"
       ? {
@@ -986,6 +1375,10 @@ export async function executeDelegationsStart(options: DelegationsShowOptions, r
       ...admission.deferred.map((item) => `${item.delegationId} deferred=${item.reason}`),
       "",
     ].join("\n"));
+    if (controller.signal.aborted) {
+      io.stderr.write("delegation_cancelled: delegated child cancellation reached a reconciled terminal\n");
+      return 130;
+    }
     return settled.every((outcome) =>
       outcome.status === "fulfilled" && outcome.value.receipt.status === "succeeded") ? 0 : 8;
   } catch (error) {

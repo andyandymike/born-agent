@@ -1,11 +1,26 @@
 import { createNodeRuntime } from "../../src/cli/node-runtime.js";
 import { runCli } from "../../src/cli/run-cli.js";
 import type { CliRuntime } from "../../src/cli/types.js";
+import { storeDelegationArtifactExact } from "../../src/delegation/delegation-control-plane.js";
+import {
+  canonicalDelegationIdentity,
+  delegationAuthorityRequestPreviewIdentity,
+} from "../../src/delegation/delegation-identity.js";
+import {
+  delegationRevisionContentSchema,
+  normalizeDelegationRevision,
+} from "../../src/delegation/delegation-schema.js";
+import {
+  createCanonicalPhase20CodingFixture,
+  createCanonicalPhase20Fixture,
+} from "../../src/delegation/runtime/canonical-phase20-fixture.js";
 import { BundledFakeModelQualificationGate } from "../../src/model/model-qualification-gate.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
+import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
 import { createPiTuiRenderer } from "../../src/tui/pi-tui-renderer.js";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +39,10 @@ if (workspaceArgument === undefined) {
 }
 const workspace: string = workspaceArgument;
 const capabilityLifecycle = process.argv[3] === "capability";
+const delegationCodingCancelLifecycle = process.argv[3] === "delegation-coding-cancel";
+const delegationCodingLifecycle = process.argv[3] === "delegation-coding";
+const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle;
+const delegationLifecycle = process.argv[3] === "delegation";
 const graphLifecycle = process.argv[3] === "graph";
 const hookApprovalLifecycle = process.argv[3] === "hook-approval";
 const execFileAsync = promisify(execFile);
@@ -78,6 +97,14 @@ let backendIndex = 0;
 const node = createNodeRuntime({
   approvalInput: { interactive: false, readLine: async () => null },
   capabilityUserStateRoot: join(workspace, "user-state", "capabilities"),
+  ...(delegationLifecycle || delegationCodingAnyLifecycle
+    ? {
+        cliEntryPath: fileURLToPath(new URL("../../dist/cli.js", import.meta.url)),
+        delegationUserStateRoot: join(workspace, "user-state", "delegations"),
+        workerUserStateRoot: join(workspace, "user-state", "workers"),
+        worktreeUserStateRoot: join(workspace, "w"),
+      }
+    : {}),
   cwd: workspace,
   env: process.env,
   execPath: process.execPath,
@@ -275,7 +302,214 @@ async function seedGraph(): Promise<void> {
   await run(["graph", "replace", SESSION_ID, "--file", "pty-graph.json"]);
 }
 
+const delegationSessionMarker = join(workspace, "user-state", "phase20-pty-session.txt");
+
+async function addProposedDelegation(sessionId: string): Promise<void> {
+  const session = await new SessionCatalog(workspace).read(sessionId);
+  const template = session.delegations.revisions[0];
+  if (template === undefined) throw new Error("Phase 20 PTY fixture has no template delegation");
+  const delegationId = randomUUID();
+  const content = normalizeDelegationRevision({
+    ...template.content,
+    binding: { ...template.content.binding },
+    delegationId,
+    objective: "Reject this exact third delegation from the real TUI.",
+    sequence: 3,
+    title: "Canonical PTY rejection child",
+  });
+  const identity = canonicalDelegationIdentity(content);
+  const artifact = await storeDelegationArtifactExact(
+    workspace,
+    sessionId,
+    delegationId,
+    identity.bytes,
+    identity.delegationSha256,
+  );
+  const writer = await V2SessionWriter.openExisting(workspace, sessionId);
+  try {
+    await writer.appendDelegationEvent("delegation.revision.proposed", {
+      artifact,
+      authority_preview_sha256: delegationAuthorityRequestPreviewIdentity(content),
+      binding: content.binding,
+      content: delegationRevisionContentSchema.parse(content),
+      delegation_id: delegationId,
+      delegation_revision: 1,
+      delegation_sha256: identity.delegationSha256,
+      origin: { input_surface: "tui", kind: "user" },
+      parent_actor_id: content.binding.parentActorId,
+      parent_run_id: content.binding.parentRunId,
+    });
+  } finally {
+    await writer.close();
+  }
+}
+
+async function seedDelegations(): Promise<string> {
+  try {
+    return (await readFile(delegationSessionMarker, "utf8")).trim();
+  } catch {
+    await mkdir(join(workspace, "src"), { recursive: true });
+    await mkdir(join(workspace, "user-state"), { recursive: true });
+    await writeFile(join(workspace, ".gitignore"), ".bornagent/\nuser-state/\n", "utf8");
+    await writeFile(join(workspace, "src", "fact.txt"), "Phase 20 real PTY fixture\n", "utf8");
+    await execFileAsync("git", ["init", "--initial-branch=main"], { cwd: workspace });
+    await execFileAsync("git", ["config", "core.autocrlf", "false"], { cwd: workspace });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], { cwd: workspace });
+    await execFileAsync("git", ["config", "user.name", "Phase 20 PTY Fixture"], { cwd: workspace });
+    await execFileAsync("git", ["config", "user.email", "phase20-pty@bornagent.local"], { cwd: workspace });
+    await execFileAsync("git", ["add", "--all"], { cwd: workspace });
+    await execFileAsync("git", ["commit", "--no-verify", "-m", "Phase 20 PTY baseline"], { cwd: workspace });
+    const fixture = await createCanonicalPhase20Fixture({
+      count: 2,
+      environment: process.env,
+      platform: process.platform,
+      workspace,
+    });
+    await addProposedDelegation(fixture.sessionId);
+    await writeFile(delegationSessionMarker, `${fixture.sessionId}\n`, "utf8");
+    return fixture.sessionId;
+  }
+}
+
+function phase20CodingBudget() {
+  return {
+    maxArtifactBytes: 512 * 1024,
+    maxAttempts: 2,
+    maxChangedBytes: 32 * 1024,
+    maxChangedFiles: 4,
+    maxCommandExecutions: 2,
+    maxCommandOutputBytes: 256 * 1024,
+    maxDurationMs: 240_000,
+    maxModelSteps: 8,
+    maxReportedTokens: 4096,
+  };
+}
+
+async function seedCodingDelegation(): Promise<string> {
+  await mkdir(join(workspace, "fixtures"), { recursive: true });
+  await mkdir(join(workspace, "user-state"), { recursive: true });
+  await cp(
+    fileURLToPath(new URL("../../fixtures/phase-07-fix-and-verify", import.meta.url)),
+    join(workspace, "fixtures", "phase-07-fix-and-verify"),
+    { recursive: true },
+  );
+  await writeFile(join(workspace, ".gitignore"), ".bornagent/\nuser-state/\nw/\nplan.json\ngraph.json\n", "utf8");
+  await writeFile(join(workspace, "AGENTS.md"), "# Phase 20 coding PTY fixture\n", "utf8");
+  await execFileAsync("git", ["init", "--initial-branch=main"], { cwd: workspace });
+  await execFileAsync("git", ["config", "core.autocrlf", "false"], { cwd: workspace });
+  await execFileAsync("git", ["config", "commit.gpgsign", "false"], { cwd: workspace });
+  await execFileAsync("git", ["config", "user.name", "Phase 20 Coding PTY"], { cwd: workspace });
+  await execFileAsync("git", ["config", "user.email", "phase20-coding-pty@bornagent.local"], { cwd: workspace });
+  await execFileAsync("git", ["add", "--all"], { cwd: workspace });
+  await execFileAsync("git", ["commit", "--no-verify", "-m", "Phase 20 coding PTY baseline"], { cwd: workspace });
+  await writeLegacySession(workspace);
+  const run = async (argv: readonly string[]): Promise<void> => {
+    const io = createMemoryIO();
+    const exitCode = await runCli(argv, io.io, runtime);
+    if (exitCode !== 0) throw new Error(`Coding delegation PTY seed failed (${String(exitCode)}): ${io.readStderr()}`);
+  };
+  await run(["goal", "set", SESSION_ID, "--text", "Approve and verify one isolated child patch from the TUI"]);
+  const goal = (await new SessionCatalog(workspace).read(SESSION_ID)).taskState.goals[0]!;
+  await writeFile(join(workspace, "plan.json"), JSON.stringify({
+    items: [{
+      acceptance: "The child patch and verification each receive an actor-bound approval.",
+      id: "coding-child",
+      required: true,
+      title: "Run coding child",
+    }],
+    schema_version: 1,
+    title: "Phase 20 coding PTY",
+  }), "utf8");
+  await run(["plan", "replace", SESSION_ID, "--goal-id", goal.content.goalId, "--goal-revision", "1", "--file", "plan.json"]);
+  const plan = (await new SessionCatalog(workspace).read(SESSION_ID)).taskState.pendingDraft!;
+  await run([
+    "plan", "approve", SESSION_ID,
+    "--goal-id", goal.content.goalId,
+    "--goal-revision", "1",
+    "--plan-id", plan.planId,
+    "--revision", "1",
+    "--sha256", plan.planSha256,
+  ]);
+  await writeFile(join(workspace, "graph.json"), JSON.stringify({
+    binding: {
+      goalId: goal.content.goalId,
+      goalRevision: 1,
+      planId: plan.planId,
+      planRevision: 1,
+      planSha256: plan.planSha256,
+      sessionId: SESSION_ID,
+    },
+    graphBudget: phase20CodingBudget(),
+    graphId: "98000000-0000-4000-8000-000000000020",
+    nodes: [{
+      agent: { mode: "build", taskProfile: "coding" },
+      budget: phase20CodingBudget(),
+      dependsOn: [],
+      kind: "agent",
+      nodeId: "build",
+      objective: "Coordinate one isolated child patch.",
+      planItemIds: ["coding-child"],
+      requiredCapabilities: [],
+      retry: { automaticOn: [], maxAttempts: 1 },
+      sequence: 1,
+      title: "Build isolated fix",
+      workspace: { declaredPathPrefixes: ["fixtures/phase-07-fix-and-verify"], mode: "managed_worktree" },
+    }],
+    schemaVersion: 1,
+    title: "Phase 20 coding PTY Graph",
+  }), "utf8");
+  await run(["graph", "replace", SESSION_ID, "--file", "graph.json"]);
+  const graph = (await new SessionCatalog(workspace).read(SESSION_ID)).taskGraph.currentDraft!;
+  await run(["graph", "approve", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256]);
+  const allocationRuntime = createNodeRuntime({
+    approvalInput: { interactive: true, readLine: async () => "y" },
+    capabilityUserStateRoot: join(workspace, "user-state", "capabilities"),
+    cliEntryPath: fileURLToPath(new URL("../../dist/cli.js", import.meta.url)),
+    cwd: workspace,
+    delegationUserStateRoot: join(workspace, "user-state", "delegations"),
+    env: process.env,
+    execPath: process.execPath,
+    killProcess: (identity, signal) => process.kill(identity, signal),
+    nodeVersion: process.versions.node,
+    onCancel: () => () => undefined,
+    platform: process.platform,
+    version: "0.0.0-phase20-coding-pty-seed",
+    workerUserStateRoot: join(workspace, "user-state", "workers"),
+    worktreeUserStateRoot: join(workspace, "w"),
+  });
+  const allocationIo = createMemoryIO();
+  const allocationExit = await runCli([
+    "graph", "worktree-allocate", SESSION_ID,
+    "--revision", "1",
+    "--sha256", graph.graphSha256,
+    "--source-node", "build",
+  ], allocationIo.io, allocationRuntime);
+  if (allocationExit !== 0) {
+    throw new Error(`Coding delegation PTY worktree allocation failed (${String(allocationExit)}): ${allocationIo.readStderr()}`);
+  }
+  const managed = (await new SessionCatalog(workspace).read(SESSION_ID)).worktrees.workspaces[0]!;
+  await createCanonicalPhase20CodingFixture({
+    graphId: graph.graphId,
+    graphRevision: graph.revision,
+    graphSha256: graph.graphSha256,
+    goalId: goal.content.goalId,
+    goalObjective: goal.content.objective,
+    goalRevision: goal.content.revision,
+    managedWorkspaceBaselineSha256: managed.baseline.manifestSha256,
+    managedWorkspaceId: managed.identity.workspaceId,
+    nodeId: "build",
+    planId: plan.planId,
+    planRevision: 1,
+    planSha256: plan.planSha256,
+    sessionId: SESSION_ID,
+    workspace,
+  });
+  return SESSION_ID;
+}
+
 if (graphLifecycle) await seedGraph();
+const delegationSessionId = delegationLifecycle ? await seedDelegations() : SESSION_ID;
+const codingDelegationSessionId = delegationCodingAnyLifecycle ? await seedCodingDelegation() : SESSION_ID;
 if (hookApprovalLifecycle) {
   await seedHookApprovalPlugin();
 }
@@ -291,7 +525,28 @@ if (capabilityLifecycle) {
 }
 
 const exitCode = await runCli(
-  graphLifecycle
+  delegationCodingAnyLifecycle
+    ? [
+        "tui",
+        "--inspect-session",
+        codingDelegationSessionId,
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+      ]
+    : delegationLifecycle
+    ? [
+        "tui",
+        "--inspect-session",
+        delegationSessionId,
+        "--allow-degraded-resume",
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3:1.7b",
+      ]
+    : graphLifecycle
     ? [
         "tui",
         "--resume",
@@ -340,5 +595,30 @@ const exitCode = await runCli(
   { stderr: process.stderr, stdout: process.stdout },
   runtime,
 );
+if (delegationLifecycle) {
+  const session = await new SessionCatalog(workspace).read(delegationSessionId);
+  process.stdout.write(`\nPTY_DELEGATION_SNAPSHOT=${JSON.stringify({
+    accepted: session.delegations.revisions.filter((revision) => revision.status === "accepted").length,
+    childStartCount: session.events.filter((event) => event.scope === "session" && event.type === "delegation.child.started").length,
+    rejected: session.delegations.revisions.filter((revision) => revision.status === "rejected").length,
+    receipts: session.delegations.revisions.filter((revision) => revision.receipt?.status === "succeeded").length,
+  })}\n`);
+}
+if (delegationCodingAnyLifecycle) {
+  const session = await new SessionCatalog(workspace).read(codingDelegationSessionId);
+  const codingSnapshot = {
+    accepted: session.delegations.revisions.filter((revision) => revision.status === "accepted").length,
+    activeActorSlots: session.delegations.activeActorSlots.length,
+    activeConflictClaims: session.delegations.activeConflictClaims.length,
+    approvedEffects: session.events.filter((event) => event.scope === "run" && event.type === "approval.decided" && event.data.decision === "approved").length,
+    cancelRequests: session.events.filter((event) => event.scope === "session" && event.type === "delegation.cancel.requested").length,
+    cancelled: session.delegations.revisions.filter((revision) => revision.status === "cancelled").length,
+    childApprovalRequests: session.events.filter((event) => event.scope === "session" && event.type === "delegation.child.approval_waiting").length,
+    childStartCount: session.events.filter((event) => event.scope === "session" && event.type === "delegation.child.started").length,
+  };
+  process.stdout.write(delegationCodingCancelLifecycle
+    ? `\nPTY_CODING_CANCEL_SNAPSHOT=${JSON.stringify(codingSnapshot)}\n`
+    : `\nPTY_CODING_DELEGATION_SNAPSHOT=${JSON.stringify(codingSnapshot)}\n`);
+}
 process.stdout.write(`\nPTY_APP_EXIT=${String(exitCode)}\n`);
 process.exitCode = exitCode;

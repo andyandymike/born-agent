@@ -103,6 +103,12 @@ export interface BackgroundWorkerRuntimeResultV1 {
   readonly workerId: string | null;
 }
 
+export interface BackgroundDelegationCoordinationResultV1 {
+  readonly handledGroups: number;
+  readonly requestedActionRef: string | null;
+  readonly status: "ready" | "waiting_for_foreground_approval";
+}
+
 export class BackgroundWorkerRuntime {
   constructor(private readonly options: {
     readonly createExecutor: (input: {
@@ -112,6 +118,15 @@ export class BackgroundWorkerRuntime {
       readonly sessionId: string;
       readonly writerFactory: TaskMutationWriterFactory;
     }) => TaskAttemptExecutor;
+    readonly coordinateDelegations?: (input: {
+      readonly backgroundOperationId: string;
+      readonly graphId: string;
+      readonly graphRevision: number;
+      readonly graphSha256: string;
+      readonly repositoryId: string;
+      readonly sessionId: string;
+      readonly signal: AbortSignal;
+    }) => Promise<BackgroundDelegationCoordinationResultV1>;
     readonly currentCliEntryPath?: string;
     readonly environment: Readonly<Record<string, string | undefined>>;
     readonly git?: GitWorktreePort;
@@ -380,7 +395,50 @@ export class BackgroundWorkerRuntime {
       }, lifetimeMs);
       let result: TaskSchedulerRunResultV1;
       try {
-        result = await scheduler.run(controller.signal);
+        const delegationCoordination = await this.options.coordinateDelegations?.({
+          backgroundOperationId: launch.operationId,
+          graphId: launch.graphId,
+          graphRevision: launch.graphRevision,
+          graphSha256: launch.graphSha256,
+          repositoryId: launch.repositoryId,
+          sessionId: launch.sessionId,
+          signal: controller.signal,
+        });
+        if (delegationCoordination?.status === "waiting_for_foreground_approval") {
+          const waitingWriter = await this.writerFactory(context);
+          try {
+            const waiting = reconstructMultiRunSession(waitingWriter.events).taskExecution;
+            if (
+              waiting === null || waiting.activeAttempt !== null ||
+              !["queued", "running"].includes(waiting.status) ||
+              waiting.graph.graphSha256 !== launch.graphSha256
+            ) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "delegation approval wait no longer targets the exact queued Graph",
+              );
+            }
+            await waitingWriter.appendTaskGraphEvent("task_graph.waiting_for_user", {
+              attempt_id: null,
+              graph_id: launch.graphId,
+              graph_revision: launch.graphRevision,
+              graph_sha256: launch.graphSha256,
+              reason: "approval_required",
+              ...(delegationCoordination.requestedActionRef === null
+                ? {}
+                : { requested_action_ref: delegationCoordination.requestedActionRef }),
+            });
+            const execution = reconstructMultiRunSession(waitingWriter.events).taskExecution;
+            if (execution === null || execution.status !== "waiting_for_user") {
+              throw new BackgroundError("worker_reconciliation_required", "delegation approval wait did not become durable");
+            }
+            result = Object.freeze({ execution, startedAttempts: 0, stopReason: "waiting_for_user" });
+          } finally {
+            await waitingWriter.close();
+          }
+        } else {
+          result = await scheduler.run(controller.signal);
+        }
         await controlPoll;
         await flushControl();
         await heartbeatChain;

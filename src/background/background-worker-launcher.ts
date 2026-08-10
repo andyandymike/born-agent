@@ -76,7 +76,11 @@ const nodeChildFactory: BackgroundChildFactory = {
     // returns the matching IPC receipt.
     return spawn(input.executable, [...input.argv], {
       cwd: input.cwd,
-      detached: false,
+      // The launcher CLI is intentionally short-lived. OS-level detachment is
+      // only enabled after the protocol still requires the exact durable
+      // handoff/started event and matching IPC receipt below; it is not itself
+      // treated as background-start success.
+      detached: true,
       env: input.env,
       shell: false,
       stdio: ["ignore", "ignore", "ignore", "ipc"],

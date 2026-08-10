@@ -59,7 +59,7 @@ export function renderDelegationPanel(
         `blockers=${selected.blockerCodes.join(",") || "none"}`,
       ]
     : [];
-  const approval = projection.waitingApprovals.at(0);
+  const approval = projection.waitingApprovals.at(-1);
   const modal = approval === undefined
     ? []
     : [

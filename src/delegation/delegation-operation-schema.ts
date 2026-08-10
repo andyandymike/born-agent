@@ -33,6 +33,7 @@ export const delegationChildOperationContentSchema = z.object({
     "requested",
     "spawned",
     "handshaken",
+    "pre_effect_terminal",
     "running",
     "terminal_observed",
     "reconciled",
@@ -42,6 +43,17 @@ export const delegationChildOperationContentSchema = z.object({
     pid: z.number().int().positive(),
     processStartIdentity: z.string().min(1).max(512),
   }).strict().nullable(),
+  processCleanup: z.object({
+    completedAt: timestamp,
+    detail: z.enum(["clean", "force_failed", "graceful_failed", "identity_missing"]),
+    forced: z.boolean(),
+    pid: z.number().int().positive(),
+    verified: z.boolean(),
+  }).strict().nullable().optional(),
+  failure: z.object({
+    code: z.string().regex(/^[a-z0-9_]{1,128}$/u),
+    phase: z.enum(["before_spawn", "before_handshake", "before_start_barrier", "after_start_barrier"]),
+  }).strict().nullable().optional(),
   boundedResultRef: z.string().min(1).max(1024).nullable(),
   boundedResultSha256: sha256.nullable(),
 }).strict().superRefine((value, context) => {
@@ -51,6 +63,18 @@ export const delegationChildOperationContentSchema = z.object({
   }
   if (value.state === "requested" && value.process !== null) {
     context.addIssue({ code: "custom", message: "requested operation cannot already own a process" });
+  }
+  if (value.state === "pre_effect_terminal") {
+    if (value.failure === undefined || value.failure === null || value.failure.phase === "after_start_barrier") {
+      context.addIssue({ code: "custom", message: "pre-effect terminal requires a bounded pre-barrier failure" });
+    }
+    if (
+      value.process !== null &&
+      (value.processCleanup === undefined || value.processCleanup === null ||
+        !value.processCleanup.verified || value.processCleanup.pid !== value.process.pid)
+    ) {
+      context.addIssue({ code: "custom", message: "pre-effect process must have exact verified tree cleanup" });
+    }
   }
 });
 

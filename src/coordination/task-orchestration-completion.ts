@@ -12,6 +12,7 @@ import {
   originVerificationReceiptMatchesCompletedEvent,
   originVerificationReceiptSchema,
 } from "../worktrees/origin-verification-receipt.js";
+import { readVerifiedChildReceipt } from "../delegation/receipts/child-receipt-verifier.js";
 
 export interface TaskOrchestrationCompositionResultV1 {
   readonly appendedEventTypes: readonly string[];
@@ -61,7 +62,7 @@ export class TaskOrchestrationCompletionComposer {
       throw new TaskGraphError("task_graph_binding_stale", "Graph integration no longer exact-matches the active Goal and approved Plan");
     }
 
-    const accepted = [...session.runs].reverse().flatMap((run) => {
+    let accepted = [...session.runs].reverse().flatMap((run) => {
       const binding = runBinding(run.started.data);
       const nodeBinding = run.started.data.task_node_binding;
       if (
@@ -75,9 +76,60 @@ export class TaskOrchestrationCompletionComposer {
       const evaluation = [...run.events].reverse().find((event) => event.type === "completion.evaluated" && event.data.effect === "accept");
       return evaluation?.type === "completion.evaluated" ? [{ evaluation, run }] : [];
     })[0];
+    if (accepted === undefined) {
+      const delegated = session.delegations.revisions.filter((revision) =>
+        revision.status === "accepted" && revision.receipt?.acceptedEventId !== null &&
+        revision.binding.goalId === graph.binding.goalId && revision.binding.goalRevision === graph.binding.goalRevision &&
+        revision.binding.planId === graph.binding.planId && revision.binding.planRevision === graph.binding.planRevision &&
+        revision.binding.planSha256 === graph.binding.planSha256 &&
+        revision.binding.graphId === graph.graphId && revision.binding.graphRevision === graph.revision &&
+        revision.binding.graphSha256 === graph.graphSha256 && revision.binding.nodeId !== null &&
+        execution.nodes.some((node) => node.nodeId === revision.binding.nodeId && node.status === "succeeded") &&
+        revision.receipt?.claimStatuses.every((claim) => claim.status === "verified"));
+      for (const revision of delegated) {
+        const receipt = await readVerifiedChildReceipt({
+          revision,
+          sessionId: session.sessionId,
+          workspace: this.options.context.workspace,
+        });
+        if (receipt.status !== "succeeded" || receipt.unresolvedEffects.length > 0) continue;
+        const childTerminal = session.events.find((event) =>
+          event.eventId === receipt.terminalEventId && event.scope === "session" && event.type === "delegation.child.terminal");
+        if (
+          childTerminal?.scope !== "session" || childTerminal.type !== "delegation.child.terminal" ||
+          childTerminal.data.child_actor_id !== receipt.childActorId ||
+          childTerminal.data.child_attempt_id !== receipt.childAttemptId ||
+          childTerminal.data.delegation_id !== revision.delegationId ||
+          childTerminal.data.delegation_revision !== revision.delegationRevision ||
+          childTerminal.data.delegation_sha256 !== revision.delegationSha256 ||
+          childTerminal.data.parent_actor_id !== revision.parentActorId ||
+          childTerminal.data.parent_run_id !== revision.parentRunId ||
+          childTerminal.data.terminal !== "succeeded" || childTerminal.data.unresolved_effect_ids.length > 0
+        ) continue;
+        const childRun = session.runs.find((run) =>
+          run.runId === childTerminal.data.child_run_id && run.terminal?.type === "run.completed");
+        const childBinding = childRun?.started.data.delegated_child_binding;
+        if (
+          childRun === undefined || childBinding === undefined ||
+          childBinding.actor_id !== receipt.childActorId ||
+          childBinding.child_attempt_id !== receipt.childAttemptId ||
+          childBinding.delegation_id !== revision.delegationId ||
+          childBinding.delegation_revision !== revision.delegationRevision ||
+          childBinding.delegation_sha256 !== revision.delegationSha256 ||
+          childBinding.parent_actor_id !== revision.parentActorId ||
+          childBinding.parent_run_id !== revision.parentRunId
+        ) continue;
+        const evaluation = [...childRun.events].reverse().find((event) =>
+          event.type === "completion.evaluated" && event.data.effect === "accept");
+        if (evaluation?.type === "completion.evaluated") {
+          accepted = { evaluation, run: childRun };
+          break;
+        }
+      }
+    }
     // A model-free or partial lifecycle may still legitimately promote bytes;
-    // it simply cannot compose Goal/Plan completion without an accepted node
-    // completion identity.
+    // it simply cannot compose Goal/Plan completion without an accepted parent
+    // node or exact accepted delegated-child completion identity.
     if (accepted === undefined) return Object.freeze({ appendedEventTypes: Object.freeze([]), status: "none" });
 
     const changedWorkspaces = session.worktrees.workspaces.filter((workspace) => (workspace.lastSnapshot?.changedFiles ?? 0) > 0);

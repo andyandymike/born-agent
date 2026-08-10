@@ -37,10 +37,15 @@ export function createProposeDelegationTool(input: {
     description: "Propose one bounded child-agent delegation draft for explicit user review. This never approves, queues, launches, or grants child effect authority.",
     inputSchema: proposeDelegationInputSchema,
     name: "propose_delegation",
-    async execute(value): Promise<ToolRawResult> {
+    async execute(value, context): Promise<ToolRawResult> {
       try {
         const session = reconstructMultiRunSession(input.writer.events);
-        const blocker = taskMutationBlocker(session);
+        // The registry persists this exact read-before-effect proposal call
+        // before invoking the tool. Ignore only that call while retaining every
+        // earlier unresolved command, patch, MCP, Hook, or distinct tool call.
+        const blocker = taskMutationBlocker(session, {
+          ignorePendingToolCall: { callId: context.callId, runId: input.parentRunId },
+        });
         if (blocker !== null) {
           throw new DelegationError("delegation_effect_reconciliation_required", "delegation proposal is blocked until current effects are reconciled");
         }

@@ -8,6 +8,10 @@ import type { DelegationAuthorityDecisionV1 } from "./delegable-authority.js";
 import { DelegationError } from "./delegation-errors.js";
 import type { DelegationRevisionProjectionV1 } from "./delegation-projector.js";
 import {
+  delegationRemainingBudget,
+  isAutomaticPreEffectRetryEligible,
+} from "./delegation-retry.js";
+import {
   ChildEnvelopeBuilder,
   type BuildPreparedChildEnvelopeInputV1,
 } from "./context/child-envelope-builder.js";
@@ -111,11 +115,29 @@ export class DelegationPreparationRuntime {
       const session = reconstructMultiRunSession(writer.events);
       const delegation = session.delegations.revisions.find((candidate) =>
         candidate.delegationId === input.delegationId && ["approved", "queued"].includes(candidate.status));
-      if (delegation === undefined || delegation.envelope !== null) {
-        throw new DelegationError("delegation_revision_conflict", "delegation is not an unprepared exact approved revision");
+      if (delegation === undefined) {
+        throw new DelegationError("delegation_revision_conflict", "delegation is not an exact approved revision");
+      }
+      const retryPreparation = delegation.envelope !== null;
+      if (
+        retryPreparation &&
+        (delegation.envelopePreparationCount !== 1 ||
+          !isAutomaticPreEffectRetryEligible(delegation))
+      ) {
+        throw new DelegationError("delegation_revision_conflict", "delegation envelope cannot be replaced outside a settled automatic retry");
+      }
+      if (
+        sha256Canonical(input.budget.parentRemaining) !==
+        sha256Canonical(delegationRemainingBudget(delegation))
+      ) {
+        throw new DelegationError("delegation_budget_exhausted", "delegation preparation does not bind the current remaining budget");
       }
       const actorId = input.context.randomUuid();
       const attemptId = input.context.randomUuid();
+      const attemptNumber = (delegation.attempts.length + 1) as 1 | 2;
+      if (attemptNumber > 2) {
+        throw new DelegationError("delegation_budget_exhausted", "delegation attempt hard ceiling is two");
+      }
       const capsule = await new ContextCapsuleBuilder().build({
         approvedDelegation: delegation,
         childActorId: actorId,
@@ -140,7 +162,7 @@ export class DelegationPreparationRuntime {
       });
       const envelope = new ChildEnvelopeBuilder().build({
         approvedDelegation: delegation,
-        actor: { actorId, attemptId, attemptNumber: 1 },
+        actor: { actorId, attemptId, attemptNumber },
         capsule,
         capsuleRef: capsuleArtifact.object_ref,
         authority: input.authority,

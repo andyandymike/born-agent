@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createCapabilitySnapshot } from "../../capabilities/capability-snapshot.js";
 import { canonicalJson, sha256Canonical } from "../../completion/canonical-json.js";
 import { EventPublisher } from "../../events/event-publisher.js";
+import { canonicalPlanIdentity } from "../../plans/plan-identity.js";
 import { RepositorySourceSnapshotter } from "../../repository-intelligence/source-snapshotter.js";
 import { reconstructMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
@@ -18,8 +19,10 @@ import {
   delegationWorkspaceLineageIdentity,
 } from "../delegation-identity.js";
 import {
+  delegationRevisionDraftSchema,
   delegationRevisionContentSchema,
   normalizeDelegationRevision,
+  type DelegationRevisionDraftV1,
 } from "../delegation-schema.js";
 import { ChildEnvelopeBuilder } from "../context/child-envelope-builder.js";
 import { buildChildEnvironmentPolicy } from "../context/child-environment-policy.js";
@@ -30,16 +33,17 @@ import {
   PHASE20_CANONICAL_FAKE_MODEL_ID,
   PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID,
   PHASE20_CANONICAL_FAKE_PROVIDER_ID,
+  PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256,
   PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
 } from "./canonical-fake-child-backend.js";
 
 const FIXTURE_ID = "m11-controlled-subagents-v1" as const;
 const CAPSULE_LIMIT_BYTES = 32 * 1024;
 
-function fixtureBudget(): TaskGraphBudgetV1 {
+function fixtureBudget(maxAttempts: 1 | 2): TaskGraphBudgetV1 {
   return Object.freeze({
     maxArtifactBytes: 64 * 1024,
-    maxAttempts: 1,
+    maxAttempts,
     maxChangedBytes: 0,
     maxChangedFiles: 0,
     maxCommandExecutions: 0,
@@ -56,6 +60,7 @@ function exactArtifact(value: unknown): { readonly bytes: Buffer; readonly sha25
 }
 
 export interface CanonicalPhase20FixtureInputV1 {
+  readonly automaticPreEffectRetry?: boolean;
   readonly count?: 1 | 2;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly platform?: NodeJS.Platform;
@@ -86,6 +91,7 @@ export async function createCanonicalPhase20Fixture(
   input: CanonicalPhase20FixtureInputV1,
 ): Promise<CanonicalPhase20FixtureResultV1> {
   const count = input.count ?? 2;
+  const maximumAttempts = input.automaticPreEffectRetry === true ? 2 : 1;
   const randomUuid = input.randomUuid ?? randomUUID;
   const timestamp = input.timestamp ?? (() => new Date().toISOString());
   const environment = input.environment ?? process.env;
@@ -94,18 +100,33 @@ export async function createCanonicalPhase20Fixture(
   const parentRunId = randomUuid();
   const goalId = randomUuid();
   const planId = randomUuid();
+  const plan = canonicalPlanIdentity({
+    goalId,
+    goalRevision: 1,
+    items: [{
+      acceptance: "The packaged controlled-subagent contract is verified without network access.",
+      id: "verify-controlled-subagent-contract",
+      required: true,
+      title: "Verify the controlled-subagent contract",
+    }],
+    planId,
+    revision: 1,
+    schemaVersion: 1,
+    title: "Canonical Phase 20 controlled-subagent fixture",
+  });
   const snapshot = await (
     await RepositorySourceSnapshotter.create(input.workspace, { environment })
   ).snapshot();
   const sourceSnapshotSha256 = snapshot.snapshot.sourceStateSha256;
   const repository = await new NodeGitWorktreePort({ environment }).observe(input.workspace);
+  const parentWorkspaceFingerprint = sourceSnapshotSha256;
   const parentWorkspaceLineageId = delegationWorkspaceLineageIdentity({
     parentRunId,
-    repositoryIdentity: repository.identity.repositoryId,
-    sourceStateSha256: sourceSnapshotSha256,
-    workspaceFingerprint: null,
+    repositoryIdentity: parentWorkspaceFingerprint,
+    sourceStateSha256: null,
+    workspaceFingerprint: parentWorkspaceFingerprint,
   });
-  const budget = fixtureBudget();
+  const budget = fixtureBudget(maximumAttempts);
   const capabilitySnapshot = await createCapabilitySnapshot({
     catalog: {
       diagnostics: [],
@@ -132,6 +153,28 @@ export async function createCanonicalPhase20Fixture(
   const delegationIds: string[] = [];
   const envelopeSha256s: string[] = [];
   try {
+    const taskOrigin = { input_surface: "cli" as const, kind: "user" as const };
+    await writer.appendTaskEvent("goal.created", {
+      goal_id: goalId,
+      objective: "Prove the packaged controlled-subagent contract without network access.",
+      origin: taskOrigin,
+      parent_goal_id: null,
+      replaces_active_goal: null,
+      revision: 1,
+    });
+    await writer.appendTaskEvent("plan.proposed", {
+      content: { ...plan.content, items: [...plan.content.items] },
+      origin: taskOrigin,
+      plan_sha256: plan.sha256,
+    });
+    await writer.appendTaskEvent("plan.approved", {
+      goal_id: goalId,
+      goal_revision: 1,
+      origin: taskOrigin,
+      plan_id: planId,
+      plan_sha256: plan.sha256,
+      revision: 1,
+    });
     const parentPublisher = new EventPublisher({
       randomUUID: randomUuid,
       renderer: { render: () => undefined },
@@ -151,6 +194,7 @@ export async function createCanonicalPhase20Fixture(
         provider: PHASE20_CANONICAL_FAKE_PROVIDER_ID,
         timeout_ms: 1_000,
         workspace: input.workspace,
+        workspace_fingerprint: parentWorkspaceFingerprint,
       },
       type: "run.started",
     });
@@ -221,7 +265,9 @@ export async function createCanonicalPhase20Fixture(
           exactProviderId: PHASE20_CANONICAL_FAKE_PROVIDER_ID,
           exactModelId: PHASE20_CANONICAL_FAKE_MODEL_ID,
         },
-        retry: { maxAttempts: 1, automaticOn: [] },
+        retry: maximumAttempts === 2
+          ? { maxAttempts: 2, automaticOn: ["pre_effect_infrastructure_failure"] }
+          : { maxAttempts: 1, automaticOn: [] },
         delegationId,
         binding: {
           sessionId,
@@ -231,7 +277,7 @@ export async function createCanonicalPhase20Fixture(
           goalRevision: 1,
           planId,
           planRevision: 1,
-          planSha256: sha256Canonical({ fixtureId: FIXTURE_ID, kind: "approved_plan" }),
+          planSha256: plan.sha256,
           graphId: null,
           graphRevision: null,
           graphSha256: null,
@@ -329,14 +375,14 @@ export async function createCanonicalPhase20Fixture(
         workspaceModes: ["origin_read_only"],
         maximumBudget: budget,
         maximumContextBytes: CAPSULE_LIMIT_BYTES,
-        maximumAttempts: 1,
+        maximumAttempts,
       });
       const authority = computeDelegationAuthority({
         request: content.authorityRequest,
         workspace: content.workspace,
         requestedBudget: budget,
         requestedContextBytes: CAPSULE_LIMIT_BYTES,
-        requestedMaximumAttempts: 1,
+        requestedMaximumAttempts: maximumAttempts,
         requestedModelProfileId: PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID,
         ceilings: [ceiling],
       });
@@ -472,5 +518,491 @@ export async function createCanonicalPhase20Fixture(
     envelopeSha256s: Object.freeze(envelopeSha256s),
     networkRequired: false,
     remoteProvidersAllowed: false,
+  });
+}
+
+export interface CanonicalPhase20CodingFixtureInputV1 {
+  readonly existingDelegationId?: string;
+  readonly graphId: string;
+  readonly graphRevision: number;
+  readonly graphSha256: string;
+  readonly goalId: string;
+  readonly goalObjective: string;
+  readonly goalRevision: number;
+  readonly managedWorkspaceBaselineSha256: string;
+  readonly managedWorkspaceId: string;
+  readonly nodeId: string;
+  readonly planId: string;
+  readonly planRevision: number;
+  readonly planSha256: string;
+  readonly randomUuid?: () => string;
+  readonly sessionId: string;
+  readonly sequence?: number;
+  readonly taskProfile?: "coding" | "read-only";
+  readonly timestamp?: () => string;
+  readonly workspace: string;
+}
+
+export function createCanonicalPhase20GraphDelegationDraft(input: {
+  readonly managedWorkspaceId: string;
+  readonly sequence?: number;
+  readonly sourceSnapshotSha256: string;
+  readonly taskProfile?: "coding" | "read-only";
+}): DelegationRevisionDraftV1 {
+  const taskProfile = input.taskProfile ?? "coding";
+  const coding = taskProfile === "coding";
+  const toolIds = coding
+    ? (["apply_patch", "finish_task", "run_command"] as const)
+    : ([] as const);
+  const budget = Object.freeze({
+    maxArtifactBytes: 256 * 1024,
+    maxAttempts: 1,
+    maxChangedBytes: 16 * 1024,
+    maxChangedFiles: 2,
+    maxCommandExecutions: 1,
+    maxCommandOutputBytes: 128 * 1024,
+    maxDurationMs: 120_000,
+    maxModelSteps: 4,
+    maxReportedTokens: 1024,
+  });
+  return delegationRevisionDraftSchema.parse({
+    schemaVersion: 1,
+    sequence: input.sequence ?? 1,
+    title: coding
+      ? "Canonical managed-worktree coding child"
+      : `Canonical Graph read-only child ${String(input.sequence ?? 1)}`,
+    objective: coding
+      ? "Fix the clamp implementation and verify it inside the approved managed worktree."
+      : "Return one bounded Host-verifiable answer from the approved Graph context.",
+    expectedReceipt: coding
+      ? {
+          kind: "change",
+          requiredClaims: [{
+            claimId: "change-bundle",
+            description: "Host-verified managed-worktree change bundle",
+            kind: "change_bundle",
+            required: true,
+          }],
+        }
+      : {
+          kind: "analysis",
+          requiredClaims: [{
+            claimId: "answer",
+            description: "Host-verifiable bounded answer artifact",
+            kind: "answer",
+            required: true,
+          }],
+        },
+    contextRequest: {
+      includeGoal: true,
+      includeApprovedPlanItems: [],
+      includeParentFacts: [],
+      maximumCapsuleBytes: CAPSULE_LIMIT_BYTES,
+      requestedPaths: ["fixtures/phase-07-fix-and-verify"],
+    },
+    authorityRequest: {
+      capabilityIds: [],
+      taskProfile,
+      toolIds: [...toolIds],
+    },
+    budget,
+    workspace: {
+      declaredPathPrefixes: ["fixtures/phase-07-fix-and-verify"],
+      managedWorkspaceId: coding ? input.managedWorkspaceId : null,
+      mode: coding ? "managed_worktree" : "origin_read_only",
+      sourceSnapshotSha256: input.sourceSnapshotSha256,
+    },
+    model: {
+      exactModelId: PHASE20_CANONICAL_FAKE_MODEL_ID,
+      exactProfileId: PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID,
+      exactProviderId: PHASE20_CANONICAL_FAKE_PROVIDER_ID,
+      strategy: "exact_qualified_model",
+    },
+    retry: { automaticOn: [], maxAttempts: 1 },
+  });
+}
+
+export interface CanonicalPhase20CodingFixtureResultV1 {
+  readonly delegationId: string;
+  readonly envelopeSha256: string;
+  readonly parentRunId: string;
+  readonly sessionId: string;
+}
+
+/**
+ * Adds one exact package-owned coding delegation to an already approved Phase
+ * 19 Graph and allocated managed worktree. Launch, approvals, patch execution,
+ * verification, receipt construction, and promotion remain on production
+ * paths; this function stops at the queued/prepared boundary.
+ */
+export async function createCanonicalPhase20CodingFixture(
+  input: CanonicalPhase20CodingFixtureInputV1,
+): Promise<CanonicalPhase20CodingFixtureResultV1> {
+  const randomUuid = input.randomUuid ?? randomUUID;
+  const timestamp = input.timestamp ?? (() => new Date().toISOString());
+  const taskProfile = input.taskProfile ?? "coding";
+  const coding = taskProfile === "coding";
+  const snapshot = await (
+    await RepositorySourceSnapshotter.create(input.workspace, { environment: process.env })
+  ).snapshot();
+  const repository = await new NodeGitWorktreePort({ environment: process.env }).observe(input.workspace);
+  const existingWriter = await V2SessionWriter.openExisting(input.workspace, input.sessionId, {
+    createEventId: randomUuid,
+    timestamp,
+  });
+  let parentRunId: string;
+  let existingNodeAttemptId: string | null;
+  let existingParentWorkspaceLineageId: string | null;
+  try {
+    const existing = reconstructMultiRunSession(existingWriter.events);
+    const selected = input.existingDelegationId === undefined
+      ? undefined
+      : existing.delegations.revisions.find((revision) =>
+          revision.delegationId === input.existingDelegationId);
+    const parent = selected === undefined
+      ? existing.runs.at(-1)
+      : existing.runs.find((run) => run.runId === selected.parentRunId);
+    if (parent === undefined) {
+      throw new DelegationError("delegation_parent_not_active", "canonical coding fixture has no parent run lineage");
+    }
+    parentRunId = parent.runId;
+    existingNodeAttemptId = selected?.binding.nodeAttemptId ?? null;
+    existingParentWorkspaceLineageId = selected?.binding.parentWorkspaceLineageId ?? null;
+  } finally {
+    await existingWriter.close();
+  }
+  const delegationId = input.existingDelegationId ?? randomUuid();
+  const childActorId = randomUuid();
+  const childAttemptId = randomUuid();
+  const nodeAttemptId = existingNodeAttemptId ?? randomUuid();
+  const canonicalDraft = createCanonicalPhase20GraphDelegationDraft({
+    managedWorkspaceId: input.managedWorkspaceId,
+    ...(input.sequence === undefined ? {} : { sequence: input.sequence }),
+    sourceSnapshotSha256: snapshot.snapshot.sourceStateSha256,
+    taskProfile,
+  });
+  const toolIds = canonicalDraft.authorityRequest.toolIds;
+  const budget = canonicalDraft.budget;
+  const parentWorkspaceLineageId = existingParentWorkspaceLineageId ??
+    delegationWorkspaceLineageIdentity({
+      parentRunId,
+      repositoryIdentity: repository.identity.repositoryId,
+      sourceStateSha256: snapshot.snapshot.sourceStateSha256,
+      workspaceFingerprint: coding
+        ? input.managedWorkspaceBaselineSha256
+        : snapshot.snapshot.sourceStateSha256,
+    });
+  const capabilitySnapshot = await createCapabilitySnapshot({
+    catalog: {
+      diagnostics: [],
+      enablementRevision: 0,
+      plugins: [],
+      sourceRevisions: { builtin: 0, user_install: 0, workspace: 0 },
+    },
+    platform: process.platform,
+    timestamp: timestamp(),
+    workspace: input.workspace,
+  });
+  const capabilityContent = exactArtifact(capabilitySnapshot);
+  const capabilityArtifact = await storeDelegationArtifactExact(
+    input.workspace,
+    input.sessionId,
+    parentRunId,
+    capabilityContent.bytes,
+    capabilityContent.sha256,
+  );
+  const writer = await V2SessionWriter.openExisting(input.workspace, input.sessionId, {
+    createEventId: randomUuid,
+    timestamp,
+  });
+  let envelopeSha256: string;
+  try {
+    const initial = reconstructMultiRunSession(writer.events);
+    const graph = initial.taskGraph.revisions.find((candidate) =>
+      candidate.graphId === input.graphId && candidate.revision === input.graphRevision &&
+      candidate.graphSha256 === input.graphSha256 && candidate.status ===
+        (input.existingDelegationId === undefined ? "approved" : "waiting_for_user"));
+    const managed = initial.worktrees.workspaces.find((candidate) =>
+      candidate.identity.workspaceId === input.managedWorkspaceId &&
+      candidate.identity.graphId === input.graphId && candidate.nodeIds.includes(input.nodeId));
+    if (graph === undefined || (coding && (
+      managed === undefined ||
+      managed.baseline.manifestSha256 !== input.managedWorkspaceBaselineSha256 ||
+      ["archived", "removed", "reconciliation_required"].includes(managed.status)
+    ))) {
+      throw new DelegationError(
+        "delegation_workspace_conflict",
+        coding
+          ? "canonical coding fixture requires one exact approved Graph managed worktree"
+          : "canonical read-only fixture requires one exact approved Graph",
+      );
+    }
+    const content = normalizeDelegationRevision({
+      ...canonicalDraft,
+      delegationId,
+      binding: {
+        sessionId: input.sessionId,
+        parentRunId,
+        parentActorId: parentRunId,
+        goalId: input.goalId,
+        goalRevision: input.goalRevision,
+        planId: input.planId,
+        planRevision: input.planRevision,
+        planSha256: input.planSha256,
+        graphId: input.graphId,
+        graphRevision: input.graphRevision,
+        graphSha256: input.graphSha256,
+        nodeId: input.nodeId,
+        nodeAttemptId,
+        parentWorkspaceLineageId,
+      },
+    });
+    const identity = canonicalDelegationIdentity(content);
+    const existingRevision = input.existingDelegationId === undefined
+      ? undefined
+      : initial.delegations.revisions.find((revision) =>
+          revision.delegationId === input.existingDelegationId);
+    let proposedEventId: string;
+    if (existingRevision === undefined) {
+      const revisionArtifact = await storeDelegationArtifactExact(
+        input.workspace,
+        input.sessionId,
+        delegationId,
+        identity.bytes,
+        identity.delegationSha256,
+      );
+      const proposed = await writer.appendDelegationEvent("delegation.revision.proposed", {
+        artifact: revisionArtifact,
+        authority_preview_sha256: delegationAuthorityRequestPreviewIdentity(content),
+        binding: content.binding,
+        content: delegationRevisionContentSchema.parse(content),
+        delegation_id: delegationId,
+        delegation_revision: 1,
+        delegation_sha256: identity.delegationSha256,
+        origin: { input_surface: "cli", kind: "user" },
+        parent_actor_id: parentRunId,
+        parent_run_id: parentRunId,
+      });
+      proposedEventId = proposed.eventId;
+    } else {
+      if (
+        existingRevision.status !== "draft" ||
+        existingRevision.delegationRevision !== 1 ||
+        existingRevision.delegationSha256 !== identity.delegationSha256 ||
+        existingRevision.parentRunId !== parentRunId
+      ) {
+        throw new DelegationError(
+          "delegation_revision_conflict",
+          "package-owned canonical preparation does not exact-match the proposed Graph delegation",
+        );
+      }
+      proposedEventId = existingRevision.createdEventId;
+    }
+    const display = exactArtifact({
+      authorityPreviewSha256: delegationAuthorityRequestPreviewIdentity(content),
+      delegationId,
+      delegationSha256: identity.delegationSha256,
+      fixtureId: coding
+        ? "m11-controlled-subagents-coding-v1"
+        : "m11-controlled-subagents-graph-read-only-v1",
+      schemaVersion: 1,
+    });
+    const displayArtifact = await storeDelegationArtifactExact(
+      input.workspace,
+      input.sessionId,
+      delegationId,
+      display.bytes,
+      display.sha256,
+    );
+    const decisionRequestId = randomUuid();
+    await writer.appendDelegationEvent("delegation.decision.recorded", {
+      approval_identity_sha256: delegationApprovalIdentity({
+        approvalRequestId: decisionRequestId,
+        binding: content.binding,
+        delegationId,
+        delegationRevision: 1,
+        delegationSha256: identity.delegationSha256,
+        displaySha256: display.sha256,
+      }),
+      authority_preview_sha256: delegationAuthorityRequestPreviewIdentity(content),
+      decision: "approved",
+      decision_request_id: decisionRequestId,
+      delegation_id: delegationId,
+      delegation_revision: 1,
+      delegation_sha256: identity.delegationSha256,
+      display_artifact: displayArtifact,
+      origin: { input_surface: "cli", kind: "user" },
+      parent_actor_id: parentRunId,
+      parent_run_id: parentRunId,
+      revision_event_id: proposedEventId,
+    });
+    await writer.appendDelegationEvent("delegation.queued", {
+      delegation_id: delegationId,
+      delegation_revision: 1,
+      delegation_sha256: identity.delegationSha256,
+      origin: { input_surface: "cli", kind: "user" },
+      parent_actor_id: parentRunId,
+      parent_run_id: parentRunId,
+      queue_request_id: randomUuid(),
+    });
+    const approved = reconstructMultiRunSession(writer.events).delegations.revisions.find((candidate) =>
+      candidate.delegationId === delegationId);
+    if (approved === undefined || approved.status !== "queued") {
+      throw new DelegationError("delegation_revision_conflict", "canonical coding delegation did not become queued");
+    }
+    const toolProfile = buildChildToolProfile({
+      taskProfile,
+      requestedToolIds: toolIds,
+      policyToolIds: toolIds,
+      parentDelegableToolIds: toolIds,
+      catalog: delegatedBuiltinToolCatalog(),
+    });
+    const ceiling = delegationAuthorityCeiling({
+      capabilityIds: [],
+      maximumAttempts: 1,
+      maximumBudget: budget,
+      maximumContextBytes: CAPSULE_LIMIT_BYTES,
+      modelProfileIds: [PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID],
+      taskProfiles: [taskProfile],
+      toolIds,
+      workspaceModes: [coding ? "managed_worktree" : "origin_read_only"],
+    });
+    const authority = computeDelegationAuthority({
+      ceilings: [ceiling],
+      request: content.authorityRequest,
+      requestedBudget: budget,
+      requestedContextBytes: CAPSULE_LIMIT_BYTES,
+      requestedMaximumAttempts: 1,
+      requestedModelProfileId: PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID,
+      workspace: content.workspace,
+    });
+    if (!authority.eligible) {
+      throw new DelegationError("delegation_authority_expansion", "canonical coding authority intersection failed");
+    }
+    const capsule = createContextCapsule({
+      schemaVersion: 1,
+      childActorId,
+      delegationId,
+      delegationRevision: 1,
+      delegationSha256: identity.delegationSha256,
+      objective: content.objective,
+      expectedReceipt: content.expectedReceipt,
+      goal: {
+        constraints: coding
+          ? ["Only mutate the managed worktree", "Require an independent effect approval"]
+          : ["Do not mutate the origin workspace", "Do not request effect tools"],
+        goalId: input.goalId,
+        objective: input.goalObjective,
+        revision: input.goalRevision,
+      },
+      planItems: [],
+      facts: [],
+      repository: {
+        indexGenerationId: null,
+        indexSourceSnapshotSha256: null,
+        repositoryId: repository.identity.repositoryId,
+        ruleManifestRef: null,
+        ruleManifestSha256: null,
+        sourceSnapshotSha256: snapshot.snapshot.sourceStateSha256,
+      },
+      workspace: {
+        // The capsule baseline binds the parent's current source state. The
+        // managed-worktree baseline manifest is independently bound by the
+        // Graph/worktree projection and by parentWorkspaceLineageId above.
+        baselineSha256: snapshot.snapshot.sourceStateSha256,
+        declaredPathPrefixes: ["fixtures/phase-07-fix-and-verify"],
+        lineageId: parentWorkspaceLineageId,
+        logicalWorkspaceId: coding
+          ? input.managedWorkspaceId
+          : repository.identity.repositoryId,
+        mode: coding ? "managed_worktree" : "origin_read_only",
+      },
+      constraints: {
+        capabilityIds: [],
+        delegationDepth: 1,
+        maximumBudget: budget,
+        taskProfile,
+        toolIds: [...toolIds],
+      },
+      omittedFacts: [],
+    }, CAPSULE_LIMIT_BYTES);
+    const capsuleContent = exactArtifact(capsule);
+    const capsuleArtifact = await storeDelegationArtifactExact(
+      input.workspace,
+      input.sessionId,
+      delegationId,
+      capsuleContent.bytes,
+      capsuleContent.sha256,
+    );
+    const envelope = new ChildEnvelopeBuilder().build({
+      actor: { actorId: childActorId, attemptId: childAttemptId, attemptNumber: 1 },
+      approvedDelegation: approved,
+      authority,
+      budget: {
+        graphLedgerRevision: input.graphRevision,
+        graphRemaining: budget,
+        parentLedgerRevision: 0,
+        parentRemaining: budget,
+      },
+      capabilitySnapshot: { ref: capabilityArtifact.object_ref, sha256: capabilityArtifact.sha256 },
+      capsule,
+      capsuleRef: capsuleArtifact.object_ref,
+      environmentPolicy: buildChildEnvironmentPolicy({ requestedVariableNames: [] }),
+      model: {
+        contextCapacity: 32 * 1024,
+        executionBackend: "canonical_fake",
+        modelId: PHASE20_CANONICAL_FAKE_MODEL_ID,
+        networkEligibility: "local_only",
+        policyProfileId: PHASE20_CANONICAL_FAKE_POLICY_PROFILE_ID,
+        providerId: PHASE20_CANONICAL_FAKE_PROVIDER_ID,
+        qualificationId: `qualification:${coding
+          ? PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256
+          : PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256}`,
+        qualificationSha256: coding
+          ? PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256
+          : PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
+      },
+      parentProjectionSha256: sha256Canonical({
+        fixtureId: coding
+          ? "m11-controlled-subagents-coding-v1"
+          : "m11-controlled-subagents-graph-read-only-v1",
+        sessionEventCount: writer.events.length,
+      }),
+      policySha256: coding
+        ? PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256
+        : PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
+      preparedAt: timestamp(),
+      systemAndResponseReserveBytes: 8 * 1024,
+      toolProfile,
+    });
+    const envelopeContent = exactArtifact(envelope);
+    const envelopeArtifact = await storeDelegationArtifactExact(
+      input.workspace,
+      input.sessionId,
+      delegationId,
+      envelopeContent.bytes,
+      envelopeContent.sha256,
+    );
+    await writer.appendDelegationEvent("delegation.envelope.prepared", {
+      context_capsule_artifact: capsuleArtifact,
+      context_capsule_sha256: capsule.capsuleSha256,
+      delegation_id: delegationId,
+      delegation_revision: 1,
+      delegation_sha256: identity.delegationSha256,
+      envelope_artifact: envelopeArtifact,
+      envelope_sha256: envelope.envelopeSha256,
+      executable: false,
+      parent_actor_id: parentRunId,
+      parent_run_id: parentRunId,
+    });
+    envelopeSha256 = envelope.envelopeSha256;
+  } finally {
+    await writer.close();
+  }
+  return Object.freeze({
+    delegationId,
+    envelopeSha256,
+    parentRunId,
+    sessionId: input.sessionId,
   });
 }

@@ -188,6 +188,8 @@ export interface FreshTaskExecution {
   readonly modelTask: string;
   readonly onTaskNodeStarted?: () => void;
   readonly runId: string;
+  /** Durable session/artifact authority root when execution runs in another workspace. */
+  readonly sessionWorkspace?: string;
   readonly sessionId: string;
   readonly sourceRunId?: string;
   readonly taskNodeBinding?: NonNullable<Extract<RunEvent, { type: "run.started" }>["data"]["task_node_binding"]>;
@@ -451,6 +453,7 @@ export async function executeAgent(
     runtime.randomUUID();
   const runId =
     resumedExecution?.runId ?? freshTaskExecution?.runId ?? runtime.randomUUID();
+  const sessionWorkspace = freshTaskExecution?.sessionWorkspace ?? runtime.cwd;
   const taskNodeExecution = freshTaskExecution?.taskNodeBinding !== undefined;
   const independentTaskExecution = taskNodeExecution || delegatedChildExecution;
   let writer: SessionWriter;
@@ -458,7 +461,7 @@ export async function executeAgent(
     writer =
       resumedExecution?.writer ??
       freshTaskExecution?.writer ??
-      (await runtime.createSessionWriter(runtime.cwd, sessionId));
+      (await runtime.createSessionWriter(sessionWorkspace, sessionId));
     runtime.observeSessionWriter?.(writer);
   } catch {
     renderer.renderStorageError();
@@ -516,7 +519,7 @@ export async function executeAgent(
         runId,
         sessionId,
         snapshot: capabilitySnapshot,
-        workspace: runtime.cwd,
+        workspace: sessionWorkspace,
       });
     } catch (error) {
       renderer.renderDiagnostic(
@@ -833,7 +836,7 @@ export async function executeAgent(
     const delegationProposalEnabled =
       runtime.supportsDelegationProposalTool === true &&
       phase16Binding !== undefined &&
-      !independentTaskExecution;
+      !delegatedChildExecution;
     // PHASE4: run.started 先保存完整预算合同；后续重建器据此验证每个 budget terminal。
     const runStartedData: Extract<
       RunEvent,
@@ -1111,7 +1114,7 @@ export async function executeAgent(
       exactPlanBinding === null || writer.readDecodedEvents === undefined
         ? Object.freeze([])
         : await projectAcceptedChildReceipts({
-            workspace: runtime.cwd,
+            workspace: sessionWorkspace,
             sessionId,
             projection: reconstructMultiRunSession(writer.readDecodedEvents()).delegations,
             goalBinding: exactPlanBinding,
@@ -1136,7 +1139,7 @@ export async function executeAgent(
             runId,
             secrets,
             sessionId,
-            workspace: runtime.cwd,
+            workspace: sessionWorkspace,
           });
     let skillRuntime: SkillRuntime | undefined;
     const hasFrozenSkills = preparedCapabilitySnapshot?.snapshot.plugins.some(
@@ -1805,7 +1808,7 @@ export async function executeAgent(
               parentRunId: runId,
               randomUuid: runtime.randomUUID,
               sessionId,
-              workspace: runtime.cwd,
+              workspace: sessionWorkspace,
               writer,
             }) as ToolDefinition<unknown>;
           })();

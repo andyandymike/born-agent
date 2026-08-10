@@ -72,6 +72,74 @@ describe("Phase 20D bounded deterministic scheduler", () => {
     expect(one.deferred[0]?.reason).toBe("actor_limit");
   });
 
+  it("reuses the exact free actor slot and rejects inconsistent ownership before reserving budget", () => {
+    const maximum = phase20Budget({
+      maxAttempts: 2,
+      maxArtifactBytes: 8192,
+      maxDurationMs: 120_000,
+      maxModelSteps: 8,
+      maxReportedTokens: 8192,
+    });
+    const ledger = new DelegationBudgetLedger(maximum);
+    const groupId = nextUuid();
+    const activeActorId = nextUuid();
+    const activeClaim = createDelegationConflictClaim({
+      access: "read",
+      actorId: activeActorId,
+      claimId: nextUuid(),
+      groupId,
+      pathPrefixes: ["src"],
+      repositoryId: SHA,
+      sourceLineageId: SHA,
+      sourceSnapshotSha256: SHA,
+      workspaceId: null,
+    });
+    ledger.reserve({
+      childAttemptId: nextUuid(),
+      delegationId: IDS.delegation2,
+      expectedRevision: 0,
+      graphBudgetLedgerRevision: null,
+      requested: phase20Budget(),
+      reservationId: nextUuid(),
+    });
+    const candidate = {
+      revision: phase20Revision({ envelope: true, status: "queued" }),
+      childActorId: nextUuid(),
+      childAttemptId: nextUuid(),
+      requestedBudget: phase20Budget(),
+      conflict: {
+        access: "read" as const,
+        repositoryId: SHA,
+        workspaceId: null,
+        sourceLineageId: SHA,
+        sourceSnapshotSha256: SHA,
+        pathPrefixes: ["src"],
+      },
+    };
+    const admitted = new BoundedDelegationScheduler({ groupId, ledger, randomUuid: nextUuid }).admit({
+      activeActorSlots: [1],
+      activeChildCount: 1,
+      activeClaims: [activeClaim],
+      parentModelActive: false,
+      ready: [candidate],
+    });
+    expect(admitted.admitted[0]?.actorSlot).toBe(2);
+
+    const inconsistentLedger = new DelegationBudgetLedger(maximum);
+    const inconsistent = new BoundedDelegationScheduler({
+      groupId: nextUuid(),
+      ledger: inconsistentLedger,
+      randomUuid: nextUuid,
+    });
+    expect(() => inconsistent.admit({
+      activeActorSlots: [],
+      activeChildCount: 1,
+      parentModelActive: false,
+      ready: [candidate],
+    })).toThrow(/actor slot ownership/u);
+    expect(inconsistentLedger.state.revision).toBe(0);
+  });
+
   it("allows immutable origin reads and disjoint writers while folding overlapping paths", () => {
     const common = {
       groupId: nextUuid(),

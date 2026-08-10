@@ -213,9 +213,14 @@ describe("born agent Phase 5 controlled edits", () => {
     expect(result.client.calls).toHaveLength(1);
     expect(await readFile(target)).toEqual(before);
     expect(result.writer.events.at(-1)?.type).toBe("run.cancelled");
-    expect(
-      result.writer.events.some((event) => event.type === "tool.call.completed"),
-    ).toBe(false);
+    expect(result.writer.events.find((event) => event.type === "tool.call.completed"))
+      .toMatchObject({
+        data: {
+          error_category: "cancelled",
+          error_code: "tool_cancelled",
+          status: "error",
+        },
+      });
   });
 
   it("stops after completed-evidence persistence fails and warns that files may differ", async () => {

@@ -51,8 +51,12 @@ import { HookCommandRunner } from "../hooks/hook-command-runner.js";
 import { HookCommandSupervisor } from "../hooks/hook-command-supervisor.js";
 import { HookCommandOperationReconciler } from "../hooks/hook-command-operation-reconciler.js";
 import { executeAgent } from "../commands/agent.js";
+import { executeDelegationsStart } from "../commands/delegations.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
-import { taskMutationBlocker } from "../coordination/task-control-plane.js";
+import {
+  taskMutationBlocker,
+  type TaskMutationContext,
+} from "../coordination/task-control-plane.js";
 import type { PreparedTaskWorkspaceV1, TaskAttemptExecutionResultV1 } from "../scheduling/deterministic-task-scheduler.js";
 import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
 import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
@@ -62,6 +66,7 @@ import { WorktreePromotionRuntime } from "../worktrees/promotion-runtime.js";
 import { OriginVerificationRuntime } from "../worktrees/origin-verification-runtime.js";
 import { resolveWorktreeUserStateRoot } from "../worktrees/managed-worktree-policy.js";
 import { BackgroundDeferredApprovalPrompt } from "../background/background-approval-prompt.js";
+import { BackgroundError } from "../background/background-errors.js";
 import { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
 import { BackgroundWorkerRuntime } from "../background/background-worker-runtime.js";
 import { resolveWorkerUserStateRoot } from "../background/background-operation-store.js";
@@ -86,6 +91,10 @@ import { capabilitySnapshotSchema } from "../capabilities/capability-snapshot.js
 import { DelegationError } from "../delegation/delegation-errors.js";
 import { DelegationOperationStore } from "../delegation/delegation-operation-store.js";
 import { classifyDelegationReconcileOutcome } from "../delegation/delegation-reconciler.js";
+import { DelegationPreEffectRecovery } from "../delegation/delegation-pre-effect-recovery.js";
+import { DelegationGroupLeaseStore } from "../delegation/delegation-group-lease-store.js";
+import { DelegationGroupTakeoverReconciler } from "../delegation/delegation-group-takeover.js";
+import { readVerifiedChildReceipt } from "../delegation/receipts/child-receipt-verifier.js";
 import {
   DelegationApprovalPromptQueue,
   DelegationSessionWriterQueue,
@@ -93,6 +102,7 @@ import {
 import {
   isPhase20CanonicalFakeSelection,
   Phase20CanonicalFakeChildBackend,
+  PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256,
   PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256,
 } from "../delegation/runtime/canonical-fake-child-backend.js";
 
@@ -127,6 +137,7 @@ export interface NodeRuntimeOptions {
   readonly worktreeUserStateRoot?: string;
   readonly workerUserStateRoot?: string;
   readonly delegationUserStateRoot?: string;
+  readonly delegationHandshakeTimeoutMs?: number;
 }
 
 class BoundedDelegationOutput {
@@ -260,6 +271,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     delegationWriterQueues.set(sessionId, created);
     return created;
   };
+  const delegationWriterFactory = (context: TaskMutationContext) =>
+    delegationWriterQueue(context.sessionId).wrap(
+      (value) => V2SessionWriter.openExisting(value.workspace, value.sessionId, {
+        createEventId: value.randomUuid,
+        timestamp: value.now,
+      }),
+    )(context);
   const delegationApprovalQueue = (sessionId: string) => {
     const current = delegationApprovalQueues.get(sessionId);
     if (current !== undefined) return current;
@@ -589,6 +607,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             resolveStarted();
           },
           runId: input.runId,
+          sessionWorkspace: options.cwd,
           sessionId,
           ...(before.lastRun === null ? {} : { sourceRunId: before.lastRun.runId }),
           taskNodeBinding: {
@@ -615,14 +634,99 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             throw new Error("Graph node executor produced no terminal run projection");
           }
           const usage = [...run.events].reverse().find((event) => event.type === "usage");
+          const modelUsage = run.events.filter((event) => event.type === "model.usage");
+          const modelUsageTokens = modelUsage.reduce<number | null>((sum, event) =>
+            sum === null || event.data.total_tokens === null ? null : sum + event.data.total_tokens, 0);
+          const reportedTokens = usage?.type === "usage"
+            ? usage.data.total_tokens
+            : modelUsage.length > 0 ? modelUsageTokens : null;
+          const usageCompleteness: TaskAttemptExecutionResultV1["usageCompleteness"] = usage?.type === "usage"
+            ? usage.data.usage_incomplete === true ? "partial" : "complete"
+            : modelUsage.length === 0
+              ? "none"
+              : modelUsageTokens === null || modelUsage.some((event) =>
+                  "completeness" in event.data && event.data.completeness === "partial")
+                ? "partial"
+                : "complete";
           const commands = run.events.filter((event) => event.type === "command.completed");
           const artifacts = run.events.filter((event) => event.type === "artifact.stored");
           const terminalDuration = "duration_ms" in run.terminal.data ? run.terminal.data.duration_ms : 0;
           const effectBlocker = taskMutationBlocker(session);
+          const nodeDelegations = session.delegations.revisions.filter((revision) =>
+            revision.binding.graphId === input.graph.graphId &&
+            revision.binding.graphRevision === input.graph.revision &&
+            revision.binding.graphSha256 === input.graph.graphSha256 &&
+            revision.binding.nodeId === input.node.nodeId
+          );
+          const delegated = nodeDelegations.filter((revision) =>
+            revision.parentRunId === input.runId &&
+            revision.binding.nodeAttemptId === input.attemptId
+          );
+          const barrierSafeToolNames = new Set([
+            "find_references",
+            "find_symbol",
+            "list_files",
+            "propose_delegation",
+            "read_artifact",
+            "read_file",
+            "repository_outline",
+            "search",
+          ]);
+          const delegationBarrierSafe = !run.events.some((event) =>
+            event.type === "tool.call.requested" &&
+            !barrierSafeToolNames.has(event.data.tool_name)
+          );
+          const openDelegation = delegated.find((revision) =>
+            !["accepted", "cancelled", "failed", "rejected"].includes(revision.status)
+          );
+          const waitingForDelegation = openDelegation !== undefined && delegationBarrierSafe
+            ? Object.freeze({
+                reason: "approval_required" as const,
+                requestedActionRef: `delegation/${openDelegation.delegationId}/${openDelegation.delegationSha256}`,
+              })
+            : undefined;
+          const acceptedChangeReceipts = [];
+          if (
+            input.workspace.binding !== null &&
+            nodeDelegations.length > 0 &&
+            nodeDelegations.every((revision) => revision.status === "accepted") &&
+            delegationBarrierSafe
+          ) {
+            for (const revision of nodeDelegations) {
+              const receipt = await readVerifiedChildReceipt({
+                revision,
+                sessionId,
+                workspace: options.cwd,
+              });
+              if (
+                receipt.status === "succeeded" &&
+                receipt.workspace.logicalWorkspaceId === input.workspace.binding.workspace_id &&
+                receipt.workspace.resultSnapshotSha256 !== null &&
+                receipt.workspace.changeBundleRef !== null &&
+                receipt.workspace.changeBundleSha256 !== null &&
+                receipt.claims.some((claim) =>
+                  claim.kind === "change_bundle" && claim.status === "verified")
+              ) {
+                acceptedChangeReceipts.push({ receipt, revision });
+              }
+            }
+          }
+          const delegatedChange = acceptedChangeReceipts.length === 1
+            ? acceptedChangeReceipts[0]
+            : undefined;
+          const delegationBackedSuccess =
+            delegatedChange !== undefined &&
+            ["completed", "incomplete", "interrupted"].includes(run.status);
           const terminal: TaskAttemptExecutionResultV1["terminal"] = deferredApproval?.deferred != null
             ? "pre_effect_infrastructure_failure"
             : effectBlocker !== null
             ? "blocked_reconciliation"
+            : waitingForDelegation !== undefined
+              ? "pre_effect_infrastructure_failure"
+            : delegated.length > 0 && !delegationBarrierSafe
+              ? "blocked_reconciliation"
+            : delegationBackedSuccess
+              ? "succeeded"
             : exitCode === 0 && run.status === "completed"
               ? "succeeded"
               : exitCode === 130 && run.status === "cancelled"
@@ -631,7 +735,14 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
           let accepted: Awaited<ReturnType<ManagedWorktreeManager["acceptSnapshot"]>> | null = null;
           if (terminal === "succeeded" && input.workspace.binding !== null) {
             try {
-              accepted = await (await manager).acceptSnapshot({ attemptId: input.attemptId, graph: input.graph, nodeId: input.node.nodeId });
+              accepted = await (await manager).acceptSnapshot({
+                attemptId: input.attemptId,
+                ...(delegatedChange === undefined
+                  ? {}
+                  : { expectedSnapshotSha256: delegatedChange.receipt.workspace.resultSnapshotSha256! }),
+                graph: input.graph,
+                nodeId: input.node.nodeId,
+              });
             } catch {
               return Object.freeze({
                 budget: Object.freeze({
@@ -639,9 +750,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                   changedBytes: 0, changedFiles: 0, commandExecutions: commands.length,
                   commandOutputBytes: commands.reduce((sum, event) => sum + event.data.total_bytes, 0), durationMs: terminalDuration,
                   modelSteps: run.events.filter((event) => event.type === "agent.step.started").length,
-                  reportedTokens: usage?.type === "usage" ? usage.data.total_tokens : null,
+                  reportedTokens,
                 }),
-                receiptArtifactId: null, receiptSha256: null, terminal: "blocked_reconciliation", usageCompleteness: usage?.type !== "usage" ? "none" : usage.data.usage_incomplete === true ? "partial" : "complete",
+                receiptArtifactId: null, receiptSha256: null, terminal: "blocked_reconciliation", usageCompleteness,
               });
             }
           }
@@ -655,14 +766,31 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
               commandOutputBytes: commands.reduce((sum, event) => sum + event.data.total_bytes, 0),
               durationMs: terminalDuration,
               modelSteps: run.events.filter((event) => event.type === "agent.step.started").length,
-              reportedTokens: usage?.type === "usage" ? usage.data.total_tokens : null,
+              reportedTokens,
             }),
             receiptArtifactId: null,
             receiptSha256: null,
+            ...(delegatedChange === undefined
+              ? {}
+              : {
+                  structuredEvidence: Object.freeze([
+                    Object.freeze({
+                      artifactRef: delegatedChange.revision.receipt!.artifact.objectRef,
+                      kind: "delegated_child_receipt",
+                      sha256: delegatedChange.receipt.receiptSha256,
+                    }),
+                    Object.freeze({
+                      artifactRef: delegatedChange.receipt.workspace.changeBundleRef!,
+                      kind: "delegated_change_bundle",
+                      sha256: delegatedChange.receipt.workspace.changeBundleSha256!,
+                    }),
+                  ]),
+                }),
             terminal,
-            usageCompleteness: usage?.type !== "usage"
-              ? "none"
-              : usage.data.usage_incomplete === true ? "partial" : "complete",
+            usageCompleteness,
+            ...(waitingForDelegation === undefined
+              ? {}
+              : { waitingForUser: waitingForDelegation }),
             ...(deferredApproval?.deferred === null || deferredApproval?.deferred === undefined
               ? {}
               : { waitingForUser: deferredApproval.deferred }),
@@ -770,10 +898,12 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             }
             const stdout = new BoundedDelegationOutput(4 * 1024);
             const stderr = new BoundedDelegationOutput(4 * 1024);
+            const canonicalFakeQualification = envelope.prepared.effectiveAuthority.taskProfile === "coding"
+              ? PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256
+              : PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256;
             const canonicalFake =
               envelope.prepared.model.executionBackend === "canonical_fake" &&
-              envelope.prepared.model.qualificationSha256 ===
-                PHASE20_CANONICAL_FAKE_QUALIFICATION_SHA256 &&
+              envelope.prepared.model.qualificationSha256 === canonicalFakeQualification &&
               isPhase20CanonicalFakeSelection({
                 modelId: envelope.prepared.model.modelId,
                 policyProfileId: envelope.prepared.model.policyProfileId,
@@ -786,7 +916,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             ) {
               throw new DelegationError(
                 "delegation_model_unqualified",
-                "canonical fake backend selection does not match its exact read-only fixture identity",
+                "canonical fake backend selection does not match its exact package-owned fixture identity",
               );
             }
             const childRuntime: CliRuntime = {
@@ -806,7 +936,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                       remoteBillableRequests: 0 as const,
                     }),
                     createModelBackend: () =>
-                      new Phase20CanonicalFakeChildBackend(),
+                      new Phase20CanonicalFakeChildBackend(
+                        envelope.prepared.effectiveAuthority.taskProfile,
+                      ),
                   }
                 : {}),
               hooksSuppressed: true,
@@ -919,17 +1051,139 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         }
         return Object.freeze(results);
       },
-      createDelegationChildLauncher: ({ inputSurface, io, sessionId }) => new DelegationChildLauncher({
+      reconcileDelegationPreEffectOperation: async ({ inputSurface, operationId, sessionId }) => {
+        const store = await DelegationOperationStore.openExisting({
+          operationId,
+          root: delegationUserStateRoot(),
+        });
+        const operation = await store.read();
+        if (operation === null || operation.sessionId !== sessionId) {
+          throw new DelegationError(
+            "delegation_child_protocol_invalid",
+            "pre-effect operation does not belong to the selected session",
+          );
+        }
+        const recovery = await new DelegationPreEffectRecovery(delegationWriterFactory).reconcile({
+          context: taskContext(sessionId, inputSurface),
+          releaseAdmissionClaims: true,
+          store,
+        });
+        if (recovery.closedGroupId !== null) {
+          const stores = await DelegationGroupLeaseStore.listExisting(delegationUserStateRoot());
+          const matches = [];
+          for (const leaseStore of stores) {
+            const current = await leaseStore.read();
+            if (
+              current?.state === "active" && current.groupId === recovery.closedGroupId &&
+              current.sessionId === sessionId
+            ) {
+              matches.push({ current, leaseStore });
+            }
+          }
+          if (matches.length > 1) {
+            throw new DelegationError(
+              "delegation_lease_busy",
+              "reconciled delegation group has ambiguous durable repository leases",
+            );
+          }
+          const match = matches[0];
+          // Sessions created before the durable repository lease existed have
+          // only the event-layer group identity. They remain recoverable; all
+          // newly started groups are required to create this sidecar first.
+          if (match !== undefined) {
+            await match.leaseStore.release({
+              effectsReconciled: true,
+              expectedLeaseSha256: match.current.leaseSha256,
+              now: new Date().toISOString(),
+              reason: "reconciled",
+            });
+          }
+        }
+        return recovery;
+      },
+      acquireDelegationGroupLease: async (input) => {
+        const store = await DelegationGroupLeaseStore.create({
+          repositoryId: input.repositoryId,
+          root: delegationUserStateRoot(),
+        });
+        return store.acquire({
+          acquiredAt: new Date().toISOString(),
+          graphBindingSha256: input.graphBindingSha256,
+          groupId: input.groupId,
+          nonceSha256: input.nonceSha256,
+          ownerBackgroundOperationId: input.ownerBackgroundOperationId,
+          ownerKind: input.ownerKind,
+          ownerPid: input.ownerPid,
+          ownerProcessStartIdentity: input.ownerProcessStartIdentity,
+          parentActorId: input.parentActorId,
+          parentRunId: input.parentRunId,
+          sessionId: input.sessionId,
+        });
+      },
+      releaseDelegationGroupLease: async (input) => {
+        const stores = await DelegationGroupLeaseStore.listExisting(delegationUserStateRoot());
+        const matches = [];
+        for (const store of stores) {
+          const current = await store.read();
+          if (
+            current?.state === "active" && current.groupId === input.groupId &&
+            current.sessionId === input.sessionId
+          ) {
+            matches.push({ current, store });
+          }
+        }
+        if (matches.length !== 1) {
+          throw new DelegationError(
+            "delegation_lease_busy",
+            "delegation group has no unique active durable repository lease",
+          );
+        }
+        const match = matches[0]!;
+        if (
+          input.expectedLeaseSha256 !== undefined &&
+          input.expectedLeaseSha256 !== match.current.leaseSha256
+        ) {
+          throw new DelegationError("delegation_lease_busy", "delegation group release selector is stale");
+        }
+        return match.store.release({
+          effectsReconciled: input.effectsReconciled,
+          expectedLeaseSha256: match.current.leaseSha256,
+          now: new Date().toISOString(),
+          reason: input.reason,
+        });
+      },
+      reconcileDelegationGroupTakeover: async ({ delegationId, inputSurface, sessionId }) => {
+        const identity = currentProcessIdentity();
+        return new DelegationGroupTakeoverReconciler({
+          context: taskContext(sessionId, inputSurface),
+          currentIdentity: identity,
+          operationRoot: delegationUserStateRoot(),
+          ownerBackgroundOperationId: null,
+          ownerKind: "foreground",
+          ownerProbe: new NodeProcessIdentityProbe(identity),
+          writerFactory: delegationWriterFactory,
+        }).reconcile({ delegationId });
+      },
+      createDelegationChildLauncher: ({ approvalPrompt, inputSurface, io, observeSessionWriter, sessionId }) => new DelegationChildLauncher({
         approvalQueue: delegationApprovalQueue(sessionId),
         cliEntryPath: options.cliEntryPath!,
         context: taskContext(sessionId, inputSurface),
         environment: options.env,
+        ...(options.delegationHandshakeTimeoutMs === undefined
+          ? {}
+          : { handshakeTimeoutMs: options.delegationHandshakeTimeoutMs }),
         nodeExecutablePath: options.execPath,
         nodeVersion: options.nodeVersion,
         operationRoot: delegationUserStateRoot(),
-        prompt: options.approvalPromptOverride ?? new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
-        sessionWriterQueue: delegationWriterQueue(sessionId),
+        processTreeCleanup: createCleanup(),
+        prompt: approvalPrompt ?? options.approvalPromptOverride ?? new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
+        writerFactory: async (context) => {
+          const writer = await delegationWriterFactory(context);
+          observeSessionWriter?.(writer);
+          return writer;
+        },
       }),
+      delegationWriterFactory,
       delegationCoordinatorIdentity: () => {
         const identity = currentProcessIdentity();
         return { pid: process.pid, processStartIdentity: identity.startIdentity };
@@ -993,6 +1247,97 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         readonly operationId: string;
         readonly repositoryId: string;
       }) => new BackgroundWorkerRuntime({
+        coordinateDelegations: async (coordination) => {
+          let handledGroups = 0;
+          const identity = currentProcessIdentity();
+          const backgroundPrompt = new BackgroundDeferredApprovalPrompt(() => undefined);
+          const delegatedRuntime: CliRuntime = {
+            ...createNodeRuntime({
+              ...options,
+              approvalPromptOverride: backgroundPrompt,
+            }),
+            delegationCoordinatorIdentity: () => ({
+              backgroundOperationId: coordination.backgroundOperationId,
+              kind: "phase19_background_worker" as const,
+              pid: identity.pid,
+              processStartIdentity: identity.startIdentity,
+            }),
+          };
+          const readDelegatedState = async () => {
+            const factory = delegatedRuntime.delegationWriterFactory;
+            if (factory === undefined) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "background delegation coordinator has no serialized session writer",
+              );
+            }
+            const writer = await factory(taskContext(coordination.sessionId, "cli"));
+            try {
+              return reconstructMultiRunSession(writer.events);
+            } finally {
+              await writer.close();
+            }
+          };
+          while (!coordination.signal.aborted) {
+            const state = await readDelegatedState();
+            if (
+              state.background.current?.operationId !== coordination.backgroundOperationId ||
+              state.background.current.status !== "running" || state.taskExecution === null ||
+              state.taskExecution.graph.graphId !== coordination.graphId ||
+              state.taskExecution.graph.revision !== coordination.graphRevision ||
+              state.taskExecution.graph.graphSha256 !== coordination.graphSha256
+            ) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "background delegation coordination lost its exact Graph/session worker ownership",
+              );
+            }
+            const ready = state.delegations.revisions
+              .filter((revision) =>
+                revision.status === "queued" && revision.envelope !== null &&
+                revision.binding.graphId === coordination.graphId &&
+                revision.binding.graphRevision === coordination.graphRevision &&
+                revision.binding.graphSha256 === coordination.graphSha256)
+              .sort((left, right) =>
+                left.content.sequence - right.content.sequence ||
+                (left.delegationId < right.delegationId ? -1 : 1));
+            if (ready.length === 0) {
+              return Object.freeze({ handledGroups, requestedActionRef: null, status: "ready" as const });
+            }
+            const approvalBound = ready.find((revision) =>
+              revision.content.authorityRequest.taskProfile !== "read-only" ||
+              revision.content.authorityRequest.toolIds.length > 0);
+            if (approvalBound !== undefined) {
+              return Object.freeze({
+                handledGroups,
+                requestedActionRef: `delegation/${approvalBound.delegationId}/${approvalBound.delegationSha256}`,
+                status: "waiting_for_foreground_approval" as const,
+              });
+            }
+            const selected = ready[0]!;
+            const exitCode = await executeDelegationsStart({
+              delegationId: selected.delegationId,
+              inputSurface: "cli",
+              json: true,
+              sessionId: coordination.sessionId,
+            }, delegatedRuntime, input.io);
+            const observed = await readDelegatedState();
+            const matching = [...observed.delegations.revisions].reverse().find((revision) =>
+              revision.delegationId === selected.delegationId);
+            const groupClosed = matching !== undefined &&
+              ["accepted", "failed", "cancelled"].includes(matching.status) &&
+              observed.delegations.activeActorSlots.length === 0 &&
+              observed.delegations.activeConflictClaims.length === 0;
+            if (!groupClosed || (exitCode !== 0 && exitCode !== 8)) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "background delegated child did not reach a clean durable group boundary",
+              );
+            }
+            handledGroups += 1;
+          }
+          throw new BackgroundError("worker_control_stale", "background delegation coordination was cancelled");
+        },
         createExecutor: (executorInput) => createTaskAttemptExecutor(executorInput),
         currentCliEntryPath: options.cliEntryPath!,
         environment: options.env,

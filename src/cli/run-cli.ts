@@ -732,6 +732,7 @@ export async function runCli(
     .description("Run the event-driven interactive terminal UI.")
     .argument("[task]", "optional repository task; omit to open the idle screen")
     .option("--resume <session-id>", "resume one saved session")
+    .option("--inspect-session <session-id>", "open one saved session without starting a model run")
     .option(
       "--allow-degraded-resume",
       "explicitly accept canonical-only resume",
@@ -800,6 +801,7 @@ export async function runCli(
           sandboxPids?: string;
           sandboxTmpMib?: string;
           resume?: string;
+          inspectSession?: string;
           taskProfile?: string;
         },
       ) => {
@@ -835,6 +837,7 @@ export async function runCli(
             sandboxPids: options.sandboxPids,
             sandboxTmpMiB: options.sandboxTmpMib,
             resumeSessionId: options.resume,
+            ...(options.inspectSession === undefined ? {} : { inspectSessionId: options.inspectSession }),
             task,
             taskProfile: options.taskProfile,
           },

@@ -524,7 +524,10 @@ try {
   runCommand("git", ["config", "user.email", "m11-fixture@bornagent.local"], m11RepositoryRoot, m11Environment);
   runCommand("git", ["add", "--all"], m11RepositoryRoot, m11Environment);
   runCommand("git", ["commit", "--no-verify", "-m", "M11 canonical baseline"], m11RepositoryRoot, m11Environment);
-  const { createCanonicalPhase20Fixture } = await import(pathToFileURL(
+  const {
+    createCanonicalPhase20CodingFixture,
+    createCanonicalPhase20Fixture,
+  } = await import(pathToFileURL(
     join(
       packageRoot,
       "dist",
@@ -653,6 +656,355 @@ try {
         .filter(Boolean)
         .join("\n"),
     );
+  }
+
+  const backgroundGraphFile = "phase20-background-graph.json";
+  await writeFile(
+    join(m11RepositoryRoot, ".git", "info", "exclude"),
+    `${backgroundGraphFile}\n`,
+    "utf8",
+  );
+  const m11BackgroundStateRoot = join(temporaryRoot, "m11-background-state");
+  const m11BackgroundEnvironment = {
+    ...m11Environment,
+    LOCALAPPDATA: m11BackgroundStateRoot,
+    XDG_STATE_HOME: m11BackgroundStateRoot,
+  };
+  const backgroundFixture = await createCanonicalPhase20Fixture({
+    count: 0,
+    environment: m11BackgroundEnvironment,
+    platform: process.platform,
+    workspace: m11RepositoryRoot,
+  });
+  let backgroundSession = await new PackedSessionCatalog(m11RepositoryRoot).read(
+    backgroundFixture.sessionId,
+  );
+  const backgroundGoal = backgroundSession.taskState.goals.at(-1);
+  const backgroundPlan = backgroundSession.taskState.plans.at(-1);
+  if (backgroundGoal === undefined || backgroundPlan === undefined) {
+    throw new Error("packed Phase 20 background fixture has no exact Goal/Plan binding");
+  }
+  const backgroundBudget = {
+    maxArtifactBytes: 512 * 1024,
+    maxAttempts: 2,
+    maxChangedBytes: 32 * 1024,
+    maxChangedFiles: 4,
+    maxCommandExecutions: 2,
+    maxCommandOutputBytes: 256 * 1024,
+    maxDurationMs: 240_000,
+    maxModelSteps: 8,
+    maxReportedTokens: 4096,
+  };
+  const backgroundGraphPath = join(m11RepositoryRoot, backgroundGraphFile);
+  const backgroundGraphId = randomUUID();
+  await writeFile(backgroundGraphPath, JSON.stringify({
+    binding: {
+      goalId: backgroundGoal.content.goalId,
+      goalRevision: backgroundGoal.content.revision,
+      planId: backgroundPlan.content.planId,
+      planRevision: backgroundPlan.content.revision,
+      planSha256: backgroundPlan.planSha256,
+      sessionId: backgroundFixture.sessionId,
+    },
+    graphBudget: backgroundBudget,
+    graphId: backgroundGraphId,
+    nodes: [{
+      agent: { mode: "plan", taskProfile: "read-only" },
+      budget: backgroundBudget,
+      dependsOn: [],
+      kind: "agent",
+      nodeId: "inspect",
+      objective: "Coordinate two packed background read-only children.",
+      planItemIds: ["verify-controlled-subagent-contract"],
+      requiredCapabilities: [
+        `workspace:phase20-background-readonly@1.0.0/skill/gate#sha256:${"0".repeat(64)}`,
+      ],
+      retry: { automaticOn: [], maxAttempts: 1 },
+      sequence: 1,
+      title: "Packed worker controlled delegation",
+      workspace: { declaredPathPrefixes: ["src"], mode: "origin_read_only" },
+    }],
+    schemaVersion: 1,
+    title: "Packed Phase 20 background worker fixture",
+  }), "utf8");
+  const backgroundGraphReplace = spawnSync(
+    process.execPath,
+    [binaryPath, "graph", "replace", backgroundFixture.sessionId, "--file", backgroundGraphFile, "--json"],
+    { cwd: m11RepositoryRoot, encoding: "utf8", env: m11BackgroundEnvironment, shell: false },
+  );
+  if (backgroundGraphReplace.status !== 0) {
+    throw new Error([
+      `${basename(binaryPath)} graph replace packed Phase 20 background fixture failed`,
+      backgroundGraphReplace.error?.message,
+      backgroundGraphReplace.stdout,
+      backgroundGraphReplace.stderr,
+    ].filter(Boolean).join("\n"));
+  }
+  backgroundSession = await new PackedSessionCatalog(m11RepositoryRoot).read(
+    backgroundFixture.sessionId,
+  );
+  const backgroundGraph = backgroundSession.taskGraph.currentDraft;
+  if (backgroundGraph === null) {
+    throw new Error("packed Phase 20 background Graph draft identity is missing");
+  }
+  const backgroundGraphApprove = spawnSync(
+    process.execPath,
+    [
+      binaryPath,
+      "graph",
+      "approve",
+      backgroundFixture.sessionId,
+      "--revision",
+      String(backgroundGraph.revision),
+      "--sha256",
+      backgroundGraph.graphSha256,
+      "--json",
+    ],
+    { cwd: m11RepositoryRoot, encoding: "utf8", env: m11BackgroundEnvironment, shell: false },
+  );
+  if (backgroundGraphApprove.status !== 0) {
+    throw new Error([
+      `${basename(binaryPath)} graph approve packed Phase 20 background fixture failed`,
+      backgroundGraphApprove.error?.message,
+      backgroundGraphApprove.stdout,
+      backgroundGraphApprove.stderr,
+    ].filter(Boolean).join("\n"));
+  }
+  const backgroundDelegationIds = [];
+  for (const sequence of [1, 2]) {
+    const prepared = await createCanonicalPhase20CodingFixture({
+      graphId: backgroundGraph.graphId,
+      graphRevision: backgroundGraph.revision,
+      graphSha256: backgroundGraph.graphSha256,
+      goalId: backgroundGoal.content.goalId,
+      goalObjective: backgroundGoal.content.objective,
+      goalRevision: backgroundGoal.content.revision,
+      managedWorkspaceBaselineSha256: backgroundGraph.graphSha256,
+      managedWorkspaceId: randomUUID(),
+      nodeId: "inspect",
+      planId: backgroundPlan.content.planId,
+      planRevision: backgroundPlan.content.revision,
+      planSha256: backgroundPlan.planSha256,
+      sequence,
+      sessionId: backgroundFixture.sessionId,
+      taskProfile: "read-only",
+      workspace: m11RepositoryRoot,
+    });
+    backgroundDelegationIds.push(prepared.delegationId);
+  }
+  const backgroundGraphEnqueue = spawnSync(
+    process.execPath,
+    [
+      binaryPath,
+      "graph",
+      "enqueue",
+      backgroundFixture.sessionId,
+      "--revision",
+      String(backgroundGraph.revision),
+      "--sha256",
+      backgroundGraph.graphSha256,
+      "--runtime-profile",
+      "local-free",
+      "--background",
+      "--json",
+    ],
+    { cwd: m11RepositoryRoot, encoding: "utf8", env: m11BackgroundEnvironment, shell: false },
+  );
+  if (backgroundGraphEnqueue.status !== 0) {
+    throw new Error([
+      `${basename(binaryPath)} graph enqueue packed Phase 20 background fixture failed`,
+      backgroundGraphEnqueue.error?.message,
+      backgroundGraphEnqueue.stdout,
+      backgroundGraphEnqueue.stderr,
+    ].filter(Boolean).join("\n"));
+  }
+  const backgroundGraphRun = spawnSync(
+    process.execPath,
+    [binaryPath, "graph", "run", backgroundFixture.sessionId, "--background", "--json"],
+    {
+      cwd: m11RepositoryRoot,
+      encoding: "utf8",
+      env: m11BackgroundEnvironment,
+      shell: false,
+      timeout: 45_000,
+    },
+  );
+  if (backgroundGraphRun.status !== 0) {
+    throw new Error([
+      `${basename(binaryPath)} graph run packed Phase 20 background fixture failed`,
+      backgroundGraphRun.error?.message,
+      backgroundGraphRun.stdout,
+      backgroundGraphRun.stderr,
+    ].filter(Boolean).join("\n"));
+  }
+  let backgroundGraphRunDocument;
+  try {
+    backgroundGraphRunDocument = JSON.parse(backgroundGraphRun.stdout);
+  } catch {
+    backgroundGraphRunDocument = null;
+  }
+  const backgroundOperationId = backgroundGraphRunDocument?.result?.operationId;
+  const backgroundWorkerId = backgroundGraphRunDocument?.result?.workerId;
+  if (typeof backgroundOperationId !== "string" || typeof backgroundWorkerId !== "string") {
+    throw new Error("packed Phase 20 background worker launch receipt is invalid");
+  }
+  const {
+    BackgroundOperationStore: PackedBackgroundOperationStore,
+    resolveWorkerUserStateRoot: resolvePackedWorkerUserStateRoot,
+  } = await import(pathToFileURL(
+    join(packageRoot, "dist", "background", "background-operation-store.js"),
+  ).href);
+  const packedBackgroundOperationStore = await PackedBackgroundOperationStore.openExisting({
+    operationId: backgroundOperationId,
+    repositoryId: backgroundFixture.repositoryId,
+    root: resolvePackedWorkerUserStateRoot({
+      env: m11BackgroundEnvironment,
+      platform: process.platform,
+    }),
+  });
+  const { reconstructMultiRunSession: reconstructPackedSession } = await import(pathToFileURL(
+    join(packageRoot, "dist", "sessions", "reconstruct-multi-run-session.js"),
+  ).href);
+  const { readStoredSession: readPackedStoredSession } = await import(pathToFileURL(
+    join(packageRoot, "dist", "sessions", "read-stored-session.js"),
+  ).href);
+  const { SessionPathPolicy: PackedSessionPathPolicy } = await import(pathToFileURL(
+    join(packageRoot, "dist", "sessions", "session-path-policy.js"),
+  ).href);
+  const backgroundPaths = await (
+    await PackedSessionPathPolicy.create(m11RepositoryRoot)
+  ).inspectExistingSession(backgroundFixture.sessionId);
+  let packedBackgroundTerminal = null;
+  let lastPackedBackgroundObservation = null;
+  for (let observation = 0; observation < 900; observation += 1) {
+    const observed = reconstructPackedSession(
+      await readPackedStoredSession(backgroundPaths.sessionFilePath),
+    );
+    const revisions = backgroundDelegationIds.map((delegationId) =>
+      observed.delegations.revisions.find((candidate) => candidate.delegationId === delegationId));
+    let sessionLock = null;
+    try {
+      sessionLock = (await readFile(backgroundPaths.lockFilePath, "utf8")).trim();
+    } catch {
+      sessionLock = null;
+    }
+    const heartbeat = await packedBackgroundOperationStore.readHeartbeat();
+    lastPackedBackgroundObservation = {
+      activeActorSlots: observed.delegations.activeActorSlots.length,
+      activeConflictClaims: observed.delegations.activeConflictClaims.length,
+      background: observed.background.current?.status ?? null,
+      delegations: revisions.map((revision) => ({
+        binding: revision === undefined ? null : {
+          graphId: revision.binding.graphId,
+          graphRevision: revision.binding.graphRevision,
+          graphSha256: revision.binding.graphSha256,
+        },
+        envelope: revision?.envelope?.envelopeSha256 ?? null,
+        profile: revision?.content.authorityRequest.taskProfile ?? null,
+        receipt: revision?.receipt?.status ?? null,
+        status: revision?.status ?? null,
+      })),
+      graph: observed.taskExecution === null ? null : {
+        graphId: observed.taskExecution.graph.graphId,
+        graphRevision: observed.taskExecution.graph.revision,
+        graphSha256: observed.taskExecution.graph.graphSha256,
+        status: observed.taskExecution.status,
+      },
+      maximumObservedActiveChildren: observed.delegations.maximumObservedActiveChildren,
+      heartbeat: heartbeat === null ? null : {
+        lastDurableSessionSeq: heartbeat.lastDurableSessionSeq,
+        sequence: heartbeat.sequence,
+        workerPid: heartbeat.workerPid,
+      },
+      packSmokePid: process.pid,
+      sessionLock,
+      startedChildren: observed.events.filter((event) =>
+        event.scope === "session" && event.type === "delegation.child.started").length,
+      worker: observed.background.workers.at(-1)?.status ?? null,
+    };
+    if (
+      observed.background.current === null &&
+      revisions.every((revision) =>
+        revision?.status === "accepted" && revision.receipt?.status === "succeeded")
+    ) {
+      packedBackgroundTerminal = await new PackedSessionCatalog(m11RepositoryRoot).read(
+        backgroundFixture.sessionId,
+      );
+      break;
+    }
+    if (observed.background.current?.status === "reconciliation_required") {
+      // Preserve the first durable reconciliation terminal and let the shared
+      // failure block below report the operation journal, handoff, receipt,
+      // worker liveness, and exact projected resources together.
+      break;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  if (
+    packedBackgroundTerminal === null ||
+    packedBackgroundTerminal.delegations.maximumObservedActiveChildren !== 2 ||
+    packedBackgroundTerminal.delegations.activeActorSlots.length !== 0 ||
+    packedBackgroundTerminal.delegations.activeConflictClaims.length !== 0 ||
+    packedBackgroundTerminal.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.child.started").length !== 2 ||
+    packedBackgroundTerminal.background.workers.at(-1)?.status !== "terminal"
+  ) {
+    const failureDiagnostic = await packedBackgroundOperationStore.readFailureDiagnostic(
+      backgroundWorkerId,
+    );
+    const handoff = await packedBackgroundOperationStore.readHandoff();
+    const terminalReceipt = await packedBackgroundOperationStore.readTerminalReceipt(
+      backgroundWorkerId,
+    );
+    const failedWorkerPid = lastPackedBackgroundObservation?.heartbeat?.workerPid;
+    let workerAlive = null;
+    if (Number.isSafeInteger(failedWorkerPid) && failedWorkerPid > 0) {
+      try {
+        process.kill(failedWorkerPid, 0);
+        workerAlive = true;
+      } catch (error) {
+        if (error?.code === "ESRCH") workerAlive = false;
+      }
+    }
+    throw new Error(`packed Phase 19 worker did not close two packed Phase 20 children: ${JSON.stringify({
+      failureDiagnostic,
+      handoff,
+      lastObservation: lastPackedBackgroundObservation,
+      lockedTerminal: packedBackgroundTerminal === null ? null : {
+        activeActorSlots: packedBackgroundTerminal.delegations.activeActorSlots.length,
+        activeConflictClaims: packedBackgroundTerminal.delegations.activeConflictClaims.length,
+        maximumObservedActiveChildren: packedBackgroundTerminal.delegations.maximumObservedActiveChildren,
+        startedChildren: packedBackgroundTerminal.events.filter((event) =>
+          event.scope === "session" && event.type === "delegation.child.started").length,
+        worker: packedBackgroundTerminal.background.workers.at(-1)?.status ?? null,
+      },
+      terminalReceipt,
+      workerAlive,
+    })}`);
+  }
+  const terminalWorkerPid = lastPackedBackgroundObservation?.heartbeat?.workerPid;
+  if (!Number.isSafeInteger(terminalWorkerPid) || terminalWorkerPid <= 0) {
+    throw new Error("packed Phase 19 worker terminal observation has no valid worker PID");
+  }
+  let terminalWorkerExited = false;
+  let terminalHandoff = await packedBackgroundOperationStore.readHandoff();
+  for (let observation = 0; observation < 200; observation += 1) {
+    terminalHandoff = await packedBackgroundOperationStore.readHandoff();
+    try {
+      process.kill(terminalWorkerPid, 0);
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+      terminalWorkerExited = true;
+    }
+    if (terminalWorkerExited && terminalHandoff?.state === "terminal") break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  if (!terminalWorkerExited || terminalHandoff?.state !== "terminal") {
+    throw new Error(`packed Phase 19 worker left an incomplete OS lifecycle: ${JSON.stringify({
+      handoff: terminalHandoff,
+      terminalWorkerExited,
+      terminalWorkerPid,
+    })}`);
   }
 
   const graphDoctor = spawnSync(
@@ -1053,7 +1405,12 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two offline real delegated child processes through sealed handshakes and isolated session shards, accepted two verified receipts, released the parent barrier and all actor/conflict claims, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
-  await rm(temporaryRoot, { force: true, recursive: true });
+  await rm(temporaryRoot, {
+    force: true,
+    maxRetries: 10,
+    recursive: true,
+    retryDelay: 100,
+  });
 }

@@ -401,7 +401,16 @@ export class TaskExecutionProjector {
           }
           const used = consumption(data.budget);
           if (!within(used, zero(used.reportedTokens === null ? null : 0), active.reservation)) {
-            throw new TaskGraphError("task_graph_invalid", "attempt consumption exceeds its reservation");
+            const attemptReservation = active.reservation;
+            const exceeded = TASK_BUDGET_COUNTERS.filter((counter) => {
+              const maximum = attemptReservation[counter];
+              const actual = used[counter];
+              return maximum !== null && (actual === null || actual > maximum);
+            }).map((counter) => `${counter}=${String(used[counter])}/${String(attemptReservation[counter])}`);
+            throw new TaskGraphError(
+              "task_graph_invalid",
+              `attempt consumption exceeds its reservation: ${exceeded.join(", ")}`,
+            );
           }
           reserved = {
             artifactBytes: reserved.artifactBytes - active.reservation.artifactBytes,

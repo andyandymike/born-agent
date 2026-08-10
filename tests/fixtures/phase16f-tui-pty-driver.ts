@@ -12,6 +12,10 @@ const workspacePath = workspace;
 const appEntryPath = appEntry;
 const repositoryLifecycle = process.argv[4] === "repository";
 const capabilityLifecycle = process.argv[4] === "capability";
+const delegationCodingCancelLifecycle = process.argv[4] === "delegation-coding-cancel";
+const delegationCodingLifecycle = process.argv[4] === "delegation-coding";
+const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle;
+const delegationLifecycle = process.argv[4] === "delegation";
 const graphLifecycle = process.argv[4] === "graph";
 const hookApprovalLifecycle = process.argv[4] === "hook-approval";
 
@@ -123,6 +127,10 @@ function shellLaunch(): {
     workspacePath,
     ...(capabilityLifecycle
       ? ["capability"]
+      : delegationCodingAnyLifecycle
+        ? [delegationCodingCancelLifecycle ? "delegation-coding-cancel" : "delegation-coding"]
+      : delegationLifecycle
+        ? ["delegation"]
       : graphLifecycle
         ? ["graph"]
         : hookApprovalLifecycle
@@ -197,7 +205,7 @@ async function main(): Promise<void> {
         exitSubscription.dispose();
         reject(
           new Error(
-            `${label}: PTY exited early (${String(value.exitCode)}); tail=${visibleText(raw).slice(-4_000)}`,
+            `${label}: PTY exited early (${String(value.exitCode)}); tail=${visibleText(raw).slice(-20_000)}`,
           ),
         );
       });
@@ -206,7 +214,7 @@ async function main(): Promise<void> {
         exitSubscription.dispose();
         reject(
           new Error(
-            `${label}: timed out; tail=${visibleText(raw).slice(-4_000)}`,
+            `${label}: timed out; tail=${visibleText(raw).slice(-20_000)}`,
           ),
         );
       }, timeoutMs);
@@ -226,11 +234,12 @@ async function main(): Promise<void> {
   const confirmRetainedDraftUntil = async (
     predicate: (plain: string) => boolean,
     label: string,
+    maximumAttempts = 120,
   ): Promise<void> => {
     // A watcher refresh deliberately keeps a command draft instead of rebinding
     // its stale Enter intent. Repeated Enter here is an explicit PTY user
     // confirmation of those same visible bytes; an empty draft is inert.
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
       if (predicate(visibleText(raw))) return;
       await delay(100);
       if (predicate(visibleText(raw))) return;
@@ -242,6 +251,207 @@ async function main(): Promise<void> {
   try {
     await delay(100);
     terminal.write(`${launch.appCommand}\r`);
+    if (delegationCodingAnyLifecycle) {
+      await waitFor((plain) => plain.includes("DELEGATIONS | 1") && plain.includes("INPUT"), "coding delegation panel", 25_000);
+      terminal.resize(118, 39);
+      const resized = terminal.cols === 118 && terminal.rows === 39;
+      terminal.write("d");
+      await waitFor((plain) => plain.includes("Canonical managed-worktree coding child"), "coding delegation detail");
+      terminal.write("s");
+      await waitFor((plain) => plain.includes("DELEGATION DECISION | START_OR_RESUME"), "coding delegation start confirmation");
+      terminal.write("\u001b[C");
+      await waitFor((plain) => plain.includes("[CONFIRM]"), "coding delegation start confirm focus");
+      // Do not retry Enter across modal boundaries: a delayed duplicate can
+      // become the default-deny decision for the child's first effect.
+      await delay(300);
+      terminal.write("\r");
+      const patchApprovalVisible = (plain: string) =>
+        plain.includes("APPROVAL | apply_patch") &&
+        plain.includes("CHILD APPROVAL | actor=") &&
+        plain.includes("action=apply_patch");
+      await waitFor(patchApprovalVisible, "actor-bound child patch approval", 35_000);
+      if (delegationCodingCancelLifecycle) {
+        terminal.write("\u0003");
+        await waitFor(
+          (plain) => plain.includes("#1 cancelled Canonical managed-worktree coding child"),
+          "cancelled coding child",
+          25_000,
+        );
+        // Cancellation and app exit are separate decisions. The second
+        // Ctrl+C is issued only after durable child cleanup is visible.
+        terminal.write("\u0003");
+        await waitFor((plain) => plain.replace(/\s+/gu, "").includes(
+          "PTY_CODING_CANCEL_SNAPSHOT={\"accepted\":0,\"activeActorSlots\":0,\"activeConflictClaims\":0,\"approvedEffects\":0,\"cancelRequests\":1,\"cancelled\":1,\"childApprovalRequests\":1,\"childStartCount\":1}",
+        ), "coding cancellation snapshot");
+        await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "coding cancellation app exit");
+        terminal.write(`${launch.proofCommand}\r`);
+        await waitFor((plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2, "coding cancellation shell restore");
+        terminal.write(`${launch.exitCommand}\r`);
+        const terminalExit = await Promise.race([
+          exitPromise,
+          delay(12_000).then(() => {
+            throw new Error("Phase 20 coding cancellation PTY app did not exit");
+          }),
+        ]);
+        const plain = visibleText(raw);
+        process.stdout.write(JSON.stringify({
+          appExitCode: 0,
+          cancelledVisible: plain.includes("#1 cancelled Canonical managed-worktree coding child"),
+          childPatchApprovalVisible: patchApprovalVisible(plain),
+          cleanProjectionVisible: plain.replace(/\s+/gu, "").includes(
+            "PTY_CODING_CANCEL_SNAPSHOT={\"accepted\":0,\"activeActorSlots\":0,\"activeConflictClaims\":0,\"approvedEffects\":0,\"cancelRequests\":1,\"cancelled\":1,\"childApprovalRequests\":1,\"childStartCount\":1}",
+          ),
+          outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+          resized,
+          shellExitCode: terminalExit.exitCode,
+          shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+          signal: canonicalPtySignal(terminalExit.signal),
+        }), () => process.exit(0));
+        return;
+      }
+      terminal.resize(103, 33);
+      await delay(300);
+      const patchAllowBaseline = visibleText(raw).split("[ALLOW]").length - 1;
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        terminal.write("y");
+        await delay(100);
+        if (visibleText(raw).split("[ALLOW]").length - 1 > patchAllowBaseline) break;
+      }
+      await waitFor((plain) => plain.split("[ALLOW]").length - 1 > patchAllowBaseline, "child patch allow focus");
+      terminal.write("\r");
+      const commandApprovalVisible = (plain: string) =>
+        plain.includes("APPROVAL | run_command") && plain.includes("action=run_command");
+      await waitFor(commandApprovalVisible, "actor-bound child command approval");
+      const commandAllowBaseline = visibleText(raw).split("[ALLOW]").length - 1;
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        terminal.write("y");
+        await delay(100);
+        if (visibleText(raw).split("[ALLOW]").length - 1 > commandAllowBaseline) break;
+      }
+      await waitFor((plain) => plain.split("[ALLOW]").length - 1 > commandAllowBaseline, "child command allow focus");
+      terminal.write("\r");
+      await waitFor(
+        (plain) => plain.includes("#1 accepted Canonical managed-worktree coding child"),
+        "accepted coding child",
+      );
+      terminal.write("v");
+      await waitFor((plain) => plain.includes("RECEIPT |") && plain.includes("status=succeeded"), "coding change receipt");
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.replace(/\s+/gu, "").includes(
+        "PTY_CODING_DELEGATION_SNAPSHOT={\"accepted\":1,\"activeActorSlots\":0,\"activeConflictClaims\":0,\"approvedEffects\":2,\"cancelRequests\":0,\"cancelled\":0,\"childApprovalRequests\":2,\"childStartCount\":1}",
+      ), "coding delegation snapshot");
+      await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "coding delegation app exit");
+      terminal.write(`${launch.proofCommand}\r`);
+      await waitFor((plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2, "coding delegation shell restore");
+      terminal.write(`${launch.exitCommand}\r`);
+      const terminalExit = await Promise.race([
+        exitPromise,
+        delay(12_000).then(() => {
+          throw new Error("Phase 20 coding delegation PTY app did not exit");
+        }),
+      ]);
+      const plain = visibleText(raw);
+      process.stdout.write(JSON.stringify({
+        appExitCode: 0,
+        childCommandApprovalVisible: plain.includes("APPROVAL | run_command") && plain.includes("action=run_command"),
+        childPatchApprovalVisible: plain.includes("APPROVAL | apply_patch") && plain.includes("action=apply_patch"),
+        outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+        receiptVisible: plain.includes("RECEIPT |") && plain.includes("status=succeeded"),
+        resized,
+        shellExitCode: terminalExit.exitCode,
+        shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+        signal: canonicalPtySignal(terminalExit.signal),
+      }), () => process.exit(0));
+      return;
+    }
+    if (delegationLifecycle) {
+      await waitFor(
+        (plain) => plain.includes("DELEGATIONS | 3") && plain.includes("INPUT"),
+        "Phase 20 delegation panel header",
+        20_000,
+      );
+      terminal.resize(118, 39);
+      const resized = terminal.cols === 118 && terminal.rows === 39;
+      terminal.write("d");
+      await waitFor((plain) => plain.includes("DELEGATION DETAIL |") && plain.includes("Canonical read-only child 1"), "delegation detail");
+      terminal.write("j");
+      await delay(150);
+      terminal.write("j");
+      await waitFor((plain) => plain.includes("#3 draft Canonical PTY rejection child") && plain.includes("Reject this exact third delegation"), "third proposed delegation");
+      terminal.write("r");
+      await waitFor((plain) => plain.includes("DELEGATION DECISION | REJECT"), "delegation reject confirmation");
+      terminal.write("\u001b[C");
+      await waitFor((plain) => plain.includes("[CONFIRM]"), "delegation reject confirm focus");
+      terminal.write("\r");
+      await waitFor((plain) => plain.includes("#3 rejected Canonical PTY rejection child"), "delegation rejected result");
+      terminal.write("k");
+      await delay(150);
+      terminal.write("k");
+      await delay(150);
+      terminal.write("s");
+      await waitFor((plain) => plain.includes("DELEGATION DECISION | START_OR_RESUME"), "delegation start confirmation");
+      terminal.write("\u001b[C");
+      await waitFor((plain) => plain.includes("[CONFIRM]"), "delegation start confirm focus");
+      terminal.write("\r");
+      await waitFor((plain) => plain.includes("actors=2/2"), "two active Phase 20 children", 30_000);
+      await waitFor(
+        (plain) => plain.includes("#1 accepted Canonical read-only child 1") && plain.includes("#2 accepted Canonical read-only child 2"),
+        "two accepted Phase 20 receipts",
+        45_000,
+      );
+      terminal.write("v");
+      await waitFor((plain) => plain.includes("RECEIPT |") && plain.includes("status=succeeded"), "verified child receipt");
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.includes("PTY_DELEGATION_SNAPSHOT={\"accepted\":2,\"childStartCount\":2,\"rejected\":1,\"receipts\":2}"), "first delegation snapshot");
+      await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "first delegation app exit");
+      terminal.write(`${launch.proofCommand}\r`);
+      await waitFor((plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2, "first restored parent shell");
+
+      const delegationHeaderCount = visibleText(raw).split("DELEGATIONS | 3").length - 1;
+      terminal.write(`${launch.appCommand}\r`);
+      await waitFor(
+        (plain) => plain.split("DELEGATIONS | 3").length - 1 > delegationHeaderCount,
+        "replayed Phase 20 delegation panel",
+        20_000,
+      );
+      terminal.write("d");
+      await delay(250);
+      terminal.write("v");
+      await waitFor(
+        (plain) => plain.split("RECEIPT |").length - 1 >= 2 && plain.includes("status=succeeded"),
+        "replayed verified child receipt",
+      );
+      terminal.write("\u0003");
+      await waitFor((plain) => plain.split("PTY_APP_EXIT=0").length - 1 >= 2, "second delegation app exit");
+      await waitFor(
+        (plain) => plain.split("PTY_DELEGATION_SNAPSHOT={\"accepted\":2,\"childStartCount\":2,\"rejected\":1,\"receipts\":2}").length - 1 >= 2,
+        "stable replay snapshot",
+      );
+      terminal.write(`${launch.proofCommand}\r`);
+      await waitFor((plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 4, "second restored parent shell");
+      terminal.write(`${launch.exitCommand}\r`);
+      const terminalExit = await Promise.race([
+        exitPromise,
+        delay(12_000).then(() => {
+          throw new Error("Phase 20 delegation PTY app did not exit");
+        }),
+      ]);
+      const plain = visibleText(raw);
+      process.stdout.write(JSON.stringify({
+        appExitCode: 0,
+        delegationRejected: plain.includes("#3 rejected Canonical PTY rejection child"),
+        maximumActiveChildrenVisible: plain.includes("actors=2/2"),
+        outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+        receiptsVisible: plain.includes("#1 accepted Canonical read-only child 1") && plain.includes("#2 accepted Canonical read-only child 2"),
+        replayStable: plain.split("PTY_DELEGATION_SNAPSHOT={\"accepted\":2,\"childStartCount\":2,\"rejected\":1,\"receipts\":2}").length - 1 >= 2,
+        resized,
+        shellExitCode: terminalExit.exitCode,
+        shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 4,
+        signal: canonicalPtySignal(terminalExit.signal),
+        verifiedReceiptVisible: plain.includes("RECEIPT |") && plain.includes("status=succeeded"),
+      }), () => process.exit(0));
+      return;
+    }
     if (hookApprovalLifecycle) {
       const approve = async (actionKind: string, label: string): Promise<void> => {
         await waitFor(

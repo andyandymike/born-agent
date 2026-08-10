@@ -10,6 +10,7 @@ import type {
 import type {
   DecodedStoredEvent,
 } from "../events/event-decoder-registry.js";
+import { phase20DelegationSessionEventDataSchemas } from "../delegation/delegation-event-schema.js";
 import { sanitizeTerminalText } from "./terminal-sanitizer.js";
 import type {
   ApprovalExpiryReason,
@@ -72,6 +73,10 @@ export type TuiPersistedEvent =
   | UnsupportedDurableEvent;
 
 const KNOWN_EVENT_TYPES = new Set<string>([
+  // Phase 20 session events are projected outside the transcript reducer, but
+  // they are still known durable facts. Treating them as future/unsupported
+  // would fail-close the TUI before the delegation projector can render them.
+  ...Object.keys(phase20DelegationSessionEventDataSchemas),
   "agent.step.completed",
   "agent.step.started",
   "approval.decided",

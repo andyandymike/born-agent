@@ -62,6 +62,12 @@ function key(runId: string, localId: string): string {
  */
 export function taskMutationBlocker(
   session: ReconstructedMultiRunSession,
+  options: {
+    readonly ignorePendingToolCall?: {
+      readonly callId: string;
+      readonly runId: string;
+    };
+  } = {},
 ): TaskMutationBlocker | null {
   if (session.lastRun === null) return null;
 
@@ -76,7 +82,12 @@ export function taskMutationBlocker(
     switch (event.type) {
       case "tool.call.requested":
       case "resume.pending_call.adopted":
-        calls.add(key(event.runId, event.data.call_id));
+        if (
+          options.ignorePendingToolCall?.runId !== event.runId ||
+          options.ignorePendingToolCall.callId !== event.data.call_id
+        ) {
+          calls.add(key(event.runId, event.data.call_id));
+        }
         break;
       case "tool.call.completed":
       case "tool.call.recovered":

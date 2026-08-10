@@ -124,7 +124,8 @@ export class DelegationBudgetLedger {
     if (this.#state.reservations.some((item) => item.reservationId === input.reservationId || item.childAttemptId === input.childAttemptId)) {
       throw new DelegationError("delegation_budget_exhausted", "budget reservation identity is already used");
     }
-    if (!fits(this.#state.maximum, this.#state.held, input.requested)) {
+    const committed = add(this.#state.held, usageToBudget(this.#state.used));
+    if (!fits(this.#state.maximum, committed, input.requested)) {
       throw new DelegationError("delegation_budget_exhausted", "delegation budget would oversubscribe the parent ledger");
     }
     const content = {

@@ -57,10 +57,62 @@ jobs:
       - name: Verify repository
         run: pnpm check
 
-      - name: Verify built background worker
+      - name: Verify built worker and Phase 20 child paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: pnpm exec vitest run tests/integration/phase19d-background-worker.test.ts --maxWorkers=1
+        run: >-
+          pnpm exec vitest run
+          tests/integration/phase19d-background-worker.test.ts
+          tests/integration/phase20c-coding-worktree.test.ts
+          tests/integration/phase20d-background-worker-delegation.test.ts
+          tests/integration/phase20d-background-worker-readonly.test.ts
+          tests/integration/phase20e-tui-pty.test.ts
+          tests/integration/phase20e-coding-tui-pty.test.ts
+          tests/integration/phase20e-promotion-composition.test.ts
+          --maxWorkers=1
+
+      - name: Smoke packed artifact
+        run: pnpm pack:smoke
+
+  windows-phase20:
+    name: windows-phase20
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.13.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify repository
+        run: pnpm check
+
+      - name: Verify Windows Phase 20 child and PTY paths
+        env:
+          BORN_RUN_BUILT_WORKER_TEST: "1"
+        run: >-
+          pnpm exec vitest run
+          tests/integration/phase20c-coding-worktree.test.ts
+          tests/integration/phase20d-background-worker-delegation.test.ts
+          tests/integration/phase20d-background-worker-readonly.test.ts
+          tests/integration/phase20e-tui-pty.test.ts
+          tests/integration/phase20e-coding-tui-pty.test.ts
+          tests/integration/phase20e-promotion-composition.test.ts
+          --maxWorkers=1
 
       - name: Smoke packed artifact
         run: pnpm pack:smoke

@@ -37,6 +37,7 @@ export function phase20Budget(overrides: Partial<TaskGraphBudgetV1> = {}): TaskG
 export function phase20Content(input: {
   readonly coding?: boolean;
   readonly delegationId?: string;
+  readonly retry?: boolean;
   readonly sequence?: number;
 } = {}): DelegationRevisionContentV1 {
   const coding = input.coding === true;
@@ -66,12 +67,17 @@ export function phase20Content(input: {
       toolIds: coding ? ["apply_patch", "finish_task", "read_file"] : ["read_file", "search"],
       capabilityIds: [],
     },
-    budget: phase20Budget(coding ? { maxChangedBytes: 4096, maxChangedFiles: 1 } : {}),
+    budget: phase20Budget({
+      ...(coding ? { maxChangedBytes: 4096, maxChangedFiles: 1 } : {}),
+      ...(input.retry === true ? { maxAttempts: 2 } : {}),
+    }),
     workspace: coding
       ? { mode: "managed_worktree", sourceSnapshotSha256: SHA, managedWorkspaceId: IDS.workspace, declaredPathPrefixes: ["src"] }
       : { mode: "origin_read_only", sourceSnapshotSha256: SHA, managedWorkspaceId: null, declaredPathPrefixes: ["src"] },
     model: { strategy: "same_as_parent", exactProfileId: null, exactProviderId: null, exactModelId: null },
-    retry: { maxAttempts: 1, automaticOn: [] },
+    retry: input.retry === true
+      ? { maxAttempts: 2, automaticOn: ["pre_effect_infrastructure_failure"] }
+      : { maxAttempts: 1, automaticOn: [] },
     delegationId: input.delegationId ?? IDS.delegation,
     binding: {
       sessionId: IDS.session,
@@ -96,6 +102,7 @@ export function phase20Revision(input: {
   readonly coding?: boolean;
   readonly delegationId?: string;
   readonly envelope?: boolean;
+  readonly retry?: boolean;
   readonly sequence?: number;
   readonly status?: DelegationStatusV1;
 } = {}): DelegationRevisionProjectionV1 {
@@ -119,6 +126,7 @@ export function phase20Revision(input: {
       envelope: artifact,
       envelopeSha256: identity.delegationSha256,
     } : null,
+    envelopePreparationCount: input.envelope === true ? 1 : 0,
     parentActorId: IDS.parent,
     parentRunId: IDS.parent,
     receipt: null,
