@@ -9,7 +9,13 @@ param(
   [string] $PagesUrl = 'https://andyandymike.github.io/born-agent/',
 
   [Parameter()]
-  [string] $RulesetName = 'Protect default branch',
+  [string] $InvariantRulesetName = 'Protect default branch invariants',
+
+  [Parameter()]
+  [string] $ContributionRulesetName = 'Require reviewed default branch changes',
+
+  [Parameter()]
+  [string] $LocalDeployKeyTitle = 'BornAgent local main push',
 
   [Parameter()]
   [switch] $DryRun
@@ -133,14 +139,24 @@ if ($DryRun) {
     topics = $topics
     workflow_permissions = $workflowPermissions
     pages = $pagesSource
-    ruleset = [ordered]@{
-      name = $RulesetName
-      target = 'branch'
-      enforcement = 'active'
-      bypass_actor = 'authenticated user (resolved at runtime)'
-      target_ref = '~DEFAULT_BRANCH'
-      rules = @('deletion', 'non_fast_forward', 'required_linear_history', 'pull_request', 'required_status_checks:quality')
-    }
+    rulesets = @(
+      [ordered]@{
+        name = $InvariantRulesetName
+        target = 'branch'
+        enforcement = 'active'
+        bypass_actor = 'none'
+        target_ref = '~DEFAULT_BRANCH'
+        rules = @('deletion', 'non_fast_forward', 'required_linear_history')
+      },
+      [ordered]@{
+        name = $ContributionRulesetName
+        target = 'branch'
+        enforcement = 'active'
+        bypass_actor = "write deploy key '$LocalDeployKeyTitle'"
+        target_ref = '~DEFAULT_BRANCH'
+        rules = @('pull_request', 'required_status_checks:quality')
+      }
+    )
     security = @('vulnerability alerts', 'automated security fixes', 'private vulnerability reporting', 'secret scanning', 'push protection')
   } | ConvertTo-Json -Depth 12
   exit 0
@@ -152,8 +168,6 @@ $repositoryState = Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository"
 if (-not $repositoryState.permissions.admin) {
   throw "The authenticated GitHub account does not have admin permission for $Repository."
 }
-
-$viewer = Invoke-GitHubApi -Method GET -Endpoint 'user'
 
 if (-not (Test-GitHubEndpoint -Endpoint "repos/$Repository/contents/docs/index.html?ref=main")) {
   throw 'docs/index.html is not present on remote main. Commit and push the local open-source setup before applying Pages and branch rules.'
@@ -169,14 +183,39 @@ if ($null -eq $latestCiRun -or $latestCiRun.conclusion -ne 'success') {
   throw 'The CI workflow has no successful completed run on main. Wait for quality to pass before applying the required status check.'
 }
 
-$ruleset = [ordered]@{
-  name = $RulesetName
+$deployKeys = @(Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/keys")
+$writeDeployKeys = @($deployKeys | Where-Object { $_.read_only -eq $false })
+$localDeployKeys = @($writeDeployKeys | Where-Object { $_.title -eq $LocalDeployKeyTitle })
+if ($writeDeployKeys.Count -ne 1 -or $localDeployKeys.Count -ne 1) {
+  throw "Exactly one write-enabled deploy key named '$LocalDeployKeyTitle' is required before enabling the local-machine bypass."
+}
+
+$invariantRuleset = [ordered]@{
+  name = $InvariantRulesetName
+  target = 'branch'
+  enforcement = 'active'
+  bypass_actors = @()
+  conditions = [ordered]@{
+    ref_name = [ordered]@{
+      include = @('~DEFAULT_BRANCH')
+      exclude = @()
+    }
+  }
+  rules = @(
+    [ordered]@{ type = 'deletion' },
+    [ordered]@{ type = 'non_fast_forward' },
+    [ordered]@{ type = 'required_linear_history' }
+  )
+}
+
+$contributionRuleset = [ordered]@{
+  name = $ContributionRulesetName
   target = 'branch'
   enforcement = 'active'
   bypass_actors = @(
     [ordered]@{
-      actor_id = [long] $viewer.id
-      actor_type = 'User'
+      actor_id = $null
+      actor_type = 'DeployKey'
       bypass_mode = 'always'
     }
   )
@@ -187,9 +226,6 @@ $ruleset = [ordered]@{
     }
   }
   rules = @(
-    [ordered]@{ type = 'deletion' },
-    [ordered]@{ type = 'non_fast_forward' },
-    [ordered]@{ type = 'required_linear_history' },
     [ordered]@{
       type = 'pull_request'
       parameters = [ordered]@{
@@ -245,19 +281,22 @@ catch {
   Write-Warning 'Secret scanning or push protection could not be changed for this repository or plan. Other settings remain applied.'
 }
 
-Write-Host "Creating or updating ruleset '$RulesetName'..."
+Write-Host 'Creating or updating default-branch rulesets...'
 $existingRulesets = @(Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/rulesets")
-$existingRuleset = $existingRulesets | Where-Object { $_.name -eq $RulesetName } | Select-Object -First 1
-if ($null -eq $existingRuleset) {
-  $null = Invoke-GitHubApi -Method POST -Endpoint "repos/$Repository/rulesets" -Body $ruleset
-}
-else {
-  $null = Invoke-GitHubApi -Method PUT -Endpoint "repos/$Repository/rulesets/$($existingRuleset.id)" -Body $ruleset
+foreach ($ruleset in @($invariantRuleset, $contributionRuleset)) {
+  $existingRuleset = $existingRulesets | Where-Object { $_.name -eq $ruleset.name } | Select-Object -First 1
+  if ($null -eq $existingRuleset) {
+    $null = Invoke-GitHubApi -Method POST -Endpoint "repos/$Repository/rulesets" -Body $ruleset
+  }
+  else {
+    $null = Invoke-GitHubApi -Method PUT -Endpoint "repos/$Repository/rulesets/$($existingRuleset.id)" -Body $ruleset
+  }
 }
 
 $finalRepository = Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository"
 $finalPages = Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/pages"
 $finalRulesets = @(Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/rulesets")
+$finalDeployKeys = @(Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/keys")
 
 [ordered]@{
   repository = $finalRepository.full_name
@@ -266,6 +305,7 @@ $finalRulesets = @(Invoke-GitHubApi -Method GET -Endpoint "repos/$Repository/rul
   pages_url = $finalPages.html_url
   pages_source = "$($finalPages.source.branch):$($finalPages.source.path)"
   rulesets = @($finalRulesets | ForEach-Object { $_.name })
+  write_deploy_keys = @($finalDeployKeys | Where-Object { $_.read_only -eq $false } | ForEach-Object { $_.title })
   default_workflow_permissions = 'read'
   private_vulnerability_reporting = 'enabled'
 } | ConvertTo-Json -Depth 8
