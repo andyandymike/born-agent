@@ -61,7 +61,7 @@ jobs:
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
         run: >-
-          pnpm test --
+          pnpm test
           tests/integration/phase19d-background-worker.test.ts
           tests/integration/phase20c-pre-effect-retry.test.ts
           tests/integration/phase20c-coding-worktree.test.ts
@@ -130,7 +130,7 @@ jobs:
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
         run: >-
-          pnpm test --
+          pnpm test
           tests/integration/phase20c-pre-effect-retry.test.ts
           tests/integration/phase20c-coding-worktree.test.ts
           tests/integration/phase20d-background-worker-delegation.test.ts
