@@ -316,7 +316,25 @@ export class TuiController {
       return { consume: true };
     }
     if (matchesKey(data, Key.ctrl("d"))) {
+      const activeDelegation = this.currentDelegations().find((delegation) =>
+        ["active", "waiting_approval", "cancelling", "reconciling"].includes(delegation.status));
       if (
+        this.ephemeralState.delegationDecisionDialog === null &&
+        this.ephemeralState.planDecisionDialog === null &&
+        this.activeCoreRun !== null &&
+        activeDelegation !== undefined
+      ) {
+        this.ephemeralState = selectDelegation(this.ephemeralState, activeDelegation.delegationId);
+        this.openDelegationDecision(
+          "cancel",
+          "Exit requested while this foreground child is active",
+          true,
+        );
+        this.scheduleRender();
+        return { consume: true };
+      }
+      if (
+        this.ephemeralState.delegationDecisionDialog === null &&
         this.ephemeralState.planDecisionDialog === null &&
         this.activeCoreRun === null &&
         (this.coordinator === null ||
@@ -620,6 +638,7 @@ export class TuiController {
   private openDelegationDecision(
     action: TuiDelegationDecisionDialog["action"],
     reason: string | null = null,
+    exitAfterCancel = false,
   ): void {
     const selected = this.selectedDelegation();
     const sessionId = this.viewState.session.id;
@@ -651,6 +670,7 @@ export class TuiController {
     this.ephemeralState = openDelegationDecisionDialog(this.ephemeralState, {
       action,
       delegationId: selected.delegationId,
+      exitAfterCancel,
       expectedSessionSeq: this.viewState.session.lastSessionSeq,
       objective: selected.content.objective,
       reason,
@@ -693,8 +713,11 @@ export class TuiController {
       // channel. Cancelling that exact core operation lets the launcher append
       // the durable cancel request before sending IPC; a second CLI mutation
       // cannot safely impersonate the live channel owner.
+      if (dialog.exitAfterCancel) this.exitWhenIdle = true;
       this.options.core.cancelActiveRun();
-      this.showCommandDiagnostic("Delegated child cancellation requested; waiting for durable reconciliation.");
+      this.showCommandDiagnostic(dialog.exitAfterCancel
+        ? "Exit confirmed: cancelling the exact foreground child and waiting for durable reconciliation before exit."
+        : "Delegated child cancellation requested; waiting for durable reconciliation.");
       return;
     }
     if (this.options.core.delegationCommand === undefined) {

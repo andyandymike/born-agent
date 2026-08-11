@@ -147,11 +147,12 @@ M11 is not yet marked passed. Proven pre-effect failures now settle durably and
 may create one fresh attempt-two envelope, including after exact resume recovery.
 Windows read-only and coding ConPTY flows, actor-bound child effect approvals,
 active-child modal cancellation with separate TUI exit, managed-worktree change
-receipts, takeover competition, and the Phase 19 foreground-approval handoff are
-covered. A canonical coding receipt now also completes the existing M10
+receipts, an explicit default-cancel exit decision, two-child coordinator
+kill/takeover, and the Phase 19 foreground-approval handoff are covered. A
+canonical coding receipt now also completes the existing M10
 promotion and origin-verification flow. The packed tarball proves a short-lived
 CLI can hand off to a Phase 19 worker which owns and closes two read-only
 children; the foreground and worker-owned paths accept four verified receipts
-in total. Exact-commit cross-platform CI, Linux PTY, and the remaining kill and
-exit-handoff matrix remain closure gates. Nested agents, daemon/remote workers,
+in total. Exact-candidate cross-platform CI, unsandboxed process-tree cleanup,
+PTY, and Pages deployment remain closure gates. Nested agents, daemon/remote workers,
 automatic routing or promotion, commit, push, and PR remain unsupported.

@@ -40,8 +40,9 @@ if (workspaceArgument === undefined) {
 const workspace: string = workspaceArgument;
 const capabilityLifecycle = process.argv[3] === "capability";
 const delegationCodingCancelLifecycle = process.argv[3] === "delegation-coding-cancel";
+const delegationCodingExitCancelLifecycle = process.argv[3] === "delegation-coding-exit-cancel";
 const delegationCodingLifecycle = process.argv[3] === "delegation-coding";
-const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle;
+const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle || delegationCodingExitCancelLifecycle;
 const delegationLifecycle = process.argv[3] === "delegation";
 const graphLifecycle = process.argv[3] === "graph";
 const hookApprovalLifecycle = process.argv[3] === "hook-approval";
@@ -616,7 +617,7 @@ if (delegationCodingAnyLifecycle) {
     childApprovalRequests: session.events.filter((event) => event.scope === "session" && event.type === "delegation.child.approval_waiting").length,
     childStartCount: session.events.filter((event) => event.scope === "session" && event.type === "delegation.child.started").length,
   };
-  process.stdout.write(delegationCodingCancelLifecycle
+  process.stdout.write(delegationCodingCancelLifecycle || delegationCodingExitCancelLifecycle
     ? `\nPTY_CODING_CANCEL_SNAPSHOT=${JSON.stringify(codingSnapshot)}\n`
     : `\nPTY_CODING_DELEGATION_SNAPSHOT=${JSON.stringify(codingSnapshot)}\n`);
 }

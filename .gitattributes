@@ -1,11 +1,10 @@
-fixtures/phase-06-command-execution/*.mjs text eol=lf
-fixtures/phase-07-*/verify.mjs text eol=lf
-fixtures/phase-07-*/src/*.mjs text eol=lf
+# Checked-in fixtures are byte-addressed inputs for patches, package review,
+# repository benchmarks, and process tests. Fresh Windows clones must expose
+# the same bytes as Linux instead of applying core.autocrlf checkout rewrites.
+fixtures/** text eol=lf
+tests/fixtures/** text eol=lf
 package.json text eol=lf
 pnpm-lock.yaml text eol=lf
-evals/**/*.json text eol=lf
-evals/**/*.md text eol=lf
-evals/**/*.mjs text eol=lf
-evals/**/*.txt text eol=lf
+evals/** text eol=lf
 policies/*.json text eol=lf
 docker/artifacts/** text eol=lf

@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +24,7 @@ import { createMemoryIO } from "../helpers.js";
 
 const execFile = promisify(nodeExecFile);
 const roots: string[] = [];
+const realBuiltProcessTreeTest = process.env.BORN_RUN_BUILT_WORKER_TEST === "1" ? it : it.skip;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true, maxRetries: 5 })));
@@ -36,6 +37,7 @@ async function git(cwd: string, ...args: string[]): Promise<void> {
 async function createRetryHarness(
   childFixture = "phase20-pre-effect-child.mjs",
   handshakeTimeoutMs = 50,
+  cancellationGraceMs = 5_000,
 ) {
   const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-retry-"));
   roots.push(root);
@@ -75,22 +77,98 @@ async function createRetryHarness(
     LOCALAPPDATA: stateRoot,
     XDG_STATE_HOME: stateRoot,
   };
+  let cancelListener: (() => void) | null = null;
   const runtime = createNodeRuntime({
     approvalInput: { interactive: false, readLine: async () => null },
     cliEntryPath: join(childPackage, "dist", "cli.js"),
     cwd: workspace,
+    delegationCancellationGraceMs: cancellationGraceMs,
     delegationHandshakeTimeoutMs: handshakeTimeoutMs,
     delegationUserStateRoot: stateRoot,
     env: environment,
     execPath: process.execPath,
     killProcess: (identity, signal) => process.kill(identity, signal),
     nodeVersion: process.versions.node,
-    onCancel: () => () => undefined,
+    onCancel: (listener) => {
+      cancelListener = listener;
+      return () => {
+        if (cancelListener === listener) cancelListener = null;
+      };
+    },
     platform: process.platform,
     version: "0.0.0",
     workerUserStateRoot: stateRoot,
   });
-  return Object.freeze({ fixture, runtime, stateRoot, workspace });
+  return Object.freeze({
+    cancelForeground: () => {
+      if (cancelListener === null) throw new Error("foreground cancellation listener is not active");
+      cancelListener();
+    },
+    fixture,
+    runtime,
+    stateRoot,
+    workspace,
+  });
+}
+
+async function waitForChildStart(
+  workspace: string,
+  sessionId: string,
+  earlyExit: () => number | null,
+  stderr: () => string,
+): Promise<void> {
+  const sessionPath = join(workspace, ".bornagent", "sessions", `${sessionId}.jsonl`);
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const exited = earlyExit();
+    if (exited !== null) {
+      throw new Error(`delegated child command exited before start (${String(exited)}): ${stderr()}`);
+    }
+    try {
+      const bytes = await readFile(sessionPath, "utf8");
+      if (bytes.includes('"type":"delegation.child.started"')) return;
+    } catch {
+      // A concurrent append can expose a transient observation failure. This
+      // raw read never competes for the mutation lock and is not terminal proof.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("real delegated child did not cross the durable start barrier");
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (!processAlive(pid)) return true;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  return !processAlive(pid);
+}
+
+async function waitForIgnoredCancelEvidence(path: string, key: "startObserved" | "cancelObserved") {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      const evidence = JSON.parse(await readFile(path, "utf8")) as {
+        readonly cancelObserved: boolean;
+        readonly childPid: number;
+        readonly grandchildPid: number;
+        readonly startObserved: boolean;
+      };
+      if (evidence[key]) return evidence;
+    } catch {
+      // The real child replaces this tiny evidence file synchronously. Retry a
+      // transient partial observation; the bounded loop remains authoritative.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error(`ignored-cancel child never recorded ${key}`);
 }
 
 describe("Phase 20C durable pre-effect automatic retry", () => {
@@ -471,5 +549,69 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
     expect(await DelegationOperationStore.listExisting(stateRoot)).toHaveLength(1);
     const observation = (await runtime.inspectDelegationOperations?.(fixture.sessionId))?.[0];
     expect(observation?.reconcile.kind).toBe("blocked_unknown_effect");
+  }, 30_000);
+
+  realBuiltProcessTreeTest("bounds an ignored durable cancellation and verifies cleanup of the real child process tree", async () => {
+    const { cancelForeground, fixture, runtime, stateRoot, workspace } = await createRetryHarness(
+      "phase20-ignore-cancel-child.mjs",
+      500,
+      100,
+    );
+    const io = createMemoryIO();
+    const startedAt = Date.now();
+    let earlyExit: number | null = null;
+    const running = runCli([
+      "delegations",
+      "start",
+      "--session",
+      fixture.sessionId,
+      "--delegation",
+      fixture.delegationIds[0]!,
+      "--json",
+    ], io.io, runtime);
+    void running.then((exitCode) => { earlyExit = exitCode; });
+    await waitForChildStart(workspace, fixture.sessionId, () => earlyExit, io.readStderr);
+    const stores = await DelegationOperationStore.listExisting(stateRoot);
+    expect(stores).toHaveLength(1);
+    const operationBeforeCancel = await stores[0]!.read();
+    if (operationBeforeCancel === null) throw new Error("ignored-cancel operation is missing");
+    const evidencePath = join(
+      stateRoot,
+      "delegations",
+      "operations",
+      "v1",
+      operationBeforeCancel.operationId,
+      "ignored-cancel-tree.json",
+    );
+    const tree = await waitForIgnoredCancelEvidence(evidencePath, "startObserved");
+    expect(tree.childPid).toBe(operationBeforeCancel.process?.pid);
+    expect(processAlive(tree.childPid)).toBe(true);
+    expect(processAlive(tree.grandchildPid)).toBe(true);
+
+    cancelForeground();
+    await waitForIgnoredCancelEvidence(evidencePath, "cancelObserved");
+    expect(await running, io.readStderr()).toBe(130);
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    const blocked = await new SessionCatalog(workspace).read(fixture.sessionId);
+    expect(blocked.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.cancel.requested")).toHaveLength(1);
+    expect(blocked.delegations.revisions[0]).toMatchObject({ status: "blocked" });
+    expect(blocked.delegations.activeActorSlots).toHaveLength(1);
+    expect(blocked.delegations.activeConflictClaims).toHaveLength(1);
+    expect(blocked.delegations.budget.held.attempts).toBe(2);
+    const operationAfterCancel = await stores[0]!.read();
+    expect(operationAfterCancel).toMatchObject({
+      failure: {
+        code: "delegation_effect_reconciliation_required",
+        phase: "after_start_barrier",
+      },
+      processCleanup: {
+        pid: tree.childPid,
+        verified: true,
+      },
+      state: "blocked",
+    });
+    expect(await waitForProcessExit(tree.childPid)).toBe(true);
+    expect(await waitForProcessExit(tree.grandchildPid)).toBe(true);
   }, 30_000);
 });

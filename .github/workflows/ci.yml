@@ -61,11 +61,13 @@ jobs:
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
         run: >-
-          pnpm exec vitest run
+          pnpm test --
           tests/integration/phase19d-background-worker.test.ts
+          tests/integration/phase20c-pre-effect-retry.test.ts
           tests/integration/phase20c-coding-worktree.test.ts
           tests/integration/phase20d-background-worker-delegation.test.ts
           tests/integration/phase20d-background-worker-readonly.test.ts
+          tests/integration/phase20d-real-coordinator-takeover.test.ts
           tests/integration/phase20e-tui-pty.test.ts
           tests/integration/phase20e-coding-tui-pty.test.ts
           tests/integration/phase20e-promotion-composition.test.ts
@@ -95,6 +97,29 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
 
+      - name: Install pinned ripgrep
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"
+          $download = Join-Path $env:RUNNER_TEMP $archive
+          $installRoot = Join-Path $env:RUNNER_TEMP "ripgrep"
+          $assetUrl = "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$archive"
+          Invoke-WebRequest -Uri $assetUrl -OutFile $download
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash.ToLowerInvariant()
+          $expectedSha256 = "124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a"
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "ripgrep archive SHA-256 mismatch: $actualSha256"
+          }
+          Expand-Archive -LiteralPath $download -DestinationPath $installRoot -Force
+          $binaryRoot = Join-Path $installRoot "ripgrep-15.1.0-x86_64-pc-windows-msvc"
+          $binary = Join-Path $binaryRoot "rg.exe"
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "ripgrep archive did not contain the expected rg.exe"
+          }
+          $binaryRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $binary --version
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -105,10 +130,12 @@ jobs:
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
         run: >-
-          pnpm exec vitest run
+          pnpm test --
+          tests/integration/phase20c-pre-effect-retry.test.ts
           tests/integration/phase20c-coding-worktree.test.ts
           tests/integration/phase20d-background-worker-delegation.test.ts
           tests/integration/phase20d-background-worker-readonly.test.ts
+          tests/integration/phase20d-real-coordinator-takeover.test.ts
           tests/integration/phase20e-tui-pty.test.ts
           tests/integration/phase20e-coding-tui-pty.test.ts
           tests/integration/phase20e-promotion-composition.test.ts

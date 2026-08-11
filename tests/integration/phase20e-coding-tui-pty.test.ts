@@ -39,6 +39,7 @@ interface CodingCancelPtyEvidence {
   readonly cancelledVisible: boolean;
   readonly childPatchApprovalVisible: boolean;
   readonly cleanProjectionVisible: boolean;
+  readonly exitChoiceVisible?: boolean;
   readonly outputBase64: string;
   readonly resized: boolean;
   readonly shellExitCode: number;
@@ -108,6 +109,40 @@ describe("Phase 20E real PTY child effect approvals", () => {
       signal: null,
     });
     expect(raw).toContain("PTY_CODING_CANCEL_SNAPSHOT=");
+    expect(raw).toContain("PTY_SHELL_RESTORED");
+  }, 120_000);
+
+  realBuiltCodingPtyTest("confirms exit with an active foreground child, cancels it exactly, and restores the shell", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "b20cep-"));
+    workspaces.push(workspace);
+    const driver = fileURLToPath(new URL("../fixtures/phase16f-tui-pty-driver.ts", import.meta.url));
+    const app = fileURLToPath(new URL("../fixtures/phase16f-tui-pty-app.ts", import.meta.url));
+    const result = await withRealPtyTestLock(() => execFileAsync(
+      process.execPath,
+      ["--import", import.meta.resolve("tsx"), driver, workspace, app, "delegation-coding-exit-cancel"],
+      {
+        cwd: workspace,
+        env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 110_000,
+        windowsHide: true,
+      },
+    ));
+    const evidence = JSON.parse(result.stdout.trim()) as CodingCancelPtyEvidence;
+    const raw = Buffer.from(evidence.outputBase64, "base64").toString("utf8");
+    expect(evidence).toMatchObject({
+      appExitCode: 0,
+      cancelledVisible: true,
+      childPatchApprovalVisible: true,
+      cleanProjectionVisible: true,
+      exitChoiceVisible: true,
+      resized: true,
+      shellExitCode: 0,
+      shellRestored: true,
+      signal: null,
+    });
+    expect(raw).toContain("EXIT WITH ACTIVE CHILD");
+    expect(raw).toContain("BACKGROUND HANDOFF UNAVAILABLE");
     expect(raw).toContain("PTY_SHELL_RESTORED");
   }, 120_000);
 });

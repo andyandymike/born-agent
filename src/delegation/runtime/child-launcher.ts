@@ -347,6 +347,7 @@ async function verifyDurableApprovalRequest(input: {
 }
 
 function waitTerminal(input: {
+  readonly cancellationGraceMs: number;
   readonly child: ChildProcess;
   readonly context: TaskMutationContext;
   readonly envelope: ExecutableChildEnvelopeV1;
@@ -365,6 +366,14 @@ function waitTerminal(input: {
     let deliveredCancelRequestId: string | null = null;
     let cancelPollBusy = false;
     let cancelPoll: ReturnType<typeof setInterval> | null = null;
+    let cancellationGrace: ReturnType<typeof setTimeout> | null = null;
+    const armCancellationGrace = () => {
+      if (cancellationGrace !== null || settled) return;
+      cancellationGrace = setTimeout(() => finish(new DelegationError(
+        "delegation_effect_reconciliation_required",
+        "child ignored the bounded cancellation grace and requires verified process-tree cleanup",
+      )), input.cancellationGraceMs);
+    };
     const cancelModal = () => {
       cancellationRequested = true;
       if (cancelPoll !== null) {
@@ -377,6 +386,7 @@ function waitTerminal(input: {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (cancellationGrace !== null) clearTimeout(cancellationGrace);
       if (cancelPoll !== null) clearInterval(cancelPoll);
       input.signal?.removeEventListener("abort", requestSignalCancellation);
       abort.abort();
@@ -457,6 +467,7 @@ function waitTerminal(input: {
         } finally {
           await cancelWriter.close();
         }
+        armCancellationGrace();
         await send(input.child, {
           schemaVersion: 1,
           protocolVersion: 1,
@@ -492,6 +503,7 @@ function waitTerminal(input: {
         ) {
           deliveredCancelRequestId = requested.data.cancel_request_id;
           cancelModal();
+          armCancellationGrace();
           await send(input.child, {
             schemaVersion: 1,
             protocolVersion: 1,
@@ -589,6 +601,7 @@ export interface DelegationWorkspaceFinalizationV1 {
 export class DelegationChildLauncher {
   constructor(private readonly options: {
     readonly childFactory?: DelegationChildProcessFactoryV1;
+    readonly cancellationGraceMs?: number;
     readonly cliEntryPath: string;
     readonly context: TaskMutationContext;
     readonly environment: Readonly<Record<string, string | undefined>>;
@@ -633,6 +646,13 @@ export class DelegationChildLauncher {
       readonly changeBundleSha256: string | null;
     };
   }): Promise<DelegationChildLaunchResultV1> {
+    const cancellationGraceMs = this.options.cancellationGraceMs ?? 5_000;
+    if (!Number.isSafeInteger(cancellationGraceMs) || cancellationGraceMs < 1 || cancellationGraceMs > 30_000) {
+      throw new DelegationError(
+        "delegation_child_protocol_invalid",
+        "delegated child cancellation grace must be a bounded positive integer",
+      );
+    }
     const cancelled = () => input.signal?.aborted === true;
     if (cancelled()) {
       throw new DelegationError("delegation_cancelled", "delegated child launch was cancelled before admission");
@@ -955,6 +975,7 @@ export class DelegationChildLauncher {
     }
     const activeChild = child;
     const terminalFrame = await waitTerminal({
+      cancellationGraceMs,
       child: activeChild,
       context: this.options.context,
       envelope: executableEnvelope,

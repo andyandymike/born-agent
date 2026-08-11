@@ -71,6 +71,12 @@ export function renderDelegationPanel(
   const decisionModal = decision === null
     ? []
     : [
+        ...(decision.exitAfterCancel
+          ? [
+              "EXIT WITH ACTIVE CHILD | foreground child remains attached until exact cancellation reconciles",
+              "BACKGROUND HANDOFF UNAVAILABLE | Phase 19 cannot transfer an already-active foreground child",
+            ]
+          : []),
         `DELEGATION DECISION | ${decision.action.toUpperCase()} | ${decision.delegationId} r${String(decision.revision)}`,
         `sha256=${decision.sha256} | status=${decision.status}`,
         `${decision.title}: ${decision.objective}`,

@@ -23,6 +23,7 @@ export interface TuiPlanDecisionDialog {
 export interface TuiDelegationDecisionDialog {
   readonly action: "approve" | "cancel" | "reject" | "start_or_resume";
   readonly delegationId: string;
+  readonly exitAfterCancel: boolean;
   readonly expectedSessionSeq: number;
   readonly objective: string;
   readonly reason: string | null;

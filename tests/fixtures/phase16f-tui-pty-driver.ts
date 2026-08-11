@@ -13,8 +13,9 @@ const appEntryPath = appEntry;
 const repositoryLifecycle = process.argv[4] === "repository";
 const capabilityLifecycle = process.argv[4] === "capability";
 const delegationCodingCancelLifecycle = process.argv[4] === "delegation-coding-cancel";
+const delegationCodingExitCancelLifecycle = process.argv[4] === "delegation-coding-exit-cancel";
 const delegationCodingLifecycle = process.argv[4] === "delegation-coding";
-const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle;
+const delegationCodingAnyLifecycle = delegationCodingLifecycle || delegationCodingCancelLifecycle || delegationCodingExitCancelLifecycle;
 const delegationLifecycle = process.argv[4] === "delegation";
 const graphLifecycle = process.argv[4] === "graph";
 const hookApprovalLifecycle = process.argv[4] === "hook-approval";
@@ -128,7 +129,11 @@ function shellLaunch(): {
     ...(capabilityLifecycle
       ? ["capability"]
       : delegationCodingAnyLifecycle
-        ? [delegationCodingCancelLifecycle ? "delegation-coding-cancel" : "delegation-coding"]
+        ? [delegationCodingExitCancelLifecycle
+            ? "delegation-coding-exit-cancel"
+            : delegationCodingCancelLifecycle
+              ? "delegation-coding-cancel"
+              : "delegation-coding"]
       : delegationLifecycle
         ? ["delegation"]
       : graphLifecycle
@@ -270,6 +275,52 @@ async function main(): Promise<void> {
         plain.includes("CHILD APPROVAL | actor=") &&
         plain.includes("action=apply_patch");
       await waitFor(patchApprovalVisible, "actor-bound child patch approval", 35_000);
+      if (delegationCodingExitCancelLifecycle) {
+        terminal.write("\u0004");
+        await waitFor(
+          (plain) => plain.includes("EXIT WITH ACTIVE CHILD") &&
+            plain.includes("BACKGROUND HANDOFF UNAVAILABLE") &&
+            plain.includes("DELEGATION DECISION | CANCEL"),
+          "active child exit confirmation",
+        );
+        terminal.write("\u001b[C");
+        await waitFor((plain) => plain.includes("[CONFIRM]"), "active child exit confirm focus");
+        terminal.write("\r");
+        await waitFor(
+          (plain) => plain.includes("#1 cancelled Canonical managed-worktree coding child"),
+          "exit-cancelled coding child",
+          25_000,
+        );
+        await waitFor((plain) => plain.replace(/\s+/gu, "").includes(
+          "PTY_CODING_CANCEL_SNAPSHOT={\"accepted\":0,\"activeActorSlots\":0,\"activeConflictClaims\":0,\"approvedEffects\":0,\"cancelRequests\":1,\"cancelled\":1,\"childApprovalRequests\":1,\"childStartCount\":1}",
+        ), "exit cancellation snapshot");
+        await waitFor((plain) => plain.includes("PTY_APP_EXIT=0"), "exit cancellation app exit");
+        terminal.write(`${launch.proofCommand}\r`);
+        await waitFor((plain) => plain.split("PTY_SHELL_RESTORED").length - 1 >= 2, "exit cancellation shell restore");
+        terminal.write(`${launch.exitCommand}\r`);
+        const terminalExit = await Promise.race([
+          exitPromise,
+          delay(12_000).then(() => {
+            throw new Error("Phase 20 active child exit cancellation PTY app did not exit");
+          }),
+        ]);
+        const plain = visibleText(raw);
+        process.stdout.write(JSON.stringify({
+          appExitCode: 0,
+          cancelledVisible: plain.includes("#1 cancelled Canonical managed-worktree coding child"),
+          childPatchApprovalVisible: patchApprovalVisible(plain),
+          cleanProjectionVisible: plain.replace(/\s+/gu, "").includes(
+            "PTY_CODING_CANCEL_SNAPSHOT={\"accepted\":0,\"activeActorSlots\":0,\"activeConflictClaims\":0,\"approvedEffects\":0,\"cancelRequests\":1,\"cancelled\":1,\"childApprovalRequests\":1,\"childStartCount\":1}",
+          ),
+          exitChoiceVisible: plain.includes("EXIT WITH ACTIVE CHILD") && plain.includes("BACKGROUND HANDOFF UNAVAILABLE"),
+          outputBase64: Buffer.from(raw, "utf8").toString("base64"),
+          resized,
+          shellExitCode: terminalExit.exitCode,
+          shellRestored: plain.split("PTY_SHELL_RESTORED").length - 1 >= 2,
+          signal: canonicalPtySignal(terminalExit.signal),
+        }), () => process.exit(0));
+        return;
+      }
       if (delegationCodingCancelLifecycle) {
         terminal.write("\u0003");
         await waitFor(

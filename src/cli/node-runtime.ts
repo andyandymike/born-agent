@@ -137,6 +137,7 @@ export interface NodeRuntimeOptions {
   readonly worktreeUserStateRoot?: string;
   readonly workerUserStateRoot?: string;
   readonly delegationUserStateRoot?: string;
+  readonly delegationCancellationGraceMs?: number;
   readonly delegationHandshakeTimeoutMs?: number;
 }
 
@@ -1169,6 +1170,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         cliEntryPath: options.cliEntryPath!,
         context: taskContext(sessionId, inputSurface),
         environment: options.env,
+        ...(options.delegationCancellationGraceMs === undefined
+          ? {}
+          : { cancellationGraceMs: options.delegationCancellationGraceMs }),
         ...(options.delegationHandshakeTimeoutMs === undefined
           ? {}
           : { handshakeTimeoutMs: options.delegationHandshakeTimeoutMs }),
