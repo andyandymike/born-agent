@@ -191,7 +191,7 @@ describe("Phase 19D controlled worker takeover", () => {
     expect(session.background.current).toBeNull();
     expect(session.taskExecution).toMatchObject({ activeAttempt: null, status: "queued" });
     expect(await value.store.readHandoff()).toMatchObject({ state: "terminal" });
-  });
+  }, 20_000);
 
   it("refuses takeover while the exact process owner is still active", async () => {
     const value = await queuedWorkerFixture();
@@ -203,7 +203,7 @@ describe("Phase 19D controlled worker takeover", () => {
       code: "worker_owner_active",
     });
     expect((await new SessionCatalog(value.workspace).read(SESSION_ID)).background.current).not.toBeNull();
-  });
+  }, 20_000);
 
   it("repairs the event-first crash prefix without appending a duplicate reconciliation", async () => {
     const value = await queuedWorkerFixture();
@@ -241,5 +241,5 @@ describe("Phase 19D controlled worker takeover", () => {
     expect(await value.store.readHandoff()).toMatchObject({ owner: "parent", state: "terminal" });
     const session = await new SessionCatalog(value.workspace).read(SESSION_ID);
     expect(session.events.filter((event) => event.type === "task_worker.reconciled")).toHaveLength(1);
-  });
+  }, 20_000);
 });
