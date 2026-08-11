@@ -148,7 +148,11 @@ function shellLaunch(): {
     return {
       appCommand,
       args: ["/d", "/q"],
-      exitCommand: "exit",
+      // The driver has already verified the app exit marker and restored-shell
+      // proof before closing its parent shell. Do not let an unrelated stale
+      // cmd.exe ERRORLEVEL turn that deterministic harness shutdown into a
+      // false application failure.
+      exitCommand: "exit /b 0",
       file: process.env.ComSpec ?? "cmd.exe",
       proofCommand: "echo PTY_SHELL_RESTORED",
     };
@@ -156,7 +160,7 @@ function shellLaunch(): {
   return {
     appCommand,
     args: ["-i"],
-    exitCommand: "exit",
+    exitCommand: "exit 0",
     file: process.env.SHELL ?? "/bin/sh",
     proofCommand: "printf 'PTY_SHELL_RESTORED\\n'",
   };
