@@ -124,13 +124,13 @@ automatic commits/pushes/PRs, or unsafe worktree deletion.
 
 ## Controlled subagents
 
-Phase 20 adds an implementation candidate for explicit, authority-attenuated
+Phase 20 implements explicit, authority-attenuated
 delegation. A user reviews one exact delegation revision; the Host then freezes
 a minimal typed context capsule and independent model, tool, capability, budget,
 workspace, environment, and approval envelope. A sealed local Node child cannot
 inherit the parent transcript, secrets, approvals, leases, or delegation tools.
 
-The current Windows candidate can run up to two conflict-free children while
+The M11 baseline can run up to two conflict-free children while
 the parent is suspended behind a durable barrier. Each child writes an isolated
 session shard, and the Host imports durable events and accepts only a canonical,
 verified structured receipt. Useful surfaces include:
@@ -143,9 +143,9 @@ corepack pnpm dev delegations receipt --session <id> --delegation <id> --json
 corepack pnpm dev delegations doctor --session <id> --json
 ```
 
-M11 is not yet marked passed. Proven pre-effect failures now settle durably and
+M11 passed on 2026-08-11. Proven pre-effect failures settle durably and
 may create one fresh attempt-two envelope, including after exact resume recovery.
-Windows read-only and coding ConPTY flows, actor-bound child effect approvals,
+Linux PTY and Windows read-only/coding ConPTY flows, actor-bound child effect approvals,
 active-child modal cancellation with separate TUI exit, managed-worktree change
 receipts, an explicit default-cancel exit decision, two-child coordinator
 kill/takeover, and the Phase 19 foreground-approval handoff are covered. A
@@ -153,6 +153,9 @@ canonical coding receipt now also completes the existing M10
 promotion and origin-verification flow. The packed tarball proves a short-lived
 CLI can hand off to a Phase 19 worker which owns and closes two read-only
 children; the foreground and worker-owned paths accept four verified receipts
-in total. Exact-candidate cross-platform CI, unsandboxed process-tree cleanup,
-PTY, and Pages deployment remain closure gates. Nested agents, daemon/remote workers,
-automatic routing or promotion, commit, push, and PR remain unsupported.
+in total. On exact candidate `6e1fe9481434c68fcb5611c33d19323df81ac3a8`,
+[Linux and Windows CI](https://github.com/andyandymike/born-agent/actions/runs/31499670681)
+passed the full suite, required process-tree/child/PTY paths, and packed-artifact
+smoke; the matching [Pages deployment](https://github.com/andyandymike/born-agent/actions/runs/31499669597)
+also passed. Nested agents, daemon/remote workers, automatic routing or promotion,
+commit, push, and PR remain unsupported.
