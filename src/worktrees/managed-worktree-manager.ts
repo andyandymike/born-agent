@@ -11,7 +11,13 @@ import type { TaskNodeSpecV1 } from "../task-graph/task-graph-schema.js";
 import type { GitWorktreePort } from "./git-worktree-port.js";
 import { ManagedWorktreePolicy } from "./managed-worktree-policy.js";
 import { WorktreeError } from "./worktree-errors.js";
-import { captureOriginBaseline, captureWorkspaceSnapshot, type WorkspaceSnapshotCaptureV1 } from "./workspace-baseline.js";
+import {
+  captureOriginBaseline,
+  captureOriginBaselineManifest,
+  captureWorkspaceSnapshot,
+  captureWorkspaceSnapshotManifest,
+  type WorkspaceSnapshotCaptureV1,
+} from "./workspace-baseline.js";
 import { materializeWorkspaceBaseline } from "./workspace-materializer.js";
 import { WorktreeOperationJournal, type WorktreeOperationRecordV1 } from "./worktree-operation-journal.js";
 import { workspaceAllocationPlanSchema, type ManagedWorktreeIdentityV1, type WorkspaceAllocationPlanV1 } from "./worktree-schema.js";
@@ -180,7 +186,7 @@ export class ManagedWorktreeManager {
     if (decision !== "approved") {
       throw new WorktreeError("worktree_approval_denied", decision === "cancelled" ? "worktree allocation was cancelled" : "worktree allocation was denied");
     }
-    const fresh = await captureOriginBaseline({ allowDirty: input.allowDirty, git: this.options.git, originRoot: this.options.context.workspace });
+    const fresh = await captureOriginBaselineManifest({ allowDirty: input.allowDirty, git: this.options.git, originRoot: this.options.context.workspace });
     if (
       sha256Canonical(fresh.observation.identity) !== sha256Canonical(baseline.observation.identity) ||
       fresh.manifest.manifestSha256 !== baseline.manifest.manifestSha256 ||
@@ -380,7 +386,7 @@ export class ManagedWorktreeManager {
     if (input.signal.aborted) throw new WorktreeError("worktree_approval_denied", "worktree cleanup was cancelled");
     const workspace = await this.locate(input);
     const baseline = await this.#baselineEntries(workspace.identity.workspaceId);
-    let snapshot = await captureWorkspaceSnapshot({
+    const snapshot = await captureWorkspaceSnapshot({
       baselineManifestSha256: baseline.manifestSha256,
       workspaceId: workspace.identity.workspaceId,
       workspaceRoot: workspace.workspacePath,
@@ -421,7 +427,7 @@ export class ManagedWorktreeManager {
       if (decision !== "approved") {
         throw new WorktreeError("worktree_approval_denied", decision === "cancelled" ? "worktree cleanup was cancelled" : "worktree cleanup was denied");
       }
-      const current = await captureWorkspaceSnapshot({
+      const current = await captureWorkspaceSnapshotManifest({
         baselineManifestSha256: baseline.manifestSha256,
         workspaceId: workspace.identity.workspaceId,
         workspaceRoot: workspace.workspacePath,
@@ -429,7 +435,6 @@ export class ManagedWorktreeManager {
       if (current.manifest.snapshotSha256 !== snapshot.manifest.snapshotSha256) {
         throw new WorktreeError("worktree_identity_stale", "managed worktree changed after archive approval");
       }
-      snapshot = current;
     }
     const graph = (() => {
       const writerPromise = this.writerFactory(this.options.context);

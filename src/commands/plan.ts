@@ -3,6 +3,7 @@ import type { CliIO, CliRuntime } from "../cli/types.js";
 import {
   taskMutationBlocker,
 } from "../coordination/task-control-plane.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import type {
   PlanRevisionProjection,
   PlanRevisionRef,
@@ -127,7 +128,7 @@ export async function executePlanShow(
 ): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const applicationView = runtime.controlPlaneStateRoot === undefined
+    const applicationView = isDomainHarnessRuntime(runtime)
       ? null
       : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
     if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
@@ -216,7 +217,7 @@ export async function executePlanReplace(
       options.file,
     );
     const goalRevision = positiveRevision(options.goalRevision, "goal revision");
-    const plan = runtime.controlPlaneStateRoot === undefined
+    const plan = isDomainHarnessRuntime(runtime)
       ? await new PlanStore(taskWriterFactory(runtime)).replaceDraft({ base, context: taskMutationContext(runtime, options.sessionId), editablePlan, goalId: options.goalId, goalRevision })
       : (await executeTaskActionThroughApplicationService({
           actionKind: "plan.propose",
@@ -247,7 +248,7 @@ async function previewDecision(
   const goalRevision = positiveRevision(options.goalRevision, "goal revision");
   const revision = positiveRevision(options.revision, "plan revision");
   const sha256 = sha256Schema.parse(options.sha256);
-  const applicationReview = runtime.controlPlaneStateRoot === undefined
+  const applicationReview = isDomainHarnessRuntime(runtime)
     ? null
     : await queryPlanReviewThroughApplicationService({
         io,
@@ -281,7 +282,7 @@ export async function executePlanApprove(
     const identity = await previewDecision(options, runtime, io);
     if ("exitCode" in identity) return identity.exitCode;
     const payload = { decision: "approve" as const, goalId: options.goalId, goalRevision: identity.goalRevision, planId: options.planId, revision: identity.revision, sha256: identity.sha256 };
-    const plan = runtime.controlPlaneStateRoot === undefined
+    const plan = isDomainHarnessRuntime(runtime)
       ? await new PlanStore(taskWriterFactory(runtime)).approveDraft({
           context: taskMutationContext(runtime, options.sessionId),
           goalId: payload.goalId,
@@ -311,7 +312,7 @@ export async function executePlanReject(
     const identity = await previewDecision(options, runtime, io);
     if ("exitCode" in identity) return identity.exitCode;
     const payload = { decision: "reject" as const, goalId: options.goalId, goalRevision: identity.goalRevision, planId: options.planId, reason: options.reason, revision: identity.revision, sha256: identity.sha256 };
-    const plan = runtime.controlPlaneStateRoot === undefined
+    const plan = isDomainHarnessRuntime(runtime)
       ? await new PlanStore(taskWriterFactory(runtime)).rejectDraft({
           context: taskMutationContext(runtime, options.sessionId),
           goalId: payload.goalId,

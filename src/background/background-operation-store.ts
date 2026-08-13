@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { join, parse, resolve, sep } from "node:path";
 
 import { z } from "zod";
@@ -8,11 +8,14 @@ import { BackgroundError } from "./background-errors.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import {
   backgroundHandoffRecordSchema,
+  backgroundHandoffRevisionV2Schema,
   backgroundLaunchRecordSchema,
   backgroundTerminalReceiptSchema,
+  createBackgroundHandoffRevisionV2,
   graphWorkerCancelControlSchema,
   graphWorkerHeartbeatSchema,
   type BackgroundHandoffRecordV1,
+  type BackgroundHandoffRevisionV2,
   type BackgroundLaunchRecordV1,
   type BackgroundTerminalReceiptV1,
   type GraphWorkerCancelControlV1,
@@ -20,6 +23,8 @@ import {
 } from "./background-schema.js";
 
 const MAX_RECORD_BYTES = 64 * 1024;
+const HANDOFF_V2_REVISION_NAME = /^revision-(\d{12})\.json$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const workerFailureDiagnosticSchema = z.object({
   code: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:-]+$/u),
   observedAt: z.string().datetime({ offset: true }),
@@ -87,6 +92,33 @@ async function readRecord<T>(path: string, schema: z.ZodType<T>): Promise<T | nu
   }
 }
 
+async function readPublishedHandoffRevision(
+  path: string,
+  candidates: string,
+): Promise<BackgroundHandoffRevisionV2> {
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 1 || metadata.size > MAX_RECORD_BYTES) {
+      throw new BackgroundError("worker_reconciliation_required", "published handoff revision is unsafe");
+    }
+    const parsed = backgroundHandoffRevisionV2Schema.parse(parseStrictJson(await readFile(path, "utf8")));
+    if (metadata.nlink !== 2) {
+      throw new BackgroundError("worker_reconciliation_required", "published handoff revision has an ambiguous hard-link identity");
+    }
+    const candidate = await lstat(join(candidates, `${parsed.recordSha256}.json`));
+    if (
+      !candidate.isFile() || candidate.isSymbolicLink() || candidate.nlink !== 2 ||
+      candidate.dev !== metadata.dev || candidate.ino !== metadata.ino || candidate.size !== metadata.size
+    ) {
+      throw new BackgroundError("worker_reconciliation_required", "published handoff revision is not linked to its exact durable candidate");
+    }
+    return Object.freeze(parsed);
+  } catch (error) {
+    if (error instanceof BackgroundError) throw error;
+    throw new BackgroundError("worker_reconciliation_required", "published handoff revision is invalid", { cause: error });
+  }
+}
+
 async function exclusiveRecord(path: string, value: unknown): Promise<void> {
   let handle;
   try {
@@ -100,6 +132,37 @@ async function exclusiveRecord(path: string, value: unknown): Promise<void> {
     await handle?.close().catch(() => undefined);
     throw new BackgroundError(isCode(error, "EEXIST") ? "worker_handoff_conflict" : "worker_reconciliation_required", "worker operation record could not be created", { cause: error });
   }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return lstat(path).then(() => true).catch((error: unknown) => {
+    if (isCode(error, "ENOENT")) return false;
+    throw error;
+  });
+}
+
+async function readHandoffCandidate(path: string): Promise<BackgroundHandoffRevisionV2 | null> {
+  try {
+    const metadata = await lstat(path);
+    if (
+      !metadata.isFile() || metadata.isSymbolicLink() || ![1, 2].includes(metadata.nlink) ||
+      metadata.size < 1 || metadata.size > MAX_RECORD_BYTES
+    ) {
+      throw new BackgroundError("worker_reconciliation_required", "handoff candidate is unsafe");
+    }
+    return Object.freeze(backgroundHandoffRevisionV2Schema.parse(parseStrictJson(await readFile(path, "utf8"))));
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return null;
+    if (error instanceof BackgroundError) throw error;
+    throw new BackgroundError("worker_reconciliation_required", "handoff candidate is invalid", { cause: error });
+  }
+}
+
+function revisionName(revision: number): string {
+  if (!Number.isSafeInteger(revision) || revision < 0 || revision > 999_999_999_999) {
+    throw new BackgroundError("worker_protocol_mismatch", "handoff revision is outside its durable filename range");
+  }
+  return `revision-${String(revision).padStart(12, "0")}.json`;
 }
 
 async function replaceRecord(directory: string, name: string, nonce: string, value: unknown): Promise<void> {
@@ -117,6 +180,8 @@ async function replaceRecord(directory: string, name: string, nonce: string, val
 export interface BackgroundOperationPathsV1 {
   readonly controls: string;
   readonly handoff: string;
+  readonly handoffV2: string;
+  readonly handoffV2Candidates: string;
   readonly heartbeat: string;
   readonly launch: string;
   readonly logs: string;
@@ -124,10 +189,39 @@ export interface BackgroundOperationPathsV1 {
   readonly receipts: string;
 }
 
-export class BackgroundOperationStore {
-  private constructor(readonly root: string, readonly paths: BackgroundOperationPathsV1) {}
+export type BackgroundHandoffV2FaultPointV1 = "candidate_durable" | "revision_published";
 
-  static async create(input: { readonly operationId: string; readonly repositoryId: string; readonly root: string }): Promise<BackgroundOperationStore> {
+export interface BackgroundHandoffAuthorityV1 {
+  readonly handoff: BackgroundHandoffRecordV1;
+  readonly protocol: "v1" | "v2";
+  readonly revision: number | null;
+  readonly revisionSha256: string;
+  readonly transitionId: string | null;
+}
+
+export interface BackgroundHandoffInspectionV1 {
+  readonly authority: BackgroundHandoffAuthorityV1 | null;
+  readonly legacyLockPath: string;
+  readonly legacyLockPresent: boolean;
+}
+
+export interface BackgroundOperationStoreOptionsV1 {
+  readonly onHandoffV2FaultPoint?: (point: BackgroundHandoffV2FaultPointV1) => Promise<void> | void;
+}
+
+export class BackgroundOperationStore {
+  private constructor(
+    readonly root: string,
+    readonly paths: BackgroundOperationPathsV1,
+    private readonly options: BackgroundOperationStoreOptionsV1,
+  ) {}
+
+  static async create(input: {
+    readonly operationId: string;
+    readonly options?: BackgroundOperationStoreOptionsV1;
+    readonly repositoryId: string;
+    readonly root: string;
+  }): Promise<BackgroundOperationStore> {
     if (!/^[a-f0-9]{64}$/u.test(input.repositoryId) || !/^[0-9a-f-]{36}$/u.test(input.operationId)) {
       throw new BackgroundError("worker_protocol_mismatch", "worker operation identity is invalid");
     }
@@ -143,18 +237,26 @@ export class BackgroundOperationStore {
     await safeDirectory(controls);
     await safeDirectory(receipts);
     await safeDirectory(logs);
+    const handoffV2 = join(operation, "handoff-v2");
     return new BackgroundOperationStore(root, Object.freeze({
       controls,
       handoff: join(operation, "handoff.json"),
+      handoffV2,
+      handoffV2Candidates: join(handoffV2, "candidates"),
       heartbeat: join(operation, "heartbeat.json"),
       launch: join(operation, "launch.json"),
       logs,
       operation,
       receipts,
-    }));
+    }), input.options ?? {});
   }
 
-  static async openExisting(input: { readonly operationId: string; readonly repositoryId: string; readonly root: string }): Promise<BackgroundOperationStore> {
+  static async openExisting(input: {
+    readonly operationId: string;
+    readonly options?: BackgroundOperationStoreOptionsV1;
+    readonly repositoryId: string;
+    readonly root: string;
+  }): Promise<BackgroundOperationStore> {
     if (!/^[a-f0-9]{64}$/u.test(input.repositoryId) || !/^[0-9a-f-]{36}$/u.test(input.operationId)) {
       throw new BackgroundError("worker_protocol_mismatch", "worker operation identity is invalid");
     }
@@ -165,15 +267,18 @@ export class BackgroundOperationStore {
     const receipts = join(operation, "receipts");
     const logs = join(operation, "logs");
     for (const directory of [root, repository, operation, controls, receipts, logs]) await existingDirectory(directory);
+    const handoffV2 = join(operation, "handoff-v2");
     return new BackgroundOperationStore(root, Object.freeze({
       controls,
       handoff: join(operation, "handoff.json"),
+      handoffV2,
+      handoffV2Candidates: join(handoffV2, "candidates"),
       heartbeat: join(operation, "heartbeat.json"),
       launch: join(operation, "launch.json"),
       logs,
       operation,
       receipts,
-    }));
+    }), input.options ?? {});
   }
 
   async createLaunch(record: BackgroundLaunchRecordV1): Promise<void> {
@@ -185,11 +290,74 @@ export class BackgroundOperationStore {
   }
 
   async createHandoff(record: BackgroundHandoffRecordV1): Promise<void> {
+    if (await pathExists(this.paths.handoffV2)) {
+      throw new BackgroundError("worker_reconciliation_required", "V1 handoff writer is forbidden after V2 initialization");
+    }
     await exclusiveRecord(this.paths.handoff, backgroundHandoffRecordSchema.parse(record));
   }
 
-  readHandoff(): Promise<BackgroundHandoffRecordV1 | null> {
-    return readRecord(this.paths.handoff, backgroundHandoffRecordSchema);
+  async createHandoffV2(input: Readonly<{
+    handoff: BackgroundHandoffRecordV1;
+    launch: BackgroundLaunchRecordV1;
+    transitionId: string;
+  }>): Promise<BackgroundHandoffAuthorityV1> {
+    if (!SHA256.test(input.transitionId)) {
+      throw new BackgroundError("worker_protocol_mismatch", "handoff transition identity is invalid");
+    }
+    if (await pathExists(this.paths.handoff)) {
+      throw new BackgroundError("worker_reconciliation_required", "V2 handoff cannot coexist with legacy V1 authority");
+    }
+    await safeDirectory(this.paths.handoffV2);
+    await safeDirectory(this.paths.handoffV2Candidates);
+    const existing = await this.#readHandoffV2Authority();
+    const launch = backgroundLaunchRecordSchema.parse(input.launch);
+    const handoff = backgroundHandoffRecordSchema.parse(input.handoff);
+    const revision = createBackgroundHandoffRevisionV2({
+      handoff,
+      launch,
+      launchSha256: sha256Canonical(launch),
+      previousRevisionSha256: null,
+      revision: 0,
+      transitionId: input.transitionId,
+    });
+    if (existing !== null) {
+      if (
+        existing.revision === 0 && existing.transitionId === input.transitionId &&
+        existing.revisionSha256 === revision.recordSha256
+      ) return existing;
+      throw new BackgroundError("worker_handoff_conflict", "handoff V2 genesis already has different durable authority");
+    }
+    return this.#publishHandoffV2Revision(revision);
+  }
+
+  async inspectHandoff(): Promise<BackgroundHandoffInspectionV1> {
+    const legacyLockPath = join(this.paths.operation, ".handoff.lock");
+    return Object.freeze({
+      authority: await this.readHandoffAuthority(),
+      legacyLockPath,
+      legacyLockPresent: await pathExists(legacyLockPath),
+    });
+  }
+
+  async readHandoff(): Promise<BackgroundHandoffRecordV1 | null> {
+    return (await this.readHandoffAuthority())?.handoff ?? null;
+  }
+
+  async readHandoffAuthority(): Promise<BackgroundHandoffAuthorityV1 | null> {
+    const legacy = await readRecord(this.paths.handoff, backgroundHandoffRecordSchema);
+    const v2 = await this.#readHandoffV2Authority();
+    if (legacy !== null && v2 !== null) {
+      throw new BackgroundError("worker_reconciliation_required", "V1 and V2 handoff authorities coexist");
+    }
+    if (v2 !== null) return v2;
+    if (legacy === null) return null;
+    return Object.freeze({
+      handoff: Object.freeze(legacy),
+      protocol: "v1",
+      revision: null,
+      revisionSha256: sha256Canonical(legacy),
+      transitionId: null,
+    });
   }
 
   async compareAndSwapHandoff(input: {
@@ -197,7 +365,39 @@ export class BackgroundOperationStore {
     readonly expectedState: BackgroundHandoffRecordV1["state"];
     readonly next: BackgroundHandoffRecordV1;
     readonly nonce: string;
+    readonly transitionId?: string;
   }): Promise<void> {
+    const authority = await this.readHandoffAuthority();
+    if (authority?.protocol === "v2") {
+      if (input.transitionId === undefined || !SHA256.test(input.transitionId)) {
+        throw new BackgroundError("worker_protocol_mismatch", "V2 handoff transition requires an exact durable transition identity");
+      }
+      const next = backgroundHandoffRecordSchema.parse(input.next);
+      if (
+        authority.transitionId === input.transitionId &&
+        sha256Canonical(authority.handoff) === sha256Canonical(next)
+      ) return;
+      const current = authority.handoff;
+      if (
+        current.owner !== input.expectedOwner || current.state !== input.expectedState ||
+        current.operationId !== next.operationId || current.workerId !== next.workerId ||
+        current.workerNonceSha256 !== next.workerNonceSha256 || current.graphSha256 !== next.graphSha256 ||
+        current.parentNonceSha256 !== next.parentNonceSha256
+      ) {
+        throw new BackgroundError("worker_handoff_conflict", "worker handoff V2 compare-and-swap lost ownership");
+      }
+      const genesis = await this.#readHandoffV2Genesis();
+      const revision = createBackgroundHandoffRevisionV2({
+        handoff: next,
+        launch: null,
+        launchSha256: genesis.launchSha256,
+        previousRevisionSha256: authority.revisionSha256,
+        revision: (authority.revision ?? -1) + 1,
+        transitionId: input.transitionId,
+      });
+      await this.#publishHandoffV2Revision(revision);
+      return;
+    }
     const lock = join(this.paths.operation, ".handoff.lock");
     await exclusiveRecord(lock, { nonce: input.nonce });
     try {
@@ -211,6 +411,117 @@ export class BackgroundOperationStore {
     } finally {
       await unlink(lock).catch(() => undefined);
     }
+  }
+
+  async #publishHandoffV2Revision(revision: BackgroundHandoffRevisionV2): Promise<BackgroundHandoffAuthorityV1> {
+    const candidatePath = join(this.paths.handoffV2Candidates, `${revision.recordSha256}.json`);
+    try {
+      await exclusiveRecord(candidatePath, revision);
+    } catch (error) {
+      if (!(error instanceof BackgroundError) || error.code !== "worker_handoff_conflict") throw error;
+      const existingCandidate = await readHandoffCandidate(candidatePath);
+      if (existingCandidate?.recordSha256 !== revision.recordSha256) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff candidate path has different durable content");
+      }
+    }
+    await this.options.onHandoffV2FaultPoint?.("candidate_durable");
+    const target = join(this.paths.handoffV2, revisionName(revision.revision));
+    try {
+      await link(candidatePath, target);
+    } catch (error) {
+      if (!isCode(error, "EEXIST")) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff revision could not be atomically published", { cause: error });
+      }
+      const winner = await readPublishedHandoffRevision(target, this.paths.handoffV2Candidates);
+      if (winner.transitionId !== revision.transitionId || winner.recordSha256 !== revision.recordSha256) {
+        throw new BackgroundError("worker_handoff_conflict", "another handoff transition won the exact revision");
+      }
+    }
+    await this.options.onHandoffV2FaultPoint?.("revision_published");
+    const authority = await this.#readHandoffV2Authority();
+    if (
+      authority === null || authority.revision !== revision.revision ||
+      authority.revisionSha256 !== revision.recordSha256 || authority.transitionId !== revision.transitionId
+    ) {
+      throw new BackgroundError("worker_reconciliation_required", "published handoff revision did not become the exact chain head");
+    }
+    return authority;
+  }
+
+  async #readHandoffV2Genesis(): Promise<BackgroundHandoffRevisionV2> {
+    const genesis = await readPublishedHandoffRevision(
+      join(this.paths.handoffV2, revisionName(0)),
+      this.paths.handoffV2Candidates,
+    );
+    if (genesis.revision !== 0 || genesis.launch === null) {
+      throw new BackgroundError("worker_reconciliation_required", "handoff V2 genesis is incomplete");
+    }
+    return genesis;
+  }
+
+  async #readHandoffV2Authority(): Promise<BackgroundHandoffAuthorityV1 | null> {
+    let entries;
+    try {
+      entries = await readdir(this.paths.handoffV2, { withFileTypes: true });
+    } catch (error) {
+      if (isCode(error, "ENOENT")) return null;
+      throw new BackgroundError("worker_reconciliation_required", "handoff V2 directory is unavailable", { cause: error });
+    }
+    const revisions: { readonly name: string; readonly revision: number }[] = [];
+    for (const entry of entries) {
+      if (entry.name === "candidates" && entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const match = HANDOFF_V2_REVISION_NAME.exec(entry.name);
+      if (!entry.isFile() || entry.isSymbolicLink() || match === null) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff V2 directory contains an unknown authority entry");
+      }
+      revisions.push({ name: entry.name, revision: Number(match[1]) });
+    }
+    revisions.sort((left, right) => left.revision - right.revision);
+    if (revisions.length === 0) return null;
+    const transitionIds = new Set<string>();
+    let previous: BackgroundHandoffRevisionV2 | null = null;
+    let launchSha256: string | null = null;
+    for (const [index, item] of revisions.entries()) {
+      if (item.revision !== index || item.name !== revisionName(index)) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff V2 revision chain has a gap or duplicate identity");
+      }
+      const current = await readPublishedHandoffRevision(
+        join(this.paths.handoffV2, item.name),
+        this.paths.handoffV2Candidates,
+      );
+      if (
+        current.revision !== index ||
+        current.previousRevisionSha256 !== previous?.recordSha256 && !(index === 0 && current.previousRevisionSha256 === null)
+      ) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff V2 revision chain is not hash linked");
+      }
+      if (transitionIds.has(current.transitionId)) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff V2 transition identity is duplicated in the chain");
+      }
+      transitionIds.add(current.transitionId);
+      if (index === 0) launchSha256 = current.launchSha256;
+      if (
+        current.launchSha256 !== launchSha256 ||
+        previous !== null && (
+          current.handoff.operationId !== previous.handoff.operationId ||
+          current.handoff.workerId !== previous.handoff.workerId ||
+          current.handoff.workerNonceSha256 !== previous.handoff.workerNonceSha256 ||
+          current.handoff.graphSha256 !== previous.handoff.graphSha256 ||
+          current.handoff.parentNonceSha256 !== previous.handoff.parentNonceSha256
+        )
+      ) {
+        throw new BackgroundError("worker_reconciliation_required", "handoff V2 chain identity drifted");
+      }
+      previous = current;
+    }
+    if (previous === null) return null;
+    return Object.freeze({
+      handoff: Object.freeze(backgroundHandoffRecordSchema.parse({ ...previous.handoff, schemaVersion: 1 })),
+      protocol: "v2",
+      revision: previous.revision,
+      revisionSha256: previous.recordSha256,
+      transitionId: previous.transitionId,
+    });
   }
 
   async writeHeartbeat(record: GraphWorkerHeartbeatV1, nonce: string): Promise<void> {

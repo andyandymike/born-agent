@@ -23,8 +23,12 @@ import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
 import type { ApplicationRecurringTaskPortV1 } from "../application-host-runtime.js";
 import type { RepositoryRegistry } from "../repository-registry.js";
 import type { SessionOwnerBroker } from "../session-owner-broker.js";
+import {
+  RunCancellationLifecycle,
+  validateAndCloseAuthenticatedRunCancellation,
+} from "../run-cancellation-lifecycle.js";
 import type { SessionProjectionService } from "../session-projection-service.js";
-import type { SessionRegistry } from "../session-registry.js";
+import type { ApplicationSessionRegistryV1, RunLifecycleRegistryV1 } from "../session-registry-ports.js";
 import { sessionResumeResultCodec } from "./action-result-codecs.js";
 
 const boundedOption = z.string().min(1).max(4_096).optional();
@@ -139,7 +143,7 @@ async function validateAndCloseResumeCancellation(input: Readonly<{
   readonly repositoryId: string;
   readonly runId: string;
   readonly sessionId: string;
-  readonly sessions: SessionRegistry;
+  readonly sessions: RunLifecycleRegistryV1;
   readonly writer: V2SessionWriter;
 }>): Promise<void> {
   const terminals = input.writer.events.filter((event) =>
@@ -152,79 +156,16 @@ async function validateAndCloseResumeCancellation(input: Readonly<{
     );
   }
   const terminal = terminals[0]!;
-  const terminalReference = eventReference(input.writer, terminal);
-  if (
-    input.expectedTerminalReference !== undefined &&
-    sha256Canonical(input.expectedTerminalReference) !== sha256Canonical(terminalReference)
-  ) {
-    throw new ApplicationControlError(
-      "control_session_history_missing_or_corrupt",
-      "resumed run cancellation terminal reference is not exact",
-    );
-  }
-  if (!("application_cancel_request" in terminal.data)) {
-    throw new ApplicationControlError(
-      "control_session_history_missing_or_corrupt",
-      "authenticated resumed run cancellation has no request binding",
-    );
-  }
-  const terminalBinding = terminal.data.application_cancel_request;
-  const requests = input.writer.events.filter((event) =>
-    event.scope === "run" && event.runId === input.runId && event.type === "run.cancel.requested"
-  );
-  if (requests.length !== 1 || requests[0]!.type !== "run.cancel.requested") {
-    throw new ApplicationControlError(
-      "control_session_history_missing_or_corrupt",
-      "resumed run cancellation does not have one exact request",
-    );
-  }
-  const request = requests[0]!;
-  const requestReference = eventReference(input.writer, request);
-  if (
-    request.eventId !== terminalBinding.request_event_id ||
-    requestReference.recordSha256 !== terminalBinding.request_event_sha256 ||
-    request.data.target_run_id !== input.runId ||
-    request.data.target_owner_generation_sha256 !== terminalBinding.target_owner_generation_sha256 ||
-    terminal.sessionSeq <= request.sessionSeq
-  ) {
-    throw new ApplicationControlError(
-      "control_session_history_missing_or_corrupt",
-      "resumed run cancellation request and terminal binding disagree",
-    );
-  }
-  const barrier = await input.sessions.readRunCancelBarrier(
-    input.repositoryId,
-    input.sessionId,
-    input.runId,
-  );
-  if (
-    barrier.owner?.fact.ownerGenerationSha256 !== terminalBinding.target_owner_generation_sha256 ||
-    barrier.request === null ||
-    barrier.request.fact.applicationCommit.operationId !== terminalBinding.request_event_id ||
-    barrier.request.fact.ownerGenerationSha256 !== terminalBinding.target_owner_generation_sha256 ||
-    barrier.request.fact.repositoryId !== input.repositoryId ||
-    barrier.request.fact.sessionId !== input.sessionId ||
-    barrier.request.fact.runId !== input.runId ||
-    barrier.request.fact.reason !== "user" ||
-    !hasExactApplicationCommit(request, barrier.request.fact.applicationCommit) ||
-    barrier.binding?.fact.cancelOperationId !== terminalBinding.request_event_id ||
-    barrier.binding.fact.ownerGenerationSha256 !== terminalBinding.target_owner_generation_sha256 ||
-    sha256Canonical(barrier.binding.fact.sessionRequestReference) !== sha256Canonical(requestReference) ||
-    sha256Canonical(barrier.binding.fact.terminalBinding) !== sha256Canonical(terminalBinding)
-  ) {
-    throw new ApplicationControlError(
-      "control_session_history_missing_or_corrupt",
-      "resumed run cancellation is not bound to its exact registry barrier",
-    );
-  }
-  await input.sessions.closeRunCancelBarrier({
-    cancelOperationId: terminalBinding.request_event_id,
-    ownerGenerationSha256: terminalBinding.target_owner_generation_sha256,
+  await validateAndCloseAuthenticatedRunCancellation({
+    ...(input.expectedTerminalReference === undefined
+      ? {}
+      : { expectedTerminalReference: input.expectedTerminalReference }),
     repositoryId: input.repositoryId,
     runId: input.runId,
     sessionId: input.sessionId,
-    terminalBinding,
-    terminalReference,
+    sessions: input.sessions,
+    terminal,
+    writer: input.writer,
   });
 }
 
@@ -368,7 +309,7 @@ async function assertNoPendingCancel(input: {
   readonly repositoryId: string;
   readonly runId: string;
   readonly sessionId: string;
-  readonly sessions: SessionRegistry;
+  readonly sessions: RunLifecycleRegistryV1;
 }): Promise<void> {
   const barrier = await input.sessions.readRunCancelBarrier(input.repositoryId, input.sessionId, input.runId);
   if (barrier.request !== null && barrier.terminal === null) {
@@ -441,7 +382,7 @@ export function createSessionResumeAction(input: Readonly<{
   readonly recurringTasks: ApplicationRecurringTaskPortV1;
   readonly repositories: RepositoryRegistry;
   readonly sessionProjection: SessionProjectionService;
-  readonly sessions: SessionRegistry;
+  readonly sessions: ApplicationSessionRegistryV1;
 }>): ApplicationActionDefinitionV1<SessionResumePayloadV1, SessionResumeOwnerResultV1> {
   const runLifecycle = (
     context: ApplicationActionExecutionContextV1,
@@ -482,154 +423,28 @@ export function createSessionResumeAction(input: Readonly<{
         }
         const activeRead = input.sessionProjection.activeReadPort({ entry, writer });
         const initial = await activeRead.readStableSnapshot();
-          const cancellationController = new AbortController();
-          let terminalBinding: ApplicationCancelRequestBindingV1 | undefined;
-          let hostEmergencyReason: "tui_surface_fatal" | undefined;
-        let cancelProcessing: Promise<void> = Promise.resolve();
-        const processDurableCancel = (cancel: Readonly<{
-          readonly applicationCommit: ApplicationCommitBindingV1;
-          readonly reason: "user";
-        }>) => {
-          const processing = cancelProcessing.then(async () => {
-            const barrier = await input.sessions.readRunCancelBarrier(repositoryId, sessionId, runId);
-            if (
-              barrier.owner?.fact.ownerGenerationSha256 !== writer.lockNonceSha256 ||
-              barrier.request?.fact.applicationCommit.operationId !== cancel.applicationCommit.operationId ||
-              sha256Canonical(barrier.request.fact.applicationCommit) !== sha256Canonical(cancel.applicationCommit)
-            ) {
-              throw new ApplicationControlError("control_operation_busy", "exact durable resume-run cancel is unavailable");
-            }
-            const prior = writer.events.filter((event: DecodedStoredEvent) =>
-              event.scope === "run" && event.runId === runId && event.type === "run.cancel.requested"
-            );
-            const owned = prior.find((event: DecodedStoredEvent) =>
-              hasExactApplicationCommit(event, cancel.applicationCommit)
-            );
-            if (owned === undefined && prior.length > 0) {
-              throw new ApplicationControlError("control_operation_busy", "resume run already has another cancel request");
-            }
-            const cancelEvent = owned ?? await writer.appendPhase21RunControlEvent(
-              runId,
-              cancel.applicationCommit.operationId,
-              "run.cancel.requested",
-              {
-                application_commit: {
-                  action_kind: cancel.applicationCommit.actionKind,
-                  authorization_decision_sha256: cancel.applicationCommit.authorizationDecisionSha256,
-                  operation_id: cancel.applicationCommit.operationId,
-                  prepared_action_sha256: cancel.applicationCommit.preparedActionSha256,
-                  principal_id: cancel.applicationCommit.principalId,
-                  schema_version: 1,
-                },
-                reason: cancel.reason,
-                target_owner_generation_sha256: writer.lockNonceSha256,
-                target_run_id: runId,
-              },
-            );
-            const reference = eventReference(writer, cancelEvent);
-            terminalBinding = Object.freeze({
-              request_event_id: cancelEvent.eventId,
-              request_event_sha256: reference.recordSha256,
-              target_owner_generation_sha256: writer.lockNonceSha256,
-            });
-            await input.sessions.bindRunCancelRequest({
-              cancelOperationId: cancel.applicationCommit.operationId,
-              ownerGenerationSha256: writer.lockNonceSha256,
-              repositoryId,
-              runId,
-              sessionId,
-              sessionRequestReference: reference,
-              terminalBinding,
-            });
-            cancellationController.abort();
-          });
-          cancelProcessing = processing.then(() => undefined, () => undefined);
-          return processing;
-        };
-        const release = input.broker.register(sessionId, Object.freeze({
-          ...activeRead,
-          runControl: Object.freeze({
-            acceptsObservedHead: (head: SessionLedgerHeadV1) =>
-              input.sessionProjection.verifyOwnerObservedHead(writer, head),
-            ownerApplicationOperationId: context.operationId,
-            ownerGenerationSha256: writer.lockNonceSha256,
-            requestCancel: async (cancel: Readonly<{
-              readonly applicationCommit: ApplicationCommitBindingV1;
-              readonly reason: "user";
-            }>) => {
-              await processDurableCancel(cancel);
-              const snapshot = await activeRead.readStableSnapshot();
-              if (terminalBinding === undefined) throw new TypeError("resume cancel binding disappeared");
-              const event = writer.events.find((candidate: DecodedStoredEvent) =>
-                candidate.type === "run.cancel.requested" && candidate.eventId === terminalBinding!.request_event_id
-              );
-              if (event === undefined) throw new TypeError("resume cancel request disappeared");
-              return Object.freeze({
-                head: snapshot.head,
-                recordReference: eventReference(writer, event),
-                terminalBinding,
-              });
-            },
-            requestHostEmergencyStop: (input: Readonly<{ readonly reason: "tui_surface_fatal" }>) => {
-              hostEmergencyReason ??= input.reason;
-              cancellationController.abort();
-            },
-            runId,
-          }),
-        }));
+        const lifecycle = new RunCancellationLifecycle({
+          acceptsObservedHead: (head) => input.sessionProjection.verifyOwnerObservedHead(writer, head),
+          activeRead,
+          broker: input.broker,
+          ownerApplicationOperationId: context.operationId,
+          ownerRegistryOperationId: runId,
+          recurringTasks: input.recurringTasks,
+          repositoryId,
+          runId,
+          sessionId,
+          sessions: input.sessions,
+          writer,
+        });
         try {
-          await input.sessions.registerRunOwner({
-            initialObservedHead: initial.head.publicHead,
-            ownerGenerationSha256: writer.lockNonceSha256,
-            ownerOperationId: runId,
-            repositoryId,
-            runId,
-            sessionId,
-          });
+          await lifecycle.activate(initial.head.publicHead);
         } catch (error) {
-          release();
+          await lifecycle.finish();
           throw error;
         }
-        let pollTask: Promise<void> = Promise.resolve();
-        const pollDurableCancel = async () => {
-          const barrier = await input.sessions.readRunCancelBarrier(repositoryId, sessionId, runId);
-          if (
-            barrier.owner?.fact.ownerGenerationSha256 !== writer.lockNonceSha256 ||
-            barrier.terminal !== null ||
-            !barrier.observations.some((observation) => observation.observationKind === "started")
-          ) return;
-          const snapshot = await activeRead.readStableSnapshot();
-          const observed = await input.sessions.observeRunOwner({
-            observationKind: "progress",
-            observedHead: snapshot.head.publicHead,
-            ownerGenerationSha256: writer.lockNonceSha256,
-            repositoryId,
-            runId,
-            sessionId,
-          });
-          if (observed.request !== null) {
-            await processDurableCancel({
-              applicationCommit: observed.request.fact.applicationCommit,
-              reason: observed.request.fact.reason,
-            });
-          }
-        };
-        const stopPolling = input.recurringTasks.startRecurringTask(25, async () => {
-          pollTask = pollTask.then(pollDurableCancel).catch(() => undefined);
-          await pollTask;
-        });
-        let finished = false;
         return Object.freeze({
-          applicationCancellation: Object.freeze({
-            hostEmergencyReason: () => hostEmergencyReason,
-            signal: cancellationController.signal,
-            terminalBinding: () => terminalBinding,
-          }),
+          applicationCancellation: lifecycle.applicationCancellation,
           finish: async () => {
-            if (finished) return;
-            finished = true;
-            await stopPolling();
-            await pollTask;
             try {
               const terminal = writer.events.find((event: DecodedStoredEvent) =>
                 event.scope === "run" &&
@@ -648,7 +463,7 @@ export function createSessionResumeAction(input: Readonly<{
                 validatedCancelledRunId = runId;
               }
             } finally {
-              release();
+              await lifecycle.finish();
             }
           },
           onRunStarted: async (event: Extract<RunEvent, { readonly type: "run.started" }>) => {
@@ -658,15 +473,7 @@ export function createSessionResumeAction(input: Readonly<{
                 "resumed run start does not match its activated owner",
               );
             }
-            const snapshot = await activeRead.readStableSnapshot();
-            await input.sessions.observeRunOwner({
-              observationKind: "started",
-              observedHead: snapshot.head.publicHead,
-              ownerGenerationSha256: writer.lockNonceSha256,
-              repositoryId,
-              runId,
-              sessionId,
-            });
+            await lifecycle.observeStarted();
           },
         });
       },

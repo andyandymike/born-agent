@@ -6,7 +6,7 @@ import {
   type Phase16MutationIntent,
   type Phase16StartIntent,
   type Phase16UserIntent,
-} from "../tui/phase16-user-intent.js";
+} from "./phase16-user-intent.js";
 import {
   initialRunCoordinatorState,
   isRunCoordinatorActive,

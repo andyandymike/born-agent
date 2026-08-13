@@ -1,10 +1,10 @@
-import type { CliIO, CliRuntime } from "../cli/types.js";
+import type { CliIO, CliRuntime } from "./types.js";
 import { ConsoleEventRenderer } from "../render/console-event-renderer.js";
 import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
 import type {
   AgentExecutionPresentationPortV1,
   AgentExecutionRuntimePortV1,
-} from "./agent-execution-service.js";
+} from "../agent/agent-execution-service.js";
 
 /** CLI composition only: adapt the broad process runtime into the owner ports. */
 export function createAgentExecutionRuntimePort(

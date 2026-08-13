@@ -1,6 +1,7 @@
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { canonicalJson } from "../completion/canonical-json.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import { taskMutationContext, taskWriterFactory } from "./task-control-plane-command.js";
 import {
   executeDelegationOwnerPrepare,
@@ -12,7 +13,7 @@ import {
 import {
   createDelegationOwnerInteractionPort,
   createDelegationOwnerRuntimePort,
-} from "../delegation/delegation-owner-cli-ports.js";
+} from "../cli/delegation-owner-ports.js";
 import { DelegationControlPlane } from "../delegation/delegation-control-plane.js";
 import { DelegationFileLoader } from "../delegation/delegation-file-loader.js";
 import { DelegationError } from "../delegation/delegation-errors.js";
@@ -23,6 +24,7 @@ import { SessionLockError } from "../sessions/session-lock.js";
 import { SessionProjectionError } from "../sessions/reconstruct-multi-run-session.js";
 import { assertCanonicalSessionId } from "../sessions/session-path-policy.js";
 import { parseStrictJson } from "../system/strict-json.js";
+import { ApplicationControlError } from "../control-plane/application-errors.js";
 import {
   executeTaskActionThroughApplicationService,
   requestActiveDelegationCancelThroughApplicationService,
@@ -284,6 +286,10 @@ export function renderDelegationOwnerOutcome(
 }
 
 function failure(error: unknown, io: CliIO): 1 | 2 | 3 | 7 | 8 {
+  if (error instanceof ApplicationControlError) {
+    io.stderr.write(`${error.code}: ${error.message}\n`);
+    return error.exitCode;
+  }
   if (error instanceof DelegationError) {
     io.stderr.write(`${error.code}: ${error.message}\n`);
     return error.exitCode;
@@ -351,7 +357,7 @@ async function executeDelegationCompositeSurface(
 
 export async function executeDelegationsList(options: DelegationsListOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryDelegationSummariesThroughApplicationService({
         delegationId: options.delegationId ?? null,
         io,
@@ -382,7 +388,7 @@ export async function executeDelegationsList(options: DelegationsListOptions, ru
 
 export async function executeDelegationsShow(options: DelegationsShowOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryDelegationSummariesThroughApplicationService({
         delegationId: options.delegationId,
         io,
@@ -418,8 +424,8 @@ export async function executeDelegationsPropose(options: DelegationsProposeOptio
     if ((options.baseRevision === undefined) !== (options.baseSha256 === undefined)) {
       throw new DelegationError("delegation_invalid", "replacement requires both base revision and base SHA-256");
     }
-    const current = runtime.controlPlaneStateRoot === undefined ? await session(runtime, options.sessionId) : null;
-    const applicationParent = runtime.controlPlaneStateRoot === undefined
+    const current = isDomainHarnessRuntime(runtime) ? await session(runtime, options.sessionId) : null;
+    const applicationParent = isDomainHarnessRuntime(runtime)
       ? null
       : await queryDelegationParentThroughApplicationService({
           io,
@@ -432,7 +438,7 @@ export async function executeDelegationsPropose(options: DelegationsProposeOptio
     if (parentRunId === null) throw new DelegationError("delegation_parent_not_active", "session has no parent run");
     const loaded = await new DelegationFileLoader().load(runtime.cwd, options.file);
     const base = options.baseRevision === undefined ? null : { revision: positive(options.baseRevision, "base revision"), sha256: sha(options.baseSha256!) };
-    const delegation = runtime.controlPlaneStateRoot === undefined
+    const delegation = isDomainHarnessRuntime(runtime)
       ? (await new DelegationControlPlane(delegationWriterFactory(runtime)).replace({
           base,
           context: delegationMutationContext(runtime, options),
@@ -462,7 +468,7 @@ export async function executeDelegationsApprove(options: DelegationsDecisionOpti
       revision: positive(options.revision, "revision"),
       sha256: sha(options.sha256),
     };
-    let delegation = runtime.controlPlaneStateRoot === undefined
+    let delegation = isDomainHarnessRuntime(runtime)
       ? (await new DelegationControlPlane(delegationWriterFactory(runtime)).approve({
           context: delegationMutationContext(runtime, options),
           delegationId: payload.delegationId,
@@ -479,7 +485,7 @@ export async function executeDelegationsApprove(options: DelegationsDecisionOpti
           ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
         })).envelope.result;
     if (delegation === null) return 2;
-    if (runtime.controlPlaneStateRoot !== undefined && options.queue === true) {
+    if (!isDomainHarnessRuntime(runtime) && options.queue === true) {
       delegation = (await executeTaskActionThroughApplicationService({
         actionKind: "delegation.enqueue",
         io,
@@ -505,7 +511,7 @@ export async function executeDelegationsReject(options: DelegationsDecisionOptio
       revision: positive(options.revision, "revision"),
       sha256: sha(options.sha256),
     };
-    const delegation = runtime.controlPlaneStateRoot === undefined
+    const delegation = isDomainHarnessRuntime(runtime)
       ? (await new DelegationControlPlane(delegationWriterFactory(runtime)).reject({
           context: delegationMutationContext(runtime, options),
           delegationId: payload.delegationId,
@@ -529,7 +535,7 @@ export async function executeDelegationsReject(options: DelegationsDecisionOptio
 
 export async function executeDelegationsCancel(options: DelegationsCancelOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    const delegation = runtime.controlPlaneStateRoot === undefined
+    const delegation = isDomainHarnessRuntime(runtime)
       ? (await new DelegationControlPlane(delegationWriterFactory(runtime)).cancel({
           context: delegationMutationContext(runtime, options),
           delegationId: options.delegationId,
@@ -555,7 +561,7 @@ export async function executeDelegationsResume(
   io: CliIO,
   ownerExecution?: DelegationOwnerExecutionV1,
 ): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
-  if (runtime.controlPlaneStateRoot !== undefined && ownerExecution === undefined) {
+  if (!isDomainHarnessRuntime(runtime) && ownerExecution === undefined) {
     return executeDelegationCompositeSurface("delegation.resume", options, runtime, io);
   }
   return renderDelegationOwnerOutcome(
@@ -580,7 +586,7 @@ export async function executeDelegationsPrepare(
   io: CliIO,
   ownerExecution?: DelegationOwnerExecutionV1,
 ): Promise<0 | 1 | 2 | 3 | 7 | 8> {
-  if (runtime.controlPlaneStateRoot !== undefined && ownerExecution === undefined) {
+  if (!isDomainHarnessRuntime(runtime) && ownerExecution === undefined) {
     return executeDelegationCompositeSurface("delegation.prepare", options, runtime, io) as Promise<0 | 1 | 2 | 3 | 7 | 8>;
   }
   return renderDelegationOwnerOutcome(
@@ -606,7 +612,7 @@ export async function executeDelegationsStart(
   io: CliIO,
   ownerExecution?: DelegationOwnerExecutionV1,
 ): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
-  if (runtime.controlPlaneStateRoot !== undefined && ownerExecution === undefined) {
+  if (!isDomainHarnessRuntime(runtime) && ownerExecution === undefined) {
     return executeDelegationCompositeSurface("delegation.start", options, runtime, io);
   }
   return renderDelegationOwnerOutcome(
@@ -631,7 +637,7 @@ export async function executeDelegationsReceipt(
   io: CliIO,
 ): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryDelegationReceiptThroughApplicationService({
         delegationId: options.delegationId,
         io,
@@ -658,7 +664,7 @@ export async function executeDelegationsReceipt(
 export async function executeDelegationsDoctor(options: DelegationsListOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
     const descriptor = await (runtime.doctorDelegationChild?.() ?? Promise.reject(new DelegationError("delegation_handshake_failed", "runtime has no sealed child doctor")));
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryDelegationDoctorThroughApplicationService({
         delegationId: options.delegationId ?? null,
         io,

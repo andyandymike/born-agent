@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { canonicalJson } from "../completion/canonical-json.js";
-import { sanitizeTerminalText } from "../tui/terminal-sanitizer.js";
+import { sanitizeTerminalText } from "../presentation/terminal-sanitizer.js";
 import { McpCoreError } from "./mcp-errors.js";
 
 export const MCP_RESULT_MAPPER_VERSION = "mcp-text-result-v1";

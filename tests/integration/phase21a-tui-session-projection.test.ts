@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApplicationQueryRequestV1 } from "../../src/control-plane/application-protocol.js";
 import {
@@ -91,6 +91,43 @@ async function fixture() {
 }
 
 describe("Phase 21A typed TUI session projection", () => {
+  it("reads an exact active-owner prefix without projecting an unrelated in-flight tail", async () => {
+    const stateRoot = await directory("bornagent-phase21a-prefix-projection-state-");
+    const repositoryRoot = await directory("bornagent-phase21a-prefix-projection-repository-");
+    const broker = new SessionOwnerBroker();
+    const plane = await createPhase21ALocalControlPlane({
+      broker,
+      launcher: { launch: () => Promise.reject(new Error("prefix projection test must not launch a run")) },
+      stateRoot,
+    });
+    const repository = await plane.repositories.register({
+      expectedHead: await plane.repositories.head(),
+      operationId: randomUUID(),
+      root: repositoryRoot,
+    });
+    const repositoryId = repository.registration.repositoryId;
+    const created = await plane.sessions.create({
+      expectedHead: await plane.sessions.head(repositoryId),
+      operationId: randomUUID(),
+      repositoryId,
+    });
+    const writer = await V2SessionWriter.createNew(repositoryRoot, created.entry.sessionId);
+    cleanup.push(() => writer.close().catch(() => undefined));
+    const ownerPort = plane.sessionProjection.activeReadPort({ entry: created.entry, writer });
+    const exact = await ownerPort.readStableSnapshot();
+    const readStableSnapshot = vi.fn(() => Promise.reject(new Error("newer transient tail must not be projected")));
+    const readStablePrefix = vi.fn(() => Promise.resolve(exact));
+    cleanup.push(broker.register(created.entry.sessionId, { readStablePrefix, readStableSnapshot }));
+
+    await expect(plane.sessionProjection.read({
+      repositoryId,
+      requestedHead: exact.head.publicHead,
+      sessionId: created.entry.sessionId,
+    })).resolves.toMatchObject({ head: { publicHead: exact.head.publicHead } });
+    expect(readStablePrefix).toHaveBeenCalledOnce();
+    expect(readStableSnapshot).not.toHaveBeenCalled();
+  });
+
   it("publishes a composite owner writer through the broker until its durable close", async () => {
     const stateRoot = await directory("bornagent-phase21a-composite-projection-state-");
     const repositoryRoot = await directory("bornagent-phase21a-composite-projection-repository-");
@@ -239,5 +276,51 @@ describe("Phase 21A typed TUI session projection", () => {
       status: "ready",
     });
     expect(() => plane.delivery.assertMutationAllowed(context, scope.sessionId)).not.toThrow();
+  });
+
+  it("does not freeze delivery when an exact display page is transiently writer-busy", async () => {
+    const { broker, context, plane, scope } = await fixture();
+    let busy = true;
+    const port = new TuiSessionProjectionPort({
+      context,
+      createRequestId: randomUUID,
+      delivery: plane.delivery,
+      ensureSession: async () => scope,
+      queries: {
+        query: async (call, request) => {
+          if (busy && request.queryKind === "session.tui_events_page") {
+            busy = false;
+            return Object.freeze({
+              deliveryCursor: null,
+              error: Object.freeze({
+                code: "control_operation_busy" as const,
+                message: "application query rejected (control_operation_busy)",
+              }),
+              ledgerHead: null,
+              liveObservation: null,
+              operationId: null,
+              projectionIdentity: null,
+              requestId: request.requestId,
+              resourceScope: request.resourceScope,
+              resourceVersion: request.atVersion,
+              result: null,
+              schemaVersion: 1 as const,
+              sessionId: scope.sessionId,
+              status: "rejected" as const,
+              warnings: Object.freeze([]),
+            });
+          }
+          return plane.queries.query(call, request);
+        },
+      },
+      subscribeInvalidations: (listener) => broker.subscribeInvalidations(listener),
+    });
+
+    await expect(port.load(scope.sessionId)).rejects.toMatchObject({ code: "control_operation_busy" });
+    expect(plane.delivery.stateFor(context, scope.sessionId)).toMatchObject({ status: "ready" });
+    expect(() => plane.delivery.assertMutationAllowed(context, scope.sessionId)).not.toThrow();
+
+    await expect(port.load(scope.sessionId)).resolves.toMatchObject({ ledgerHead: { sequence: 1 } });
+    expect(plane.delivery.stateFor(context, scope.sessionId)).toMatchObject({ status: "ready" });
   });
 });

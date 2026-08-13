@@ -1,20 +1,16 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-
-import type { CliIO, CliRuntime } from "../../cli/types.js";
+import type { CliRuntime } from "../../cli/types.js";
+import type { SurfaceIO } from "../../presentation/surface-io.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
 import {
   taskUserOrigin,
   type AuthenticatedTaskMutationBindingV1,
   type TaskMutationContext,
 } from "../../coordination/task-control-plane.js";
-import { decodeStoredEvents, type DecodedStoredEvent } from "../../events/event-decoder-registry.js";
+import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
 import { DeterministicTaskScheduler } from "../../scheduling/deterministic-task-scheduler.js";
 import { TaskExecutionControlPlane } from "../../scheduling/task-execution-control-plane.js";
 import { SessionCatalog } from "../../sessions/session-catalog.js";
 import { reconstructMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
-import { SessionPathPolicy } from "../../sessions/session-path-policy.js";
-import { parseStrictJson } from "../../system/strict-json.js";
 import { BackgroundError } from "../../background/background-errors.js";
 import { TaskGraphError } from "../../task-graph/task-graph-errors.js";
 import type { ManagedWorkspaceHandleV1 } from "../../worktrees/managed-worktree-manager.js";
@@ -22,11 +18,14 @@ import type { OriginVerificationResultV1 } from "../../worktrees/origin-verifica
 import type { PromotionResultV1 } from "../../worktrees/promotion-runtime.js";
 import { WorktreeError } from "../../worktrees/worktree-errors.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
+import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import type {
-  ActiveOwnerCompositeControlRegistry,
   OwnerInternalCompositeActionKindV1,
 } from "../active-owner-composite-control-registry.js";
-import type { ForegroundGraphControlRegistry } from "../foreground-graph-control-registry.js";
+import type {
+  ActiveForegroundGraphRegistryPortV1,
+  ActiveOwnerCompositeRegistryPortV1,
+} from "../active-owner-router.js";
 import type { SessionLedgerHeadSigner } from "../session-ledger-head.js";
 import type {
   GraphCompositeOwnerCommitV1,
@@ -37,7 +36,7 @@ import type {
   GraphRunCompositeResultV1,
   WorktreeAllocateCompositeResultV1,
 } from "../use-cases/graph-composite-actions.js";
-import { taskMutationContext, taskWriterFactory } from "../../commands/task-control-plane-command.js";
+import { taskMutationContext, taskWriterFactory } from "../../coordination/task-mutation-host.js";
 
 const UNDERLYING_EVENT_TYPES: Readonly<Record<GraphCompositeOwnerRequestV1["actionKind"], ReadonlySet<string>>> = Object.freeze({
   "graph.resume": new Set([
@@ -122,23 +121,11 @@ function resolvedHead(
 }
 
 async function readAppendOnlyEvidence(workspace: string, sessionId: string) {
-  const paths = await (await SessionPathPolicy.create(workspace)).inspectExistingSession(sessionId);
-  const bytes = await readFile(paths.sessionFilePath);
-  if (bytes.byteLength === 0 || bytes.at(-1) !== 0x0a) {
-    throw new TaskGraphError("task_effect_reconciliation_required", "Graph owner session evidence has no complete durable tail");
-  }
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const lines = text.slice(0, -1).split("\n");
-  const events = decodeStoredEvents(lines.map((line) => parseStrictJson(line)));
-  const rawSha256 = new Map<string, string>();
-  events.forEach((event, index) => {
-    const line = lines[index];
-    if (line === undefined || event.sessionSeq !== index + 1) {
-      throw new TaskGraphError("task_effect_reconciliation_required", "Graph owner session evidence sequence is inconsistent");
-    }
-    rawSha256.set(event.eventId, createHash("sha256").update(line, "utf8").digest("hex"));
+  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
+  return Object.freeze({
+    projection: reconstructMultiRunSession(evidence.events),
+    rawSha256: evidence.rawSha256,
   });
-  return Object.freeze({ projection: reconstructMultiRunSession(events), rawSha256 });
 }
 
 type GraphCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readAppendOnlyEvidence>>;
@@ -316,9 +303,9 @@ function findRequiredEvent(
 
 export class CliGraphCompositeOwnerPort implements GraphCompositeOwnerPortV1 {
   constructor(private readonly options: Readonly<{
-    readonly activeOwnerComposites: ActiveOwnerCompositeControlRegistry;
-    readonly foregroundGraphControls: ForegroundGraphControlRegistry;
-    readonly io: CliIO;
+    readonly activeOwnerComposites: ActiveOwnerCompositeRegistryPortV1;
+    readonly foregroundGraphControls: ActiveForegroundGraphRegistryPortV1;
+    readonly io: SurfaceIO;
     /** Test/embedded read port; production defaults to the strict raw JSONL reader above. */
     readonly readObservationEvidence?: (sessionId: string) => Promise<GraphCompositeObservationEvidenceV1>;
     readonly runtime: CliRuntime;

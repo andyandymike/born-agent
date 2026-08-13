@@ -25,7 +25,8 @@ import type {
   RepositoryRegistrationV1,
   RepositoryRegistry,
 } from "../repository-registry.js";
-import type { SessionCatalogEntryV1, SessionRegistry } from "../session-registry.js";
+import type { SessionCatalogEntryV1 } from "../session-registry.js";
+import type { SessionCatalogRegistryV1 } from "../session-registry-ports.js";
 import {
   repositoryRegisterResultCodec,
   sessionAdoptLegacyResultCodec,
@@ -204,7 +205,7 @@ async function inspectLegacySession(
 export function createCatalogActionRegistry(input: {
   readonly additionalDefinitions?: readonly ApplicationActionDefinitionV1[];
   readonly repositories: RepositoryRegistry;
-  readonly sessions: SessionRegistry;
+  readonly sessions: SessionCatalogRegistryV1;
 }): ApplicationActionRegistry {
   const repositoryRegister: ApplicationActionDefinitionV1 = {
     actionKind: "repository.register",

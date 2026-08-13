@@ -279,6 +279,14 @@ export class SessionDeliveryCoordinator {
     return this.factory.deliveryGeneration;
   }
 
+  get trackedClientCount(): number {
+    return this.states.size;
+  }
+
+  dispose(): void {
+    this.states.clear();
+  }
+
   installFullSnapshot(
     call: AuthenticatedCallContextV1,
     input: Readonly<{

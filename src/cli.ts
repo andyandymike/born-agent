@@ -7,6 +7,7 @@ import packageJson from "../package.json" with { type: "json" };
 
 import { createNodeRuntime } from "./cli/node-runtime.js";
 import { runCli } from "./cli/run-cli.js";
+import { disposeApplicationHostForStateRoot } from "./control-plane/adapters/agent-cli-adapter.js";
 import { redactSensitiveText } from "./security/redact.js";
 import { createPiTuiRenderer } from "./tui/pi-tui-renderer.js";
 
@@ -40,10 +41,7 @@ function readApprovalLine(signal: AbortSignal): Promise<string | null> {
 }
 
 try {
-  process.exitCode = await runCli(
-    process.argv.slice(2),
-    { stderr: process.stderr, stdout: process.stdout },
-    createNodeRuntime({
+  const runtime = createNodeRuntime({
       approvalInput: {
         interactive: process.stdin.isTTY === true && process.stderr.isTTY === true,
         readLine: readApprovalLine,
@@ -77,8 +75,18 @@ try {
       ...(process.env.BORN_DELEGATION_CHILD_STATE_ROOT !== undefined
         ? { delegationUserStateRoot: process.env.BORN_DELEGATION_CHILD_STATE_ROOT }
         : {}),
-    }),
-  );
+    });
+  try {
+    process.exitCode = await runCli(
+      process.argv.slice(2),
+      { stderr: process.stderr, stdout: process.stdout },
+      runtime,
+    );
+  } finally {
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      await disposeApplicationHostForStateRoot(runtime.controlPlaneStateRoot);
+    }
+  }
 } catch (error) {
   process.stderr.write(
     `born: internal error: ${oneLineError(error, process.env.OPENAI_API_KEY)}\n`,

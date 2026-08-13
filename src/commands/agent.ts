@@ -7,7 +7,7 @@ import {
 import {
   createAgentExecutionPresentationPort,
   createAgentExecutionRuntimePort,
-} from "../agent/agent-execution-cli-ports.js";
+} from "../cli/agent-execution-ports.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 
 export type { FreshTaskExecution, ResumedAgentExecution } from "../agent/agent-execution-service.js";

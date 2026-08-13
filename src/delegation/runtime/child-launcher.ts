@@ -58,6 +58,11 @@ import {
 import type { DelegationSessionWriterQueue } from "./child-session-shard.js";
 import type { DelegationApprovalPromptQueue } from "./child-session-shard.js";
 
+export const DELEGATION_DURABLE_CANCEL_POLL_INTERVALS_V1 = Object.freeze({
+  activeChildMs: 100,
+  preStartMs: 50,
+});
+
 async function defaultWriterFactory(context: TaskMutationContext): Promise<V2SessionWriter> {
   return V2SessionWriter.openExisting(context.workspace, context.sessionId, {
     createEventId: context.randomUuid,
@@ -600,7 +605,10 @@ function waitTerminal(input: {
       }
     };
     void pollDurableCancellation();
-    cancelPoll = setInterval(() => { void pollDurableCancellation(); }, 100);
+    cancelPoll = setInterval(
+      () => { void pollDurableCancellation(); },
+      DELEGATION_DURABLE_CANCEL_POLL_INTERVALS_V1.activeChildMs,
+    );
     timeout = setTimeout(() => finish(new DelegationError("delegation_effect_reconciliation_required", "child terminal timed out and requires reconciliation")), input.timeoutMs);
     // A child may consume the durable start frame and exit before the parent
     // finishes closing the session writer and installs this terminal listener.
@@ -938,7 +946,10 @@ export class DelegationChildLauncher {
       }
     };
     void pollDurablePreStartCancellation();
-    durableCancelPoll = setInterval(() => { void pollDurablePreStartCancellation(); }, 50);
+    durableCancelPoll = setInterval(
+      () => { void pollDurablePreStartCancellation(); },
+      DELEGATION_DURABLE_CANCEL_POLL_INTERVALS_V1.preStartMs,
+    );
     let current = (await store.read())!;
     const abortBeforeStart = () => child?.kill();
     input.signal?.addEventListener("abort", abortBeforeStart, { once: true });

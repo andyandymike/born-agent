@@ -386,6 +386,7 @@ describe("Phase 21A production composite response-loss reconciliation", () => {
         randomUUID,
         reconcileDelegationPreEffectOperation: reconcileUnderlying,
         timestamp: () => "2026-08-12T00:00:00.000Z",
+        waitForRetry: () => Promise.resolve(),
       },
       signer: SIGNER,
     });

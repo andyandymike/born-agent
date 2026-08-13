@@ -598,6 +598,48 @@ describe("Phase 11 TUI controller", () => {
     test.controller.stop();
   });
 
+  it("preserves the exact approval focus while replaying a compatibility event snapshot", async () => {
+    const request = event(
+      "approval.requested",
+      {
+        action: "run_command",
+        action_sha256: HASH,
+        approval_request_id: "33333333-3333-4333-8333-333333333336",
+        call_id: "command-4",
+        preview: "pnpm test",
+        truncated: false,
+      },
+      2,
+    );
+    let onChange: ((kind: "lock" | "session") => void) | null = null;
+    const snapshot = [started(), request] as const;
+    const test = fixture({
+      initialSnapshot: snapshot,
+      loadSession: async () => snapshot,
+      watchSession: async (_sessionId, change) => {
+        onChange = change;
+        return () => undefined;
+      },
+    });
+    await vi.waitFor(() => expect(onChange).not.toBeNull());
+
+    test.controller.handleRawInput("y");
+    expect(test.controller.ephemeral.approvalFocus).toBe("allow");
+    (onChange as ((kind: "lock" | "session") => void) | null)?.("session");
+    await vi.waitFor(() => expect(test.controller.ephemeral.sessionBusy).toBe(false));
+
+    expect(test.controller.ephemeral).toMatchObject({
+      approvalFocus: "allow",
+      approvalRequestId: "33333333-3333-4333-8333-333333333336",
+    });
+    test.controller.handleRawInput("\r");
+    await flush();
+    expect(test.approvalDecisions).toEqual([
+      expect.objectContaining({ actionSha256: HASH, decision: "approved" }),
+    ]);
+    test.controller.stop();
+  });
+
   it("allows an exact active-owner approval while new mutations are blocked", async () => {
     const request = event(
       "mcp.approval.requested",

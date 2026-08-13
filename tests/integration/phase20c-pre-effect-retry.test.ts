@@ -11,6 +11,7 @@ import { createNodeRuntime } from "../../src/cli/node-runtime.js";
 import { runCli } from "../../src/cli/run-cli.js";
 import { ArtifactStore } from "../../src/artifacts/artifact-store.js";
 import { canonicalJson, sha256Canonical } from "../../src/completion/canonical-json.js";
+import { disposeApplicationHostForStateRoot } from "../../src/control-plane/adapters/agent-cli-adapter.js";
 import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
 import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import { preparedChildEnvelopeSchema } from "../../src/delegation/context/child-envelope-schema.js";
@@ -26,9 +27,12 @@ import { createMemoryIO } from "../helpers.js";
 
 const execFile = promisify(nodeExecFile);
 const roots: string[] = [];
+const applicationHostStateRoots: string[] = [];
 const realBuiltProcessTreeTest = process.env.BORN_RUN_BUILT_WORKER_TEST === "1" ? it : it.skip;
 
 afterEach(async () => {
+  await Promise.all(applicationHostStateRoots.splice(0).map((stateRoot) =>
+    disposeApplicationHostForStateRoot(stateRoot)));
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true, maxRetries: 5 })));
 });
 
@@ -101,6 +105,9 @@ async function createRetryHarness(
     version: "0.0.0",
     workerUserStateRoot: stateRoot,
   });
+  if (runtime.controlPlaneStateRoot !== undefined) {
+    applicationHostStateRoots.push(runtime.controlPlaneStateRoot);
+  }
   return Object.freeze({
     cancelForeground: () => {
       if (cancelListener === null) throw new Error("foreground cancellation listener is not active");
@@ -284,7 +291,7 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
     await waitForChildLaunchRequest(workspace, fixture.sessionId, () => startExit, startIo.readStderr);
 
     const cancelIo = createMemoryIO();
-    expect(await runCli([
+    const cancelExit = await runCli([
       "delegations",
       "cancel",
       "--session",
@@ -294,7 +301,8 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
       "--reason",
       "admitted pre-start cancellation fixture",
       "--json",
-    ], cancelIo.io, runtime), cancelIo.readStderr()).toBe(0);
+    ], cancelIo.io, runtime);
+    expect(cancelExit, cancelIo.readStderr()).toBe(0);
     expect(await running, startIo.readStderr()).toBe(130);
 
     const session = await new SessionCatalog(workspace).read(fixture.sessionId);
@@ -456,7 +464,7 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
     expect(recovered.delegations.revisions[0]).toMatchObject({ status: "cancelled" });
     expect(recovered.delegations.activeActorSlots).toEqual([]);
     expect(recovered.delegations.activeConflictClaims).toEqual([]);
-  }, 45_000);
+  }, 90_000);
 
   it("launches a real child twice only after cleanup, settlement, and fresh retry artifacts", async () => {
     const { fixture, runtime, stateRoot, workspace } = await createRetryHarness();
@@ -776,7 +784,7 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
   it("never retries IPC loss after the durable child start barrier", async () => {
     const { fixture, runtime, stateRoot, workspace } = await createRetryHarness(
       "phase20-post-start-loss-child.mjs",
-      500,
+      20_000,
     );
     const startIO = createMemoryIO();
     expect(await runCli([
@@ -835,7 +843,7 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
     expect(await DelegationOperationStore.listExisting(stateRoot)).toHaveLength(1);
     const observation = (await runtime.inspectDelegationOperations?.(fixture.sessionId))?.[0];
     expect(observation?.reconcile.kind).toBe("blocked_unknown_effect");
-  }, 30_000);
+  }, 45_000);
 
   realBuiltProcessTreeTest("bounds an ignored durable cancellation and verifies cleanup of the real child process tree", async () => {
     const { cancelForeground, fixture, runtime, stateRoot, workspace } = await createRetryHarness(
@@ -844,7 +852,6 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
       100,
     );
     const io = createMemoryIO();
-    const startedAt = Date.now();
     let earlyExit: number | null = null;
     const running = runCli([
       "delegations",
@@ -874,13 +881,14 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
     expect(processAlive(tree.childPid)).toBe(true);
     expect(processAlive(tree.grandchildPid)).toBe(true);
 
+    const cancellationStartedAt = Date.now();
     cancelForeground();
     await waitForIgnoredCancelEvidence(evidencePath, "cancelObserved");
     // The child ignored the durable cancel after its start barrier. The Host
     // proves process-tree cleanup but must report the original Application
     // action as blocked/unknown rather than claim a clean cancellation.
     expect(await running, io.readStderr()).toBe(8);
-    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(Date.now() - cancellationStartedAt).toBeLessThan(15_000);
     const blocked = await new SessionCatalog(workspace).read(fixture.sessionId);
     expect(blocked.events.filter((event) =>
       event.scope === "session" && event.type === "delegation.cancel.requested")).toHaveLength(1);

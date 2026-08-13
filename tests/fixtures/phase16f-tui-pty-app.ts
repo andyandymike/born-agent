@@ -1,6 +1,8 @@
 import { createNodeRuntime } from "../../src/cli/node-runtime.js";
 import { runCli } from "../../src/cli/run-cli.js";
 import type { CliRuntime } from "../../src/cli/types.js";
+import { createDomainHarness } from "../../src/coordination/domain-harness.js";
+import { disposeApplicationHostForStateRoot } from "../../src/control-plane/adapters/agent-cli-adapter.js";
 import { storeDelegationArtifactExact } from "../../src/delegation/delegation-control-plane.js";
 import {
   canonicalDelegationIdentity,
@@ -107,6 +109,14 @@ const node = createNodeRuntime({
       }
     : {}),
   cwd: workspace,
+  // The real Windows PTY gate cold-starts package-owned child processes while
+  // the full built-path matrix is already exercising worker/process teardown.
+  // Keep production's 30s default unchanged; this explicit bounded fixture
+  // budget prevents host load from turning a healthy cold start into an
+  // unknown-effect handshake timeout.
+  ...(delegationLifecycle || delegationCodingAnyLifecycle
+    ? { delegationHandshakeTimeoutMs: 60_000 }
+    : {}),
   env: process.env,
   execPath: process.execPath,
   killProcess: (identity, signal) => process.kill(identity, signal),
@@ -462,7 +472,8 @@ async function seedCodingDelegation(): Promise<string> {
   await run(["graph", "replace", SESSION_ID, "--file", "graph.json"]);
   const graph = (await new SessionCatalog(workspace).read(SESSION_ID)).taskGraph.currentDraft!;
   await run(["graph", "approve", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256]);
-  const allocationRuntime = createNodeRuntime({
+  const allocationRuntime: CliRuntime = {
+    ...createNodeRuntime({
     approvalInput: { interactive: true, readLine: async () => "y" },
     capabilityUserStateRoot: join(workspace, "user-state", "capabilities"),
     cliEntryPath: fileURLToPath(new URL("../../dist/cli.js", import.meta.url)),
@@ -476,18 +487,28 @@ async function seedCodingDelegation(): Promise<string> {
     platform: process.platform,
     version: "0.0.0-phase20-coding-pty-seed",
     workerUserStateRoot: join(workspace, "user-state", "workers"),
-    worktreeUserStateRoot: join(workspace, "w"),
-  });
+      worktreeUserStateRoot: join(workspace, "w"),
+    }),
+    // Fixture-only seed path: allocation deliberately bypasses the product
+    // Application Host so the real TUI can start from an already-managed
+    // coding worktree. AS4 requires that bypass to be explicit capability.
+    domainHarness: createDomainHarness(),
+  };
   const allocationIo = createMemoryIO();
-  const allocationExit = await runCli([
-    "graph", "worktree-allocate", SESSION_ID,
-    "--revision", "1",
-    "--sha256", graph.graphSha256,
-    "--source-node", "build",
-  ], allocationIo.io, allocationRuntime);
-  if (allocationExit !== 0) {
-    throw new Error(`Coding delegation PTY worktree allocation failed (${String(allocationExit)}): ${allocationIo.readStderr()}`);
+  const allocationManager = await allocationRuntime.createManagedWorktreeManager?.({
+    io: allocationIo.io,
+    sessionId: SESSION_ID,
+  });
+  if (allocationManager === undefined) {
+    throw new Error("Coding delegation PTY worktree manager is unavailable");
   }
+  await allocationManager.allocate({
+    allowDirty: false,
+    graphRevision: 1,
+    graphSha256: graph.graphSha256,
+    signal: new AbortController().signal,
+    sourceNodeId: "build",
+  });
   const managed = (await new SessionCatalog(workspace).read(SESSION_ID)).worktrees.workspaces[0]!;
   await createCanonicalPhase20CodingFixture({
     graphId: graph.graphId,
@@ -523,6 +544,14 @@ if (capabilityLifecycle) {
   const inspection = await lifecycle.inspect(source);
   const installed = await lifecycle.install(source, inspection.pluginSha256);
   await lifecycle.enable(installed.exactSelector);
+}
+
+// This PTY fixture seeds product facts and launches the interactive TUI in one
+// Node process. Real CLI and TUI invocations have separate process lifetimes;
+// close the seed Host explicitly so the TUI creates its one state-root Host
+// with TUI approval/presentation ports rather than reusing the seed CLI ports.
+if (runtime.controlPlaneStateRoot !== undefined) {
+  await disposeApplicationHostForStateRoot(runtime.controlPlaneStateRoot);
 }
 
 const exitCode = await runCli(

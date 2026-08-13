@@ -1,5 +1,6 @@
 import type { AgentCommandOptions } from "../agent/agent-types.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import { executeAgent } from "../commands/agent.js";
 import {
   abortActiveOwnerCompositeForRuntime,
@@ -53,15 +54,17 @@ import {
 import type { ProductSessionProjectionBodyV1 } from "../control-plane/session-projection-service.js";
 import {
   TuiController,
-  type TuiCorePort,
+} from "./tui-controller.js";
+import {
+  createTuiApplicationFacade,
   type TuiCoreRunResult,
   type TuiSessionSnapshot,
-} from "./tui-controller.js";
+} from "./tui-application-facade.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
 import type {
   Phase16MutationIntent,
   Phase16StartIntent,
-} from "./phase16-user-intent.js";
+} from "../coordination/phase16-user-intent.js";
 import { RepositoryInvalidationWatcher } from "../repository-intelligence/repository-invalidation-watcher.js";
 import { RepositoryRefreshCoordinator } from "../repository-intelligence/repository-refresh-coordinator.js";
 
@@ -177,7 +180,7 @@ async function executeTuiMutation(
 ): Promise<number> {
   try {
     const binding = intentSession(intent);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const common = {
         expectedSessionSeq: binding.expectedSessionSeq,
         io,
@@ -358,7 +361,7 @@ async function executeFreshTaskRun(
     input.mode,
     input.modeSource,
   );
-  if (runtime.controlPlaneStateRoot !== undefined) {
+  if (!isDomainHarnessRuntime(runtime)) {
     return executeExistingSessionAgentThroughApplicationService({
       expectedSessionSeq: input.expectedSessionSeq,
       options: runOptions,
@@ -422,9 +425,8 @@ async function executeTuiSessionResume(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
-  // Test-only/pre-Host embedders keep the deterministic Phase 9 owner. Every
-  // product TUI runtime has Host state and uses the typed adapter below.
-  if (runtime.controlPlaneStateRoot === undefined) {
+  // Direct Phase 9 execution is available only to the explicit DomainHarness.
+  if (isDomainHarnessRuntime(runtime)) {
     return executeSessionsResume(request, runtime, io);
   }
   const result = await executeSessionResumeThroughRuntimeAdapter({
@@ -502,7 +504,7 @@ async function executeTuiStart(
     let message: string | undefined;
     let mode = selectedMode;
     if (intent.type === "start_new_goal") {
-      if (runtime.controlPlaneStateRoot === undefined) {
+      if (isDomainHarnessRuntime(runtime)) {
         const writerFactory = taskWriterFactory(runtime);
         await new GoalManager(writerFactory).startNewGoal({
           context: taskMutationContext(
@@ -689,9 +691,7 @@ export async function executeTui(
     }
     return controllerRef.current.view;
   });
-  const typedSessionPort = runtime.controlPlaneStateRoot === undefined
-    ? null
-    : await createTuiSessionProjectionPort(runtime, io);
+  let typedSessionPort: TuiSessionProjectionPort | null = null;
   const tuiRuntime: CliRuntime = {
     ...runtime,
     createApprovalPrompt: () => approvalPrompt,
@@ -704,6 +704,13 @@ export async function executeTui(
     },
     onCancel: abortBridge.onCancel,
   };
+  // The process-local Application Host captures its owner ports when it is
+  // first created for a state root. Bootstrap every TUI query and mutation
+  // through the TUI runtime so that a read-only projection cannot initialize
+  // the Host with the underlying CLI approval/presentation ports.
+  if (!isDomainHarnessRuntime(runtime)) {
+    typedSessionPort = await createTuiSessionProjectionPort(tuiRuntime, io);
+  }
   const catalog = typedSessionPort === null ? new SessionCatalog(runtime.cwd) : null;
   const sessionFileWatcher = new SessionFileWatcher(runtime.cwd);
   let repositoryRefresh:
@@ -743,7 +750,7 @@ export async function executeTui(
     nextSkillArguments = undefined;
     return selected;
   };
-  const core: TuiCorePort = {
+  const core = createTuiApplicationFacade({
     activeDelegationOwner: () => {
       const sessionId = controllerRef.current?.view.session.id;
       return sessionId !== null && sessionId !== undefined &&
@@ -764,7 +771,7 @@ export async function executeTui(
       const view = controllerRef.current?.view;
       const graph = view?.taskExecution;
       if (
-        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        !isDomainHarnessRuntime(runtime) && view?.session.id !== null &&
         view?.session.id !== undefined && graph !== null && graph !== undefined &&
         graph.status === "running"
       ) {
@@ -787,7 +794,7 @@ export async function executeTui(
         (activeDelegationOwner?.delegationId === revision.delegationId && revision.status === "queued")
       );
       if (
-        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        !isDomainHarnessRuntime(runtime) && view?.session.id !== null &&
         view?.session.id !== undefined && delegation !== undefined
       ) {
         void captureCoreRun((coreIo) => executeTuiDelegationApplicationAction({
@@ -802,7 +809,7 @@ export async function executeTui(
         return;
       }
       if (
-        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        !isDomainHarnessRuntime(runtime) && view?.session.id !== null &&
         view?.session.id !== undefined &&
         abortActiveOwnerCompositeForRuntime(tuiRuntime, view.session.id) !== null
       ) {
@@ -817,7 +824,7 @@ export async function executeTui(
         ? Object.freeze({ runId: view.run.id, sessionId: view.session.id })
         : null;
       requestTuiHumanCancel({
-        applicationControlEnabled: runtime.controlPlaneStateRoot !== undefined,
+        applicationControlEnabled: !isDomainHarnessRuntime(runtime),
         exactTarget,
         legacyAbort: () => abortBridge.cancelActiveRun(),
         report: (diagnostic) => io.stderr.write(`${diagnostic}\n`),
@@ -943,7 +950,7 @@ export async function executeTui(
             ),
         }
       : {}),
-  };
+  });
   let initialSnapshot: TuiSessionSnapshot = [];
   const initialSessionId = options.inspectSessionId ?? options.resumeSessionId;
   if (initialSessionId !== undefined) {

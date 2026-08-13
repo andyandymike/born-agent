@@ -54,6 +54,14 @@ export interface CatalogSnapshotV1 {
   readonly records: readonly CatalogRecordV1[];
 }
 
+export interface CatalogJournalObservationV1 {
+  readonly onFullRecordScan?: (recordCount: number) => void;
+  readonly onIncrementalRecordRead?: (input: Readonly<{
+    readonly anchorRecordCount: number;
+    readonly appendedRecordCount: number;
+  }>) => void;
+}
+
 function emptyCatalogSha256(scope: ResourceScopeV1): string {
   return sha256Canonical({
     records: [],
@@ -71,10 +79,12 @@ export class CatalogJournal {
     private readonly directory: string,
     private readonly paths: ControlStatePaths,
     readonly resourceScope: ResourceScopeV1,
+    private readonly observation?: CatalogJournalObservationV1,
   ) {}
 
   static async create(input: {
     readonly directory: string;
+    readonly observation?: CatalogJournalObservationV1;
     readonly paths: ControlStatePaths;
     readonly resourceScope: ResourceScopeV1;
   }): Promise<CatalogJournal> {
@@ -84,7 +94,12 @@ export class CatalogJournal {
       throw new ApplicationControlError("control_catalog_corrupt", "catalog path is not a real directory");
     }
     await input.paths.assertSafe(join(input.directory, ".catalog-probe"));
-    return new CatalogJournal(input.directory, input.paths, resourceScopeV1Schema.parse(input.resourceScope));
+    return new CatalogJournal(
+      input.directory,
+      input.paths,
+      resourceScopeV1Schema.parse(input.resourceScope),
+      input.observation,
+    );
   }
 
   emptyHead(): CatalogHeadV1 {
@@ -99,34 +114,16 @@ export class CatalogJournal {
   }
 
   async readRecords(): Promise<readonly CatalogRecordV1[]> {
-    const names = (await readdir(this.directory)).filter((name) => /^[0-9]{12}\.json$/u.test(name)).sort();
-    if (names.length > 50_000) {
-      throw new ApplicationControlError("control_catalog_corrupt", "catalog exceeds its hard record bound");
-    }
+    const names = await this.readRevisionNames();
     const records: CatalogRecordV1[] = [];
     let previousHead = this.emptyHead();
     for (let index = 0; index < names.length; index += 1) {
       const expectedRevision = index + 1;
-      if (names[index] !== revisionName(expectedRevision)) {
-        throw new ApplicationControlError("control_catalog_corrupt", "catalog revisions are not contiguous");
-      }
-      let record: CatalogRecordV1;
-      try {
-        record = recordSchema.parse(await readBoundedPrivateJson(join(this.directory, names[index]!), 1024 * 1024));
-      } catch (error) {
-        throw new ApplicationControlError("control_catalog_corrupt", "catalog record is corrupt", { cause: error });
-      }
-      if (
-        record.revision !== expectedRevision ||
-        resourceScopeSha256(record.resourceScope) !== resourceScopeSha256(this.resourceScope) ||
-        record.previousCatalogSha256 !== previousHead.catalogSha256 ||
-        record.previousRecordSha256 !== previousHead.lastRecordSha256
-      ) {
-        throw new ApplicationControlError("control_catalog_corrupt", "catalog record chain is inconsistent");
-      }
+      const record = await this.readRecord(names[index]!, expectedRevision, previousHead);
       records.push(Object.freeze(record));
       previousHead = this.headFromRecord(record);
     }
+    this.observation?.onFullRecordScan?.(records.length);
     return Object.freeze(records);
   }
 
@@ -147,6 +144,58 @@ export class CatalogJournal {
       head: last === undefined ? this.emptyHead() : this.headFromRecord(last),
       records,
     });
+  }
+
+  /**
+   * AS3.3: a process may retain one already-verified immutable prefix and only
+   * read the current anchor plus newly published revisions. The directory is
+   * still checked for a contiguous revision namespace on every observation;
+   * any shrink, gap, changed anchor, or suffix-chain mismatch fails closed.
+   */
+  async readIncrementalSnapshot(previous: CatalogSnapshotV1 | null): Promise<CatalogSnapshotV1> {
+    if (previous === null) return this.readSnapshot();
+    this.assertCachedSnapshot(previous);
+    const names = await this.readRevisionNames();
+    if (names.length < previous.head.revision) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog revision history shrank");
+    }
+
+    let anchorRecordCount = 0;
+    if (previous.head.revision > 0) {
+      const predecessor = previous.head.revision === 1
+        ? this.emptyHead()
+        : this.headFromRecord(previous.records[previous.head.revision - 2]!);
+      const anchor = await this.readRecord(
+        names[previous.head.revision - 1]!,
+        previous.head.revision,
+        predecessor,
+      );
+      anchorRecordCount = 1;
+      if (
+        anchor.recordSha256 !== previous.head.lastRecordSha256 ||
+        anchor.catalogSha256 !== previous.head.catalogSha256
+      ) {
+        throw new ApplicationControlError("control_catalog_corrupt", "catalog incremental anchor changed");
+      }
+    }
+
+    if (names.length === previous.head.revision) {
+      this.observation?.onIncrementalRecordRead?.({ anchorRecordCount, appendedRecordCount: 0 });
+      return previous;
+    }
+
+    const records = [...previous.records];
+    let currentHead = previous.head;
+    for (let index = previous.head.revision; index < names.length; index += 1) {
+      const record = await this.readRecord(names[index]!, index + 1, currentHead);
+      records.push(Object.freeze(record));
+      currentHead = this.headFromRecord(record);
+    }
+    this.observation?.onIncrementalRecordRead?.({
+      anchorRecordCount,
+      appendedRecordCount: names.length - previous.head.revision,
+    });
+    return Object.freeze({ head: currentHead, records: Object.freeze(records) });
   }
 
   async append(input: {
@@ -211,5 +260,66 @@ export class CatalogJournal {
       revision: record.revision,
       schemaVersion: 1,
     });
+  }
+
+  private assertCachedSnapshot(snapshot: CatalogSnapshotV1): void {
+    if (
+      resourceScopeSha256(snapshot.head.resourceScope) !== resourceScopeSha256(this.resourceScope) ||
+      snapshot.head.revision !== snapshot.records.length
+    ) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog incremental cursor is invalid");
+    }
+    const last = snapshot.records.at(-1);
+    if (
+      (last === undefined && (
+        snapshot.head.revision !== 0 ||
+        snapshot.head.catalogSha256 !== this.emptyHead().catalogSha256 ||
+        snapshot.head.lastRecordId !== null ||
+        snapshot.head.lastRecordSha256 !== null
+      )) ||
+      (last !== undefined && (
+        last.revision !== snapshot.head.revision ||
+        last.recordId !== snapshot.head.lastRecordId ||
+        last.recordSha256 !== snapshot.head.lastRecordSha256 ||
+        last.catalogSha256 !== snapshot.head.catalogSha256
+      ))
+    ) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog incremental cursor head is inconsistent");
+    }
+  }
+
+  private async readRecord(
+    name: string,
+    expectedRevision: number,
+    previousHead: CatalogHeadV1,
+  ): Promise<CatalogRecordV1> {
+    let record: CatalogRecordV1;
+    try {
+      record = recordSchema.parse(await readBoundedPrivateJson(join(this.directory, name), 1024 * 1024));
+    } catch (error) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog record is corrupt", { cause: error });
+    }
+    if (
+      record.revision !== expectedRevision ||
+      resourceScopeSha256(record.resourceScope) !== resourceScopeSha256(this.resourceScope) ||
+      record.previousCatalogSha256 !== previousHead.catalogSha256 ||
+      record.previousRecordSha256 !== previousHead.lastRecordSha256
+    ) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog record chain is inconsistent");
+    }
+    return record;
+  }
+
+  private async readRevisionNames(): Promise<readonly string[]> {
+    const names = (await readdir(this.directory)).filter((name) => /^[0-9]{12}\.json$/u.test(name)).sort();
+    if (names.length > 50_000) {
+      throw new ApplicationControlError("control_catalog_corrupt", "catalog exceeds its hard record bound");
+    }
+    for (let index = 0; index < names.length; index += 1) {
+      if (names[index] !== revisionName(index + 1)) {
+        throw new ApplicationControlError("control_catalog_corrupt", "catalog revisions are not contiguous");
+      }
+    }
+    return Object.freeze(names);
   }
 }

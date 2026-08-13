@@ -61,6 +61,21 @@ export class SessionOwnerBroker {
   private readonly invalidationListeners = new Set<(sessionId: string) => void>();
   private readonly invalidationStops = new Map<string, () => void>();
 
+  get activeOwnerCount(): number {
+    return this.ports.size;
+  }
+
+  dispose(): void {
+    for (const stop of this.invalidationStops.values()) stop();
+    this.invalidationStops.clear();
+    this.ports.clear();
+    this.invalidationListeners.clear();
+    // Gates belong to already-running callers and resolve through their own
+    // finally blocks. Dropping the Host's references cannot grant another
+    // caller writer authority during shutdown.
+    this.gates.clear();
+  }
+
   register(sessionId: string, port: ActiveSessionReadPortV1): () => void {
     if (this.ports.has(sessionId)) {
       throw new ApplicationControlError("control_operation_busy", "session already has an in-process owner");

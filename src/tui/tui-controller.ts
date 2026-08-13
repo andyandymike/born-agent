@@ -58,7 +58,7 @@ import {
 import type {
   Phase16MutationIntent,
   Phase16StartIntent,
-} from "./phase16-user-intent.js";
+} from "../coordination/phase16-user-intent.js";
 import type { RepositoryInvalidation } from "../repository-intelligence/repository-invalidation-watcher.js";
 import type { RepositoryJobState } from "../repository-intelligence/repository-job-state.js";
 import type {
@@ -73,78 +73,31 @@ import {
 } from "../repository-intelligence/repository-status-projection.js";
 import { preparedActionMatchesSessionView } from "./prepared-action-view-binding.js";
 import type { TuiSessionProjectionSnapshotV1 } from "./tui-session-projection-port.js";
+import { parseTuiCommand } from "./tui-command-parser.js";
+import type {
+  TuiApplicationFacadeV1,
+  TuiCoreRunResult,
+  TuiGraphIntent,
+  TuiSessionSnapshot,
+} from "./tui-application-facade.js";
 
-export type TuiSessionSnapshot = readonly TuiPersistedEvent[] | TuiSessionProjectionSnapshotV1;
+export type {
+  TuiCoreRunResult,
+  TuiDelegationIntent,
+  TuiGraphIntent,
+  TuiSessionSnapshot,
+} from "./tui-application-facade.js";
+/** @deprecated use TuiApplicationFacadeV1. */
+export type TuiCorePort = TuiApplicationFacadeV1;
 
 function isTypedSessionSnapshot(snapshot: TuiSessionSnapshot): snapshot is TuiSessionProjectionSnapshotV1 {
   return !Array.isArray(snapshot) && "schemaVersion" in snapshot && snapshot.schemaVersion === 1;
 }
 
-export interface TuiCorePort {
-  /** Host-owner emergency/child-channel stop; never presented as a human application cancel. */
-  abortActiveOwnerRun(): void;
-  /** Human cancel request; product runtimes must durably bind it before signalling the run. */
-  cancelActiveRun(): void;
-  /** Exact process-local owner-internal composite, if one is currently active. */
-  activeOwnerComposite?(): boolean;
-  /** Exact process-local Delegation owner, including its pre-admission phase. */
-  activeDelegationOwner?(): boolean;
-  cancelRepositoryRefresh?(): void;
-  loadSession(sessionId: string): Promise<TuiSessionSnapshot>;
-  listPlugins?(): Promise<string>;
-  selectMcpPrompt?(selector: string, argumentsJson: string | undefined): Promise<string>;
-  selectSkill?(selector: string, argumentsText: string): Promise<string>;
-  /** Named-query snapshots can safely refresh while their active owner runs. */
-  typedSessionQueries?: boolean;
-  mutateIntent?(intent: Phase16MutationIntent): Promise<TuiCoreRunResult>;
-  resumeSession(
-    sessionId: string,
-    message?: string,
-  ): Promise<TuiCoreRunResult>;
-  startTask(task: string): Promise<TuiCoreRunResult>;
-  refreshRepository?(): Promise<RepositoryStatusProjection>;
-  graphCommand?(intent: TuiGraphIntent): Promise<TuiCoreRunResult>;
-  delegationCommand?(intent: TuiDelegationIntent): Promise<TuiCoreRunResult>;
-  startIntent?(
-    intent: Phase16StartIntent,
-    selectedMode: "build" | "plan",
-    modeSource: "explicit_tui" | "tui_default",
-  ): Promise<TuiCoreRunResult>;
-  watchSession?(
-    sessionId: string,
-    onChange: (kind: "lock" | "session") => void,
-    onError: (error: Error) => void,
-  ): Promise<() => void>;
-}
-
-export type TuiGraphIntent =
-  | { readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "approve" }
-  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "enqueue" }
-  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "run" }
-  | { readonly expectedSessionSeq: number; readonly reason: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "cancel" }
-  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
-  | { readonly expectedSessionSeq: number; readonly promotionOperation: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "verify_origin" }
-  | { readonly attemptId: string; readonly expectedSessionSeq: number; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
-
-export type TuiDelegationIntent = {
-  readonly action: TuiDelegationDecisionDialog["action"];
-  readonly delegationId: string;
-  readonly expectedSessionSeq: number;
-  readonly reason: string | null;
-  readonly revision: number;
-  readonly sessionId: string;
-  readonly sha256: string;
-};
-
-export interface TuiCoreRunResult {
-  readonly diagnostic: string | null;
-  readonly exitCode: number;
-}
-
 export interface TuiControllerOptions {
   readonly approvalController: ApprovalController;
   readonly approvalViewChanged?: () => void;
-  readonly core: TuiCorePort;
+  readonly core: TuiApplicationFacadeV1;
   readonly createIntentId?: () => string;
   readonly initialMode?: "build" | "plan";
   readonly initialModeSource?: "explicit_tui" | "tui_default";
@@ -157,18 +110,6 @@ type AppExitCode = 0 | 1;
 
 const BRACKETED_PASTE_START = "\u001b[200~";
 const BRACKETED_PASTE_END = "\u001b[201~";
-const SESSION_COMMAND = /^\/session\s+(\S+)\s*$/u;
-const RESUME_COMMAND = /^\/resume\s+(\S+)(?:\s+([\s\S]+))?$/u;
-const MODE_COMMAND = /^\/mode\s+(plan|build)\s*$/u;
-const NEW_GOAL_COMMAND = /^\/new(!)?\s+([\s\S]+)$/u;
-const GOAL_SET_COMMAND = /^\/goal\s+set\s+([\s\S]+)$/u;
-const GOAL_ABANDON_COMMAND = /^\/goal\s+abandon\s+([\s\S]+)$/u;
-const PLAN_REJECT_COMMAND = /^\/plan\s+reject\s+([\s\S]+)$/u;
-const PLAN_REPLACE_COMMAND = /^\/plan\s+replace\s+([\s\S]+)$/u;
-const SKILL_COMMAND = /^\/skill\s+(\S+)(?:\s+([\s\S]+))?$/u;
-const MCP_PROMPT_COMMAND = /^\/mcp-prompt\s+(\S+)(?:\s+([\s\S]+))?$/u;
-const GRAPH_COMMAND = /^\/graph(?:\s+([\s\S]+))?$/u;
-
 function printableInput(data: string): string | null {
   if (data.length === 0) return null;
   for (const character of data) {
@@ -195,6 +136,7 @@ export class TuiController {
   private exitWhenIdle = false;
   private activeCoreRun: Promise<TuiCoreRunResult> | null = null;
   private acceptingTypedDisplaySnapshot = false;
+  private replayingFullSnapshot = false;
   private coordinator: RunCoordinator | null = null;
   private externalRefreshInFlight = false;
   private externalRefreshPending = false;
@@ -250,10 +192,12 @@ export class TuiController {
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
     this.acceptingTypedDisplaySnapshot = isTypedSessionSnapshot(snapshot);
+    this.replayingFullSnapshot = true;
     try {
       this.options.source.resetWhileIdle({ snapshot: events });
     } finally {
       this.acceptingTypedDisplaySnapshot = false;
+      this.replayingFullSnapshot = false;
     }
     if (isTypedSessionSnapshot(snapshot)) this.applyTypedProjection(snapshot);
     this.syncApprovalDialog();
@@ -629,13 +573,13 @@ export class TuiController {
         acknowledge({ runId: event.runId, sessionId: event.sessionId });
       }
     }
-    // A full typed snapshot is replayed event-by-event. Intermediate prefixes
+    // A full snapshot is replayed event-by-event. Intermediate prefixes
     // can legitimately omit the still-active approval, so synchronizing the
     // modal during that replay would reset an exact request's Allow focus back
     // to default-deny between the focus key and Enter. Synchronize once from
     // the complete snapshot instead; a genuinely different request still
     // reopens on deny.
-    if (!this.acceptingTypedDisplaySnapshot) {
+    if (!this.replayingFullSnapshot) {
       this.syncApprovalDialog();
       this.options.approvalViewChanged?.();
     }
@@ -1007,11 +951,12 @@ export class TuiController {
   private async submitDraft(): Promise<void> {
     const text = this.ephemeralState.draftInput.trim();
     if (text.length === 0) return;
-    if (text === "exit") {
+    const parsed = parseTuiCommand(text);
+    if (parsed.kind === "exit") {
       if (this.coordinator?.state.kind === "idle") this.finishApp(0);
       return;
     }
-    if (text === "/refresh") {
+    if (parsed.kind === "refresh") {
       if (this.idleOperationInFlight) {
         this.showCommandDiagnostic(
           "Session refresh already in progress — input kept locally.",
@@ -1041,7 +986,7 @@ export class TuiController {
       this.renderCoordinatorResult(result);
       return;
     }
-    if (text === "/plugins") {
+    if (parsed.kind === "plugins") {
       if (this.options.core.listPlugins === undefined) {
         this.showCommandDiagnostic("Local Plugin lifecycle is unavailable.");
         return;
@@ -1060,10 +1005,9 @@ export class TuiController {
       this.scheduleRender();
       return;
     }
-    const mode = MODE_COMMAND.exec(text)?.[1] as "build" | "plan" | undefined;
-    if (mode !== undefined) {
+    if (parsed.kind === "mode") {
       const result = await this.coordinator?.dispatch({
-        mode,
+        mode: parsed.mode,
         type: "set_agent_mode",
       });
       if (result?.status === "mode_selected") {
@@ -1076,9 +1020,8 @@ export class TuiController {
       this.renderCoordinatorResult(result);
       return;
     }
-    const session = SESSION_COMMAND.exec(text);
-    if (session?.[1] !== undefined) {
-      await this.selectSession(session[1]);
+    if (parsed.kind === "session") {
+      await this.selectSession(parsed.sessionId);
       return;
     }
     if (
@@ -1093,14 +1036,13 @@ export class TuiController {
       );
       return;
     }
-    const skill = SKILL_COMMAND.exec(text);
-    if (skill?.[1] !== undefined) {
+    if (parsed.kind === "skill") {
       if (this.options.core.selectSkill === undefined) {
         this.showCommandDiagnostic("Skill selection is unavailable.");
         return;
       }
       try {
-        const selected = await this.options.core.selectSkill(skill[1], skill[2] ?? "");
+        const selected = await this.options.core.selectSkill(parsed.selector, parsed.argumentsText);
         this.ephemeralState = setCoreDiagnostic(
           setDraftInput(this.ephemeralState, ""),
           `Skill selected for the next run: ${selected}`,
@@ -1113,16 +1055,15 @@ export class TuiController {
       this.scheduleRender();
       return;
     }
-    const mcpPrompt = MCP_PROMPT_COMMAND.exec(text);
-    if (mcpPrompt?.[1] !== undefined) {
+    if (parsed.kind === "mcp_prompt") {
       if (this.options.core.selectMcpPrompt === undefined) {
         this.showCommandDiagnostic("MCP prompt selection is unavailable.");
         return;
       }
       try {
         const selected = await this.options.core.selectMcpPrompt(
-          mcpPrompt[1],
-          mcpPrompt[2],
+          parsed.selector,
+          parsed.argumentsJson,
         );
         this.ephemeralState = setCoreDiagnostic(
           setDraftInput(this.ephemeralState, ""),
@@ -1138,18 +1079,16 @@ export class TuiController {
       this.scheduleRender();
       return;
     }
-    const resume = RESUME_COMMAND.exec(text);
-    if (resume?.[1] !== undefined) {
-      await this.selectSession(resume[1]);
+    if (parsed.kind === "resume") {
+      await this.selectSession(parsed.sessionId);
       await this.startCoreRun(() =>
-        this.options.core.resumeSession(resume[1]!, resume[2]),
+        this.options.core.resumeSession(parsed.sessionId, parsed.message),
         text,
       );
       return;
     }
-    const graphCommand = GRAPH_COMMAND.exec(text)?.[1]?.trim();
-    if (graphCommand !== undefined) {
-      await this.executeGraphCommand(graphCommand, text);
+    if (parsed.kind === "graph") {
+      await this.executeGraphCommand(parsed.command, text);
       return;
     }
     if (this.options.core.startIntent === undefined || this.coordinator === null) {
@@ -1160,9 +1099,8 @@ export class TuiController {
 
     const goal = this.activeGoal();
     const draft = this.pendingPlan();
-    const newGoal = NEW_GOAL_COMMAND.exec(text);
-    if (newGoal?.[2] !== undefined) {
-      if (goal !== null && newGoal[1] !== "!") {
+    if (parsed.kind === "new_goal") {
+      if (goal !== null && !parsed.confirmedAbandon) {
         this.ephemeralState = setCoreDiagnostic(
           this.ephemeralState,
           "Active Goal replacement requires explicit /new! <task> confirmation; workspace bytes are not rolled back.",
@@ -1176,15 +1114,14 @@ export class TuiController {
           confirmedAbandon: goal !== null,
           currentGoalId: goal?.content.goalId ?? null,
           currentGoalRevision: goal?.content.revision ?? null,
-          text: newGoal[2].trim(),
+          text: parsed.text.trim(),
           type: "start_new_goal",
         },
         text,
       );
       return;
     }
-    const goalSet = GOAL_SET_COMMAND.exec(text)?.[1];
-    if (goalSet !== undefined) {
+    if (parsed.kind === "goal_set") {
       if (goal === null) {
         this.showCommandDiagnostic("No active Goal is available to revise.");
         return;
@@ -1193,13 +1130,12 @@ export class TuiController {
         ...this.currentBinding(),
         baseRevision: goal.content.revision,
         goalId: goal.content.goalId,
-        objective: goalSet.trim(),
+        objective: parsed.text.trim(),
         type: "revise_goal",
       });
       return;
     }
-    const goalAbandon = GOAL_ABANDON_COMMAND.exec(text)?.[1];
-    if (goalAbandon !== undefined) {
+    if (parsed.kind === "goal_abandon") {
       if (goal === null) {
         this.showCommandDiagnostic("No active Goal is available to abandon.");
         return;
@@ -1207,34 +1143,32 @@ export class TuiController {
       await this.dispatchMutation({
         ...this.currentBinding(),
         goalId: goal.content.goalId,
-        reason: goalAbandon.trim(),
+        reason: parsed.reason.trim(),
         revision: goal.content.revision,
         type: "abandon_goal",
       });
       return;
     }
-    if (text === "/plan approve" || text === "/plan approve-build") {
+    if (parsed.kind === "plan_approve") {
       if (draft === null) {
         this.showCommandDiagnostic("No pending Plan draft is available for approval.");
         return;
       }
       this.openPlanDecision(
         draft,
-        text === "/plan approve-build" ? "approve_build" : "approve",
+        parsed.decision,
       );
       return;
     }
-    const planReject = PLAN_REJECT_COMMAND.exec(text)?.[1];
-    if (planReject !== undefined) {
+    if (parsed.kind === "plan_reject") {
       if (draft === null) {
         this.showCommandDiagnostic("No pending Plan draft is available for rejection.");
         return;
       }
-      this.openPlanDecision(draft, "reject", planReject.trim());
+      this.openPlanDecision(draft, "reject", parsed.reason.trim());
       return;
     }
-    const planPath = PLAN_REPLACE_COMMAND.exec(text)?.[1];
-    if (planPath !== undefined) {
+    if (parsed.kind === "plan_replace") {
       if (goal === null) {
         this.showCommandDiagnostic("No active Goal is available for Plan replacement.");
         return;
@@ -1247,12 +1181,12 @@ export class TuiController {
         base,
         goalId: goal.content.goalId,
         goalRevision: goal.content.revision,
-        path: planPath.trim(),
+        path: parsed.path.trim(),
         type: "replace_plan_from_file",
       });
       return;
     }
-    if (text === "/retry" || text === "/continue") {
+    if (parsed.kind === "retry_or_continue") {
       if (goal === null) {
         this.ephemeralState = setCoreDiagnostic(
           this.ephemeralState,
@@ -1264,7 +1198,7 @@ export class TuiController {
       await this.dispatchStart({
         ...this.currentBinding(),
         mode: this.ephemeralState.selectedAgentMode,
-        reason: text === "/retry" ? "retry_goal_start" : "explicit_continue",
+        reason: parsed.operation === "retry" ? "retry_goal_start" : "explicit_continue",
         type: "start_run_without_message",
       }, text);
       return;
@@ -1662,10 +1596,12 @@ export class TuiController {
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
     this.acceptingTypedDisplaySnapshot = isTypedSessionSnapshot(snapshot);
+    this.replayingFullSnapshot = true;
     try {
       this.options.source.resetWhileIdle({ snapshot: this.eventsOf(snapshot) });
     } finally {
       this.acceptingTypedDisplaySnapshot = false;
+      this.replayingFullSnapshot = false;
     }
     if (isTypedSessionSnapshot(snapshot)) this.applyTypedProjection(snapshot);
     this.syncApprovalDialog();

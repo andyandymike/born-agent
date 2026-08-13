@@ -9,6 +9,7 @@ import {
   type CheckpointPrivacyVerifier,
 } from "../checkpoints/checkpoint-store.js";
 import type { CliRuntime } from "../cli/types.js";
+import { createDomainHarness } from "../coordination/domain-harness.js";
 import { createAgentToolRegistry as createProductionAgentToolRegistry } from "../tools/create-agent-tool-registry.js";
 import { createReadonlyToolRegistry } from "../tools/create-readonly-tool-registry.js";
 import { DockerExecutionPreparer } from "../execution/docker/docker-execution-preparer.js";
@@ -152,6 +153,7 @@ export interface EvalAgentRuntimeOptions {
 
 export class EvalAgentRuntime implements CliRuntime {
   readonly cwd: string;
+  readonly domainHarness = createDomainHarness();
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly execPath = process.execPath;
   readonly nodeVersion = process.versions.node;

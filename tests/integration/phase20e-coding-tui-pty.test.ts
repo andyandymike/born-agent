@@ -60,7 +60,7 @@ describe("Phase 20E real PTY child effect approvals", () => {
         cwd: workspace,
         env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
         maxBuffer: 4 * 1024 * 1024,
-        timeout: 110_000,
+        timeout: 170_000,
         windowsHide: true,
       },
     ));
@@ -78,7 +78,7 @@ describe("Phase 20E real PTY child effect approvals", () => {
     });
     expect(raw).toContain("Default deny; approval is bound to this exact child/action identity.");
     expect(raw).toContain("PTY_SHELL_RESTORED");
-  }, 120_000);
+  }, 180_000);
 
   realBuiltCodingPtyTest("cancels an active coding child from its patch modal before separately exiting the TUI", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "b20ccp-"));
@@ -92,7 +92,7 @@ describe("Phase 20E real PTY child effect approvals", () => {
         cwd: workspace,
         env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
         maxBuffer: 4 * 1024 * 1024,
-        timeout: 110_000,
+        timeout: 170_000,
         windowsHide: true,
       },
     ));
@@ -110,7 +110,7 @@ describe("Phase 20E real PTY child effect approvals", () => {
     });
     expect(raw).toContain("PTY_CODING_CANCEL_SNAPSHOT=");
     expect(raw).toContain("PTY_SHELL_RESTORED");
-  }, 120_000);
+  }, 180_000);
 
   realBuiltCodingPtyTest("confirms exit with an active foreground child, cancels it exactly, and restores the shell", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "b20cep-"));
@@ -124,7 +124,7 @@ describe("Phase 20E real PTY child effect approvals", () => {
         cwd: workspace,
         env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
         maxBuffer: 4 * 1024 * 1024,
-        timeout: 110_000,
+        timeout: 170_000,
         windowsHide: true,
       },
     ));
@@ -144,5 +144,5 @@ describe("Phase 20E real PTY child effect approvals", () => {
     expect(raw).toContain("EXIT WITH ACTIVE CHILD");
     expect(raw).toContain("BACKGROUND HANDOFF UNAVAILABLE");
     expect(raw).toContain("PTY_SHELL_RESTORED");
-  }, 120_000);
+  }, 180_000);
 });

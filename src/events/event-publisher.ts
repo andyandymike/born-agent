@@ -320,6 +320,10 @@ export class EventPublisher {
     return this.agentSteps.size;
   }
 
+  get terminalPublished(): boolean {
+    return this.terminal;
+  }
+
   get events(): readonly RunEvent[] {
     // PHASE9: online canonical-boundary hashing may inspect only events that
     // have crossed the writer's durable boundary. Returning a copy prevents a

@@ -3,18 +3,18 @@ import { executeAgentExecution } from "../../agent/agent-execution-service.js";
 import {
   createAgentExecutionPresentationPort,
   createAgentExecutionRuntimePort,
-} from "../../agent/agent-execution-cli-ports.js";
+} from "../../cli/agent-execution-ports.js";
 import type { CliIO, CliRuntime } from "../../cli/types.js";
+import { isDomainHarnessRuntime } from "../../coordination/domain-harness.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
 import type { ApplicationEnvelopeV1, AuthenticatedCallContextV1 } from "../application-protocol.js";
 import { ApplicationControlError } from "../application-errors.js";
 import type { PreparedActionResponseV1 } from "../application-service.js";
 import { createPhase21ALocalControlPlane } from "../local-control-plane.js";
-import { SessionOwnerBroker } from "../session-owner-broker.js";
-import { ForegroundGraphControlRegistry } from "../foreground-graph-control-registry.js";
-import { ActiveDelegationControlRegistry } from "../active-delegation-control-registry.js";
-import { ActiveOwnerCompositeControlRegistry } from "../active-owner-composite-control-registry.js";
-import { SessionDeliveryCoordinator } from "../delivery-cursor.js";
+import {
+  processLocalApplicationHosts,
+  type LocalApplicationHost,
+} from "../local-application-host.js";
 import {
   agentSessionMessagePayloadV1Schema,
   type AgentSessionMessagePayloadV1,
@@ -26,7 +26,7 @@ import { CliDelegationCompositeOwnerPort } from "./delegation-composite-cli-port
 import {
   createDelegationOwnerInteractionPort,
   createDelegationOwnerRuntimePort,
-} from "../../delegation/delegation-owner-cli-ports.js";
+} from "../../cli/delegation-owner-ports.js";
 import type { SessionResumeOwnerPortV1 } from "../use-cases/session-resume-action.js";
 import type { TaskSurfaceQueryOperationPortV1 } from "../use-cases/task-surface-queries.js";
 import {
@@ -143,54 +143,16 @@ function optionsFromPayload(
   )) as unknown as AgentCommandOptions;
 }
 
-const processLocalBrokers = new Map<string, SessionOwnerBroker>();
-const processLocalDeliveries = new Map<string, SessionDeliveryCoordinator>();
-const processLocalForegroundGraphControls = new Map<string, ForegroundGraphControlRegistry>();
-const processLocalActiveDelegations = new Map<string, ActiveDelegationControlRegistry>();
-const processLocalActiveOwnerComposites = new Map<string, ActiveOwnerCompositeControlRegistry>();
-const processLocalContexts = new WeakMap<
-  CliRuntime,
-  Map<"cli" | "tui", AuthenticatedCallContextV1>
->();
-
-export function brokerForStateRoot(stateRoot: string): SessionOwnerBroker {
-  const existing = processLocalBrokers.get(stateRoot);
-  if (existing !== undefined) return existing;
-  const created = new SessionOwnerBroker();
-  processLocalBrokers.set(stateRoot, created);
-  return created;
+function hostForStateRoot(stateRoot: string): LocalApplicationHost | null {
+  return processLocalApplicationHosts.peek(stateRoot);
 }
 
-function deliveryForStateRoot(stateRoot: string): SessionDeliveryCoordinator {
-  const existing = processLocalDeliveries.get(stateRoot);
-  if (existing !== undefined) return existing;
-  const created = new SessionDeliveryCoordinator();
-  processLocalDeliveries.set(stateRoot, created);
-  return created;
-}
-
-function foregroundGraphControlsForStateRoot(stateRoot: string): ForegroundGraphControlRegistry {
-  const existing = processLocalForegroundGraphControls.get(stateRoot);
-  if (existing !== undefined) return existing;
-  const created = new ForegroundGraphControlRegistry();
-  processLocalForegroundGraphControls.set(stateRoot, created);
-  return created;
-}
-
-function activeDelegationsForStateRoot(stateRoot: string): ActiveDelegationControlRegistry {
-  const existing = processLocalActiveDelegations.get(stateRoot);
-  if (existing !== undefined) return existing;
-  const created = new ActiveDelegationControlRegistry();
-  processLocalActiveDelegations.set(stateRoot, created);
-  return created;
-}
-
-function activeOwnerCompositesForStateRoot(stateRoot: string): ActiveOwnerCompositeControlRegistry {
-  const existing = processLocalActiveOwnerComposites.get(stateRoot);
-  if (existing !== undefined) return existing;
-  const created = new ActiveOwnerCompositeControlRegistry();
-  processLocalActiveOwnerComposites.set(stateRoot, created);
-  return created;
+export function brokerForStateRoot(stateRoot: string) {
+  const host = hostForStateRoot(stateRoot);
+  if (host === null) {
+    throw new ApplicationControlError("control_operation_busy", "application Host is not initialized");
+  }
+  return host.broker;
 }
 
 export function activeForegroundGraphControlForRuntime(
@@ -199,18 +161,18 @@ export function activeForegroundGraphControlForRuntime(
 ) {
   return runtime.controlPlaneStateRoot === undefined
     ? null
-    : foregroundGraphControlsForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+    : hostForStateRoot(runtime.controlPlaneStateRoot)?.activeOwners.foregroundGraphs.active(sessionId) ?? null;
 }
 
 export function activeDelegationControlForRuntime(runtime: CliRuntime, sessionId: string) {
   return runtime.controlPlaneStateRoot === undefined
     ? null
-    : activeDelegationsForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+    : hostForStateRoot(runtime.controlPlaneStateRoot)?.activeOwners.delegations.active(sessionId) ?? null;
 }
 
 export function abortActiveOwnerCompositeForRuntime(runtime: CliRuntime, sessionId: string) {
   if (runtime.controlPlaneStateRoot === undefined) return null;
-  const active = activeOwnerCompositesForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+  const active = hostForStateRoot(runtime.controlPlaneStateRoot)?.activeOwners.ownerComposites.active(sessionId) ?? null;
   if (active === null) return null;
   active.requestAbort();
   return Object.freeze({
@@ -222,7 +184,7 @@ export function abortActiveOwnerCompositeForRuntime(runtime: CliRuntime, session
 
 export function hasActiveOwnerCompositeForRuntime(runtime: CliRuntime, sessionId: string): boolean {
   return runtime.controlPlaneStateRoot !== undefined &&
-    activeOwnerCompositesForStateRoot(runtime.controlPlaneStateRoot).active(sessionId) !== null;
+    (hostForStateRoot(runtime.controlPlaneStateRoot)?.activeOwners.ownerComposites.active(sessionId) ?? null) !== null;
 }
 
 export type TuiSurfaceFatalOwnerOutcomeV1 =
@@ -248,7 +210,9 @@ export function requestTuiSurfaceFatalForRuntime(
     return Object.freeze({ kind: "unknown_owner" });
   }
   const reason = Object.freeze({ reason: "tui_surface_fatal" as const });
-  const run = brokerForStateRoot(runtime.controlPlaneStateRoot).requestHostEmergencyStop(sessionId, reason);
+  const host = hostForStateRoot(runtime.controlPlaneStateRoot);
+  if (host === null) return Object.freeze({ kind: "unknown_owner" });
+  const run = host.broker.requestHostEmergencyStop(sessionId, reason);
   if (run !== null) {
     return Object.freeze({
       kind: "signalled_exact_owner",
@@ -256,7 +220,7 @@ export function requestTuiSurfaceFatalForRuntime(
       ownerKind: "run",
     });
   }
-  const graph = foregroundGraphControlsForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+  const graph = host.activeOwners.foregroundGraphs.active(sessionId);
   if (graph !== null) {
     graph.requestHostEmergencyStop(reason);
     return Object.freeze({
@@ -265,7 +229,7 @@ export function requestTuiSurfaceFatalForRuntime(
       ownerKind: "graph",
     });
   }
-  const delegation = activeDelegationsForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+  const delegation = host.activeOwners.delegations.active(sessionId);
   if (delegation !== null) {
     delegation.requestHostEmergencyStop(reason);
     return Object.freeze({
@@ -274,7 +238,7 @@ export function requestTuiSurfaceFatalForRuntime(
       ownerKind: "delegation",
     });
   }
-  const composite = activeOwnerCompositesForStateRoot(runtime.controlPlaneStateRoot).active(sessionId);
+  const composite = host.activeOwners.ownerComposites.active(sessionId);
   if (composite !== null) {
     composite.requestHostEmergencyStop(reason);
     return Object.freeze({
@@ -294,19 +258,10 @@ export function requestTuiSurfaceFatalForRuntime(
  */
 export function contextForRuntime(
   plane: Awaited<ReturnType<typeof createPhase21ALocalControlPlane>>,
-  runtime: CliRuntime,
+  _runtime: CliRuntime,
   surface: "cli" | "tui",
 ): AuthenticatedCallContextV1 {
-  let contexts = processLocalContexts.get(runtime);
-  if (contexts === undefined) {
-    contexts = new Map();
-    processLocalContexts.set(runtime, contexts);
-  }
-  const existing = contexts.get(surface);
-  if (existing !== undefined) return existing;
-  const created = plane.context(surface, runtime.randomUUID());
-  contexts.set(surface, created);
-  return created;
+  return plane.context(surface);
 }
 
 export async function registerCurrentRepository(
@@ -424,83 +379,102 @@ export async function adoptLegacySessionThroughApplicationService(
     : committed;
 }
 
-export async function planeForRuntime(
-  runtime: CliRuntime,
-  io: CliIO,
-  sessionResumeOwner?: SessionResumeOwnerPortV1,
-  chatExecution?: ChatExecutionPortV1,
-) {
+async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promise<LocalApplicationHost> {
   if (runtime.controlPlaneStateRoot === undefined) throw new TypeError("application control state root is unavailable");
-  const broker = brokerForStateRoot(runtime.controlPlaneStateRoot);
-  const foregroundGraphControls = foregroundGraphControlsForStateRoot(runtime.controlPlaneStateRoot);
-  const activeDelegations = activeDelegationsForStateRoot(runtime.controlPlaneStateRoot);
-  const activeOwnerComposites = activeOwnerCompositesForStateRoot(runtime.controlPlaneStateRoot);
-  return createPhase21ALocalControlPlane({
-    activeDelegations,
-    broker,
-    ...(chatExecution === undefined ? {} : { chatExecution }),
-    // PHASE21: a delivery gap freezes the exact client/session for the Host
-    // process lifetime. Rebuilding a command-scoped application facade must
-    // not create a fresh coordinator and silently thaw that safety barrier.
-    delivery: deliveryForStateRoot(runtime.controlPlaneStateRoot),
-    delegationCompositeOwnerFactory: (signer, activeSessionWriterObserverFactory) => new CliDelegationCompositeOwnerPort({
-      activeDelegations,
-      activeSessionWriterObserverFactory,
-      interaction: createDelegationOwnerInteractionPort(runtime, io),
-      runtime: createDelegationOwnerRuntimePort(runtime, io),
-      signer,
-    }),
-    graphCompositeOwnerFactory: (signer) => new CliGraphCompositeOwnerPort({
-      activeOwnerComposites,
-      foregroundGraphControls,
-      io,
-      runtime,
-      signer,
-    }),
-    graphCancelOwnerFactory: (signer) => new CliGraphCancelOwnerPort({
-      foregroundGraphControls,
-      runtime,
-      signer,
-    }),
-    taskSurfaceOperations: Object.freeze({
-      inspectDelegationOperationSidecars: runtime.inspectDelegationOperationSidecars ??
-        (() => Promise.resolve(Object.freeze([]))),
-      ...(runtime.observeBackgroundWorkerLive === undefined ? {} : {
-        observeBackgroundWorkerLive: async (input: Parameters<NonNullable<TaskSurfaceQueryOperationPortV1["observeBackgroundWorkerLive"]>>[0]) => runtime.observeBackgroundWorkerLive!({
-          current: input.current,
-          repositoryId: input.repositoryId,
-          sessionId: input.sessionId,
+  return processLocalApplicationHosts.getOrCreate({
+    stateRoot: runtime.controlPlaneStateRoot,
+    createPlane: async (host) => createPhase21ALocalControlPlane({
+      activeDelegations: host.activeOwners.delegations,
+      broker: host.broker,
+      chatExecution: host.chatExecution,
+      delivery: host.delivery,
+      delegationCompositeOwnerFactory: (signer, activeSessionWriterObserverFactory) => new CliDelegationCompositeOwnerPort({
+        activeDelegations: host.activeOwners.delegations,
+        activeSessionWriterObserverFactory,
+        interaction: createDelegationOwnerInteractionPort(runtime, io),
+        runtime: createDelegationOwnerRuntimePort(runtime, io),
+        signer,
+      }),
+      graphCompositeOwnerFactory: (signer) => new CliGraphCompositeOwnerPort({
+        activeOwnerComposites: host.activeOwners.ownerComposites,
+        foregroundGraphControls: host.activeOwners.foregroundGraphs,
+        io,
+        runtime,
+        signer,
+      }),
+      graphCancelOwnerFactory: (signer) => new CliGraphCancelOwnerPort({
+        foregroundGraphControls: host.activeOwners.foregroundGraphs,
+        runtime,
+        signer,
+      }),
+      taskSurfaceOperations: Object.freeze({
+        inspectDelegationOperationSidecars: runtime.inspectDelegationOperationSidecars ??
+          (() => Promise.resolve(Object.freeze([]))),
+        ...(runtime.observeBackgroundWorkerLive === undefined ? {} : {
+          observeBackgroundWorkerLive: async (input: Parameters<NonNullable<TaskSurfaceQueryOperationPortV1["observeBackgroundWorkerLive"]>>[0]) => runtime.observeBackgroundWorkerLive!({
+            current: input.current,
+            repositoryId: input.repositoryId,
+            sessionId: input.sessionId,
+          }),
         }),
       }),
-    }),
-    launcher: {
-      launch: async (input) => Object.freeze({
-        exitCode: await executeAgentExecution(
-          optionsFromPayload(input.payload, input.surface),
-          createAgentExecutionRuntimePort(runtime, io),
-          createAgentExecutionPresentationPort(
-            io,
-            input.payload.verbose,
-            input.payload.reportFormat === "json" ? "json" : "text",
+      launcher: {
+        launch: async (input) => Object.freeze({
+          exitCode: await executeAgentExecution(
+            optionsFromPayload(input.payload, input.surface),
+            createAgentExecutionRuntimePort(runtime, io),
+            createAgentExecutionPresentationPort(
+              io,
+              input.payload.verbose,
+              input.payload.reportFormat === "json" ? "json" : "text",
+            ),
+            undefined,
+            {
+              applicationCommit: input.applicationCommit,
+              applicationCancellation: input.applicationCancellation,
+              authenticatedMutation: input.authenticatedMutation,
+              modelTask: input.payload.task,
+              onRunStarted: input.onRunStarted,
+              runId: input.runId,
+              sessionId: input.sessionId,
+              sessionWorkspace: input.repositoryRoot,
+              writer: input.writer,
+            },
           ),
-          undefined,
-          {
-            applicationCommit: input.applicationCommit,
-            applicationCancellation: input.applicationCancellation,
-            authenticatedMutation: input.authenticatedMutation,
-            modelTask: input.payload.task,
-            onRunStarted: input.onRunStarted,
-            runId: input.runId,
-            sessionId: input.sessionId,
-            sessionWorkspace: input.repositoryRoot,
-            writer: input.writer,
-          },
-        ),
-      }),
-    },
-    ...(sessionResumeOwner === undefined ? {} : { sessionResumeOwner }),
-    stateRoot: runtime.controlPlaneStateRoot,
+        }),
+      },
+      sessionResumeOwner: host.sessionResumeOwner,
+      stateRoot: runtime.controlPlaneStateRoot!,
+    }),
   });
+}
+
+export async function planeForRuntime(runtime: CliRuntime, io: CliIO) {
+  return (await applicationHostForRuntime(runtime, io)).plane;
+}
+
+export async function registerChatExecutionForRuntime(input: Readonly<{
+  readonly execution: ChatExecutionPortV1;
+  readonly payloadSha256: string;
+  readonly runtime: CliRuntime;
+  readonly io: CliIO;
+}>): Promise<() => void> {
+  return (await applicationHostForRuntime(input.runtime, input.io))
+    .registerChatExecution(input.payloadSha256, input.execution);
+}
+
+export async function registerSessionResumeOwnerForRuntime(input: Readonly<{
+  readonly io: CliIO;
+  readonly owner: SessionResumeOwnerPortV1;
+  readonly runtime: CliRuntime;
+  readonly sessionId: string;
+}>): Promise<() => void> {
+  return (await applicationHostForRuntime(input.runtime, input.io))
+    .registerSessionResumeOwner(input.sessionId, input.owner);
+}
+
+export async function disposeApplicationHostForStateRoot(stateRoot: string): Promise<void> {
+  await processLocalApplicationHosts.dispose(stateRoot);
 }
 
 async function requestRunCancelThroughPlane(input: Readonly<{
@@ -874,16 +848,15 @@ async function submitMessage(input: {
 }
 
 /**
- * PHASE21: real CLI Agent starts use the same typed prepare/commit service as
- * later product surfaces. Test embedders without a Host state root retain the
- * legacy direct adapter so existing deterministic fixtures stay isolated.
+ * Product Agent starts use the typed prepare/commit service. Direct execution
+ * exists only behind the explicit test/eval DomainHarness capability.
  */
 export async function executeAgentThroughApplicationService(
   options: AgentCommandOptions,
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<AgentExitCode> {
-  if (runtime.controlPlaneStateRoot === undefined) {
+  if (isDomainHarnessRuntime(runtime)) {
     return executeAgentExecution(
       options,
       createAgentExecutionRuntimePort(runtime, io),

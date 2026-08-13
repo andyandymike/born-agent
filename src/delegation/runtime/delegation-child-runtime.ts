@@ -3,7 +3,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-import type { CliIO } from "../../cli/types.js";
+import type { SurfaceIO } from "../../presentation/surface-io.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
 import { currentProcessIdentity } from "../../sessions/process-identity.js";
 import { SessionCatalog } from "../../sessions/session-catalog.js";
@@ -59,7 +59,7 @@ export interface DelegationChildExecutionPortV1 {
   execute(input: {
     readonly capsule: ContextCapsuleV1;
     readonly envelope: ExecutableChildEnvelopeV1;
-    readonly io: CliIO;
+  readonly io: SurfaceIO;
     readonly operation: DelegationChildOperationV1;
     readonly onCancel: (listener: (reason: "user_cancel" | "tui_surface_fatal") => void) => () => void;
     readonly prompt: DelegatedChildApprovalBridge;
@@ -171,7 +171,7 @@ export class DelegationChildRuntime {
     readonly channel: DelegationChildControlChannelV1;
     readonly envelopePath: string;
     readonly execute: DelegationChildExecutionPortV1;
-    readonly io: CliIO;
+    readonly io: SurfaceIO;
     readonly nonce: string;
     readonly operationId: string;
     readonly operationRoot: string;

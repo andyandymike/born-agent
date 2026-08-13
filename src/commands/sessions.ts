@@ -6,6 +6,7 @@ import type { AgentCommandOptions, AgentExitCode } from "../agent/agent-types.js
 import { CheckpointStore } from "../checkpoints/checkpoint-store.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import { runEventSchema } from "../events/run-event-schema.js";
 import type { RunEvent } from "../events/run-event.js";
 import { BackendPreflightError } from "../model/backend-factory.js";
@@ -182,7 +183,7 @@ export async function executeSessionsList(
   if (limit === undefined) {
     return usageError(io, "session list limit must be an integer from 1 to 200");
   }
-  if (runtime.controlPlaneStateRoot !== undefined) {
+  if (!isDomainHarnessRuntime(runtime)) {
     const startedAt = runtime.now();
     const application = await querySessionsListThroughApplicationService({ io, limit, runtime });
     if (application.value === null) return application.exitCode;
@@ -507,7 +508,7 @@ export async function executeSessionsShow(
   } catch (error) {
     return usageError(io, error instanceof Error ? error.message : "invalid session id");
   }
-  if (runtime.controlPlaneStateRoot !== undefined) {
+  if (!isDomainHarnessRuntime(runtime)) {
     const application = await querySessionShowThroughApplicationService({
       includeEvents: options.events,
       io,
@@ -1031,10 +1032,9 @@ export async function executeSessionsResume(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
-  // Test embedders without Host state preserve the deterministic Phase 9
-  // owner directly. Every product CLI/TUI runtime has controlPlaneStateRoot
-  // and therefore uses the typed prepare/commit adapter below.
-  if (runtime.controlPlaneStateRoot === undefined) {
+  // Direct Phase 9 ownership is an explicit test/eval DomainHarness. Missing
+  // product Host configuration never grants mutation authority.
+  if (isDomainHarnessRuntime(runtime)) {
     return executeSessionsResumeOwner(options, runtime, io);
   }
   const result = await executeSessionResumeThroughRuntimeAdapter({

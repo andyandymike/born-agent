@@ -14,6 +14,10 @@ const base = createNodeRuntime({
   approvalInput: { interactive: false, readLine: async () => null },
   cliEntryPath: cliEntryPath!,
   cwd: workspace!,
+  // This built-process fixture cold-starts two sealed child executables before
+  // emitting its crash marker. Preserve the product 30s default while giving
+  // the CI evidence path a bounded load-tolerant handshake window.
+  delegationHandshakeTimeoutMs: 60_000,
   delegationUserStateRoot: stateRoot!,
   env: { ...process.env, LOCALAPPDATA: stateRoot, XDG_STATE_HOME: stateRoot },
   execPath: process.execPath,

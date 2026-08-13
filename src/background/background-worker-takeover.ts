@@ -6,7 +6,7 @@ import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import type { Phase19TaskGraphSessionEventData } from "../task-graph/task-graph-event-schema.js";
 import { BackgroundError } from "./background-errors.js";
 import { BackgroundOperationStore } from "./background-operation-store.js";
-import { backgroundHandoffRecordSchema } from "./background-schema.js";
+import { backgroundHandoffRecordSchema, backgroundHandoffTransitionId } from "./background-schema.js";
 
 async function defaultWriterFactory(context: TaskMutationContext): Promise<V2SessionWriter> {
   return V2SessionWriter.openExisting(context.workspace, context.sessionId, {
@@ -140,6 +140,11 @@ export class BackgroundWorkerTakeoverReconciler {
               updatedAt: this.options.context.now(),
             }),
             nonce: this.options.context.randomUuid(),
+            transitionId: backgroundHandoffTransitionId({
+              operationId: historicalWorker.operationId,
+              transition: "takeover_terminal",
+              workerId: historicalWorker.workerId,
+            }),
           });
         } else if (handoff.state !== "terminal") {
           throw new BackgroundError("worker_handoff_conflict", "takeover recovery handoff is neither pending nor terminal");
@@ -216,6 +221,11 @@ export class BackgroundWorkerTakeoverReconciler {
           updatedAt: this.options.context.now(),
         }),
         nonce: this.options.context.randomUuid(),
+        transitionId: backgroundHandoffTransitionId({
+          operationId: worker.operationId,
+          transition: "takeover_terminal",
+          workerId: worker.workerId,
+        }),
       });
       return Object.freeze({
         observation,

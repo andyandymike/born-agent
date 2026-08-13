@@ -1,16 +1,12 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-
 import type { CliRuntime } from "../../cli/types.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
 import { persistedTaskUserOrigin } from "../../coordination/task-control-plane.js";
-import { decodeStoredEvents, type DecodedStoredEvent } from "../../events/event-decoder-registry.js";
+import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
 import { reconstructMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
-import { SessionPathPolicy } from "../../sessions/session-path-policy.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
-import { parseStrictJson } from "../../system/strict-json.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
-import type { ForegroundGraphControlRegistry } from "../foreground-graph-control-registry.js";
+import type { ActiveForegroundGraphRegistryPortV1 } from "../active-owner-router.js";
+import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import type { SessionLedgerHeadSigner } from "../session-ledger-head.js";
 import type {
   GraphCancelOwnerCommitV1,
@@ -62,21 +58,8 @@ function applicationCommitValue(event: DecodedStoredEvent): Readonly<Record<stri
 }
 
 async function readAppendOnlyEvidence(workspace: string, sessionId: string): Promise<GraphCancelObservationEvidenceV1> {
-  const paths = await (await SessionPathPolicy.create(workspace)).inspectExistingSession(sessionId);
-  const bytes = await readFile(paths.sessionFilePath);
-  if (bytes.byteLength === 0 || bytes.at(-1) !== 0x0a) throw new Error("Graph cancel evidence has no complete durable tail");
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const lines = text.slice(0, -1).split("\n");
-  const events = decodeStoredEvents(lines.map((line) => parseStrictJson(line)));
-  const rawSha256 = new Map<string, string>();
-  events.forEach((event, index) => {
-    const line = lines[index];
-    if (line === undefined || event.sessionSeq !== index + 1 || event.sessionId !== sessionId) {
-      throw new Error("Graph cancel evidence sequence is inconsistent");
-    }
-    rawSha256.set(event.eventId, createHash("sha256").update(line, "utf8").digest("hex"));
-  });
-  return Object.freeze({ events: Object.freeze(events), rawSha256 });
+  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
+  return Object.freeze({ events: evidence.events, rawSha256: evidence.rawSha256 });
 }
 
 function exactExpectedPrefix(evidence: GraphCancelObservationEvidenceV1, input: OwnerInput, signer: SessionLedgerHeadSigner): boolean {
@@ -145,7 +128,7 @@ function exactActiveTerminal(
 
 export class CliGraphCancelOwnerPort implements GraphCancelOwnerPortV1 {
   constructor(private readonly options: Readonly<{
-    readonly foregroundGraphControls: ForegroundGraphControlRegistry;
+    readonly foregroundGraphControls: ActiveForegroundGraphRegistryPortV1;
     readonly readObservationEvidence?: (sessionId: string) => Promise<GraphCancelObservationEvidenceV1>;
     readonly runtime: CliRuntime;
     readonly signer: SessionLedgerHeadSigner;
@@ -154,7 +137,7 @@ export class CliGraphCancelOwnerPort implements GraphCancelOwnerPortV1 {
   async execute(input: OwnerInput): Promise<GraphCancelOwnerCommitV1> {
     let activeCancellation: Readonly<{
       readonly activeAttemptId: string | null;
-      readonly control: NonNullable<ReturnType<ForegroundGraphControlRegistry["active"]>>;
+      readonly control: NonNullable<ReturnType<ActiveForegroundGraphRegistryPortV1["active"]>>;
       readonly cancel: DecodedStoredEvent;
       readonly requestReference: DurableRecordReferenceV1;
     }>;

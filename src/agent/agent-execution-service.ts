@@ -9,8 +9,16 @@ import {
 import type {
   AgentCommandOptions,
   AgentExitCode,
+  AgentTerminal,
 } from "../agent/agent-types.js";
 import { BudgetTracker } from "../agent/budget-tracker.js";
+import { RunResourceScope } from "../agent/run-resource-scope.js";
+import {
+  classifyRunExecutionError,
+  RunTerminator,
+  RunTerminationStateError,
+  type TerminalRunEventDraftV1,
+} from "../agent/run-terminator.js";
 import {
   AGENT_SYSTEM_INSTRUCTIONS,
   READ_ONLY_AGENT_SYSTEM_INSTRUCTIONS,
@@ -40,7 +48,6 @@ import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
-  FatalToolExecutionError,
   type ToolDefinition,
   type ToolRegistration,
   type ToolRegistryLike,
@@ -920,6 +927,56 @@ export async function executeAgentExecution(
   let mcpManager: McpClientManager | undefined;
   let mcpStopped = false;
   let capabilityContentLeases: readonly CapabilityContentLease[] = [];
+  let hookRuntime: HookRuntime | undefined;
+  const resources = new RunResourceScope();
+  resources.add("cancel-listeners", () => {
+    stopListening();
+    applicationCancellation?.signal.removeEventListener(
+      "abort",
+      forwardApplicationCancellation,
+    );
+  });
+  resources.add("mcp", async () => {
+    if (mcpManager === undefined || mcpStopped) return;
+    await mcpManager.stopAll();
+    mcpStopped = true;
+  });
+  resources.add("capability-content-leases", async () => {
+    await Promise.all(capabilityContentLeases.map((lease) => lease.release()));
+  });
+  resources.add("session-writer", () => writer.close(), "persistence");
+  const terminator = new RunTerminator({
+    beforeTerminal: async (candidate) => {
+      if (mcpManager !== undefined && !mcpStopped) {
+        await mcpManager.stopAll();
+        mcpStopped = true;
+      }
+      if (userController.signal.aborted) return;
+      // AS5.1: terminal Hooks observe the final Host projection immediately
+      // before the one durable terminal event, which must remain last.
+      await hookRuntime?.run(
+        "run.terminal",
+        {
+          action: {
+            terminalState:
+              candidate.type === "completed"
+                ? "completed"
+                : candidate.type === "cancelled"
+                  ? "cancelled"
+                  : candidate.type === "failed"
+                    ? "failed"
+                    : "blocked",
+          },
+          result: {
+            exit_code: candidate.exitCode,
+            terminal_type: candidate.type,
+          },
+        },
+        userController.signal,
+      );
+    },
+    publisher,
+  });
 
   try {
     if (
@@ -1311,7 +1368,6 @@ export async function executeAgentExecution(
         );
       }
     }
-    let hookRuntime: HookRuntime | undefined;
     const hasFrozenHooks = runtime.hooksSuppressed !== true && (
       preparedCapabilitySnapshot?.snapshot.plugins.some(
         (plugin) => plugin.components.some((component) => component.identity.kind === "hook"),
@@ -2104,7 +2160,7 @@ export async function executeAgentExecution(
         ? {}
         : { createCheckpointStore: runtime.createCheckpointStore },
     );
-    const terminal = await runAgentLoop(
+    const outcome = await runAgentLoop(
       resumedExecution?.modelTask ?? freshTaskExecution?.modelTask ?? config.task,
       config,
       {
@@ -2120,40 +2176,6 @@ export async function executeAgentExecution(
           ? {}
           : { agentMode: phase16Binding.agent_mode }),
         budget,
-        ...(hookRuntime === undefined && mcpManager === undefined
-          ? {}
-          : {
-              beforeRunTerminal: async (candidate) => {
-                if (mcpManager !== undefined && !mcpStopped) {
-                  await mcpManager.stopAll();
-                  mcpStopped = true;
-                }
-                if (userController.signal.aborted) return;
-                // PHASE18: run terminal Hooks observe the final Host projection
-                // immediately before the terminal event because the durable run
-                // grammar requires that terminal event to remain last.
-                await hookRuntime?.run(
-                  "run.terminal",
-                  {
-                    action: {
-                      terminalState:
-                        candidate.type === "completed"
-                          ? "completed"
-                          : candidate.type === "cancelled"
-                            ? "cancelled"
-                            : candidate.type === "failed"
-                              ? "failed"
-                              : "blocked",
-                    },
-                    result: {
-                      exit_code: candidate.exitCode,
-                      terminal_type: candidate.type,
-                    },
-                  },
-                  userController.signal,
-                );
-              },
-            }),
         ...(independentTaskExecution || phase16Binding?.agent_mode !== "build" ||
         phase16TaskState === undefined ||
         writer.appendTaskEvent === undefined
@@ -2240,13 +2262,6 @@ export async function executeAgentExecution(
           ? {}
           : { persistTurnBoundary: turnBoundaryRecorder }),
         publisher,
-        renderCompletionReport: (report, terminal) => {
-          // PHASE16: the Goal-level OutcomeReport is the only product report
-          // for tracked runs. Legacy runs retain the Phase7 RunReport surface.
-          if (phase16Binding === undefined) {
-            renderer.renderLegacyCompletionReport(report, terminal);
-          }
-        },
         secrets,
         ...(phase16TaskState === undefined
           ? {}
@@ -2255,229 +2270,213 @@ export async function executeAgentExecution(
       },
       userController.signal,
     );
-    exitCode = terminal.exitCode;
+    await terminator.terminate(outcome.terminal, outcome.terminalEvent);
+    // PHASE16: the Goal-level OutcomeReport is the only product report for
+    // tracked runs. Legacy runs retain the Phase7 RunReport surface.
+    if (phase16Binding === undefined && outcome.completionReport !== undefined) {
+      renderer.renderLegacyCompletionReport(
+        outcome.completionReport.report,
+        outcome.completionReport.terminal,
+      );
+    }
+    exitCode = outcome.terminal.exitCode;
   } catch (error) {
-    // PHASE4: EventPersistenceError 表示 writer 已不可信，不能尝试再补 terminal event。
     const wasUserCancelled = userController.signal.aborted;
     const hostEmergencyReason = applicationCancellation?.hostEmergencyReason?.();
     if (!wasUserCancelled) userController.abort();
-    if (error instanceof EventPersistenceError) {
-      renderer.renderStorageError();
-      exitCode = 1;
-    } else if (error instanceof FatalToolExecutionError && error.kind === "storage") {
-      renderer.renderStorageError();
-      if (error.workspaceMayHaveChanged) {
-        renderer.renderDiagnostic(
-          "workspace may have changed; inspect the run-local diff before continuing",
-        );
-      }
-      exitCode = 1;
-    } else if (hostEmergencyReason === "tui_surface_fatal") {
+    const classification = classifyRunExecutionError(error, {
+      hostEmergencyReason,
+      wasUserCancelled,
+    });
+    const snapshot = budget.snapshot();
+    const publishFallback = async (
+      terminal: AgentTerminal,
+      event: TerminalRunEventDraftV1,
+      diagnostic = "internal protocol error",
+    ): Promise<boolean> => {
       try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            category: "internal",
-            code: "tui_surface_fatal",
-            duration_ms: snapshot.elapsedMs,
-            message: "TUI surface failed while this exact Host owner was active",
-            output_chars: publisher.outputLength,
-            retryable: false,
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
-          },
-          type: "run.failed",
-        });
+        await terminator.terminate(terminal, event);
+        return true;
       } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) renderer.renderStorageError();
-        else renderer.renderDiagnostic("internal protocol error");
-      }
-      exitCode = 1;
-    } else if (
-      error instanceof FatalToolExecutionError &&
-      error.kind === "user_cancelled"
-    ) {
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            ...(applicationCancellation?.terminalBinding() === undefined
-              ? {}
-              : { application_cancel_request: applicationCancellation.terminalBinding()! }),
-            duration_ms: snapshot.elapsedMs,
-            output_chars: publisher.outputLength,
-            reason: "user",
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
-          },
-          type: "run.cancelled",
-        });
-        exitCode = 130;
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
+        if (
+          publishError instanceof EventPersistenceError ||
+          (publishError instanceof RunTerminationStateError &&
+            publishError.state === "persistence_failed")
+        ) {
+          terminator.markPersistenceFailed();
           renderer.renderStorageError();
         } else {
-          renderer.renderDiagnostic("internal protocol error");
+          renderer.renderDiagnostic(diagnostic);
         }
-        exitCode = 1;
+        return false;
       }
-    } else if (error instanceof FatalToolExecutionError) {
-      const commandStateUnknown =
-        error.kind === "ambiguous_command_state";
-      const mcpStateUnknown = error.kind === "ambiguous_mcp_state";
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            category: "internal",
-            code: commandStateUnknown
-              ? "ambiguous_command_state"
-              : mcpStateUnknown
-                ? "ambiguous_mcp_state"
-                : "ambiguous_patch_state",
-            duration_ms: snapshot.elapsedMs,
-            message: commandStateUnknown
-              ? "command effect or process cleanup is ambiguous; inspect the workspace and running processes before continuing"
-              : mcpStateUnknown
-                ? "MCP call effect is ambiguous; inspect external effects before resuming"
-                : "workspace state is ambiguous; inspect the diff before continuing",
-            output_chars: publisher.outputLength,
-            retryable: false,
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
-          },
-          type: "run.failed",
-        });
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
-          renderer.renderStorageError();
-        } else {
+    };
+
+    switch (classification.kind) {
+      case "persistence":
+        // AS5.1: once writer persistence fails, RunTerminator permanently
+        // forbids a compensating terminal write.
+        terminator.markPersistenceFailed();
+        renderer.renderStorageError();
+        exitCode = 1;
+        break;
+      case "storage":
+        terminator.markPersistenceFailed();
+        renderer.renderStorageError();
+        if (classification.workspaceMayHaveChanged) {
           renderer.renderDiagnostic(
-            commandStateUnknown
-              ? "command effect or process cleanup is ambiguous"
-              : mcpStateUnknown
-                ? "MCP call effect is ambiguous"
-                : "workspace state is ambiguous",
+            "workspace may have changed; inspect the run-local diff before continuing",
           );
         }
-      }
-      exitCode = 1;
-    } else if (error instanceof HookError) {
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            duration_ms: snapshot.elapsedMs,
-            output_chars: publisher.outputLength,
-            reason: "task_blocked",
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
-          },
-          type: "run.incomplete",
-        });
-        renderer.renderDiagnostic(`${error.code}: ${error.message}`);
-        exitCode = 8;
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
-          renderer.renderStorageError();
-        }
         exitCode = 1;
-      }
-    } else if (error instanceof McpCoreError) {
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            category:
-              error.code === "mcp_approval_denied" ||
-              error.code === "mcp_permission_denied"
-                ? "permission"
-                : "protocol",
-            code: error.code,
-            duration_ms: snapshot.elapsedMs,
-            message: error.message.slice(0, 500),
-            output_chars: publisher.outputLength,
-            retryable: false,
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
+        break;
+      case "host_surface_fatal":
+        await publishFallback(
+          { exitCode: 1, type: "failed" },
+          {
+            data: {
+              category: "internal",
+              code: "tui_surface_fatal",
+              duration_ms: snapshot.elapsedMs,
+              message: "TUI surface failed while this exact Host owner was active",
+              output_chars: publisher.outputLength,
+              retryable: false,
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.failed",
           },
-          type: "run.failed",
-        });
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
-          renderer.renderStorageError();
-        }
-      }
-      exitCode = 1;
-    } else if (wasUserCancelled) {
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            ...(applicationCancellation?.terminalBinding() === undefined
-              ? {}
-              : { application_cancel_request: applicationCancellation.terminalBinding()! }),
-            duration_ms: snapshot.elapsedMs,
-            output_chars: publisher.outputLength,
-            reason: "user",
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
-          },
-          type: "run.cancelled",
-        });
-        exitCode = 130;
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
-          renderer.renderStorageError();
-        } else {
-          renderer.renderDiagnostic("internal protocol error");
-        }
+        );
         exitCode = 1;
-      }
-    } else {
-      try {
-        const snapshot = budget.snapshot();
-        await publisher.publish({
-          data: {
-            category: "internal",
-            code: "internal_error",
-            duration_ms: snapshot.elapsedMs,
-            message: "internal protocol error",
-            output_chars: publisher.outputLength,
-            retryable: false,
-            steps: snapshot.steps,
-            tool_calls: publisher.completedToolCalls,
+        break;
+      case "user_cancelled": {
+        const binding = applicationCancellation?.terminalBinding();
+        const published = await publishFallback(
+          { exitCode: 130, type: "cancelled" },
+          {
+            data: {
+              ...(binding === undefined
+                ? {}
+                : { application_cancel_request: binding }),
+              duration_ms: snapshot.elapsedMs,
+              output_chars: publisher.outputLength,
+              reason: "user",
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.cancelled",
           },
-          type: "run.failed",
-        });
-      } catch (publishError) {
-        if (publishError instanceof EventPersistenceError) {
-          renderer.renderStorageError();
-        } else {
-          renderer.renderDiagnostic("internal protocol error");
-        }
+        );
+        exitCode = published ? 130 : 1;
+        break;
       }
-      exitCode = 1;
+      case "ambiguous_effect": {
+        const commandStateUnknown =
+          classification.effect === "ambiguous_command_state";
+        const mcpStateUnknown = classification.effect === "ambiguous_mcp_state";
+        await publishFallback(
+          { exitCode: 1, type: "failed" },
+          {
+            data: {
+              category: "internal",
+              code: classification.effect,
+              duration_ms: snapshot.elapsedMs,
+              message: commandStateUnknown
+                ? "command effect or process cleanup is ambiguous; inspect the workspace and running processes before continuing"
+                : mcpStateUnknown
+                  ? "MCP call effect is ambiguous; inspect external effects before resuming"
+                  : "workspace state is ambiguous; inspect the diff before continuing",
+              output_chars: publisher.outputLength,
+              retryable: false,
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.failed",
+          },
+          commandStateUnknown
+            ? "command effect or process cleanup is ambiguous"
+            : mcpStateUnknown
+              ? "MCP call effect is ambiguous"
+              : "workspace state is ambiguous",
+        );
+        exitCode = 1;
+        break;
+      }
+      case "hook": {
+        const published = await publishFallback(
+          { exitCode: 8, reason: "task_blocked", type: "incomplete" },
+          {
+            data: {
+              duration_ms: snapshot.elapsedMs,
+              output_chars: publisher.outputLength,
+              reason: "task_blocked",
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.incomplete",
+          },
+        );
+        if (published) {
+          renderer.renderDiagnostic(
+            `${classification.error.code}: ${classification.error.message}`,
+          );
+        }
+        exitCode = published ? 8 : 1;
+        break;
+      }
+      case "mcp":
+        await publishFallback(
+          { exitCode: 1, type: "failed" },
+          {
+            data: {
+              category:
+                classification.error.code === "mcp_approval_denied" ||
+                classification.error.code === "mcp_permission_denied"
+                  ? "permission"
+                  : "protocol",
+              code: classification.error.code,
+              duration_ms: snapshot.elapsedMs,
+              message: classification.error.message.slice(0, 500),
+              output_chars: publisher.outputLength,
+              retryable: false,
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.failed",
+          },
+        );
+        exitCode = 1;
+        break;
+      case "internal":
+        await publishFallback(
+          { exitCode: 1, type: "failed" },
+          {
+            data: {
+              category: "internal",
+              code: "internal_error",
+              duration_ms: snapshot.elapsedMs,
+              message: "internal protocol error",
+              output_chars: publisher.outputLength,
+              retryable: false,
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.failed",
+          },
+        );
+        exitCode = 1;
+        break;
     }
   } finally {
-    stopListening();
-    applicationCancellation?.signal.removeEventListener(
-      "abort",
-      forwardApplicationCancellation,
-    );
-    if (mcpManager !== undefined && !mcpStopped) {
-      try {
-        await mcpManager.stopAll();
-        mcpStopped = true;
-      } catch {
-        renderer.renderDiagnostic("MCP process cleanup could not be verified");
-        exitCode = 1;
-      }
-    }
-    try {
-      await Promise.all(capabilityContentLeases.map((lease) => lease.release()));
-    } catch {
-      renderer.renderDiagnostic("capability content lease cleanup could not be verified");
+    const failures = await resources.closePhase("runtime");
+    for (const failure of failures) {
+      renderer.renderDiagnostic(
+        failure.name === "mcp"
+          ? "MCP process cleanup could not be verified"
+          : failure.name === "capability-content-leases"
+            ? "capability content lease cleanup could not be verified"
+            : "run listener cleanup could not be verified",
+      );
       exitCode = 1;
     }
   }
@@ -2494,9 +2493,8 @@ export async function executeAgentExecution(
     }
   }
 
-  try {
-    await writer.close();
-  } catch {
+  const writerFailures = await resources.closePhase("persistence");
+  if (writerFailures.length > 0) {
     renderer.renderStorageError();
     return 1;
   }

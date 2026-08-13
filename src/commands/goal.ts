@@ -3,6 +3,7 @@ import type { CliIO, CliRuntime } from "../cli/types.js";
 import {
   taskMutationBlocker,
 } from "../coordination/task-control-plane.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import type { GoalProjection } from "../goals/goal-schema.js";
 import { GoalManager } from "../goals/goal-manager.js";
 import { SessionCatalog } from "../sessions/session-catalog.js";
@@ -63,7 +64,7 @@ export async function executeGoalShow(
 ): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const applicationView = runtime.controlPlaneStateRoot === undefined
+    const applicationView = isDomainHarnessRuntime(runtime)
       ? null
       : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
     if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
@@ -125,7 +126,7 @@ export async function executeGoalSet(
       );
     }
     const baseRevision = options.baseRevision === undefined ? undefined : positiveRevision(options.baseRevision, "base revision");
-    const goal = runtime.controlPlaneStateRoot === undefined
+    const goal = isDomainHarnessRuntime(runtime)
       ? options.goalId === undefined || baseRevision === undefined
         ? await new GoalManager(taskWriterFactory(runtime)).createInitialGoal({ context: taskMutationContext(runtime, options.sessionId), objective: options.text })
         : await new GoalManager(taskWriterFactory(runtime)).reviseActiveGoal({ baseRevision, context: taskMutationContext(runtime, options.sessionId), goalId: options.goalId, objective: options.text })
@@ -172,7 +173,7 @@ export async function executeGoalNew(
       ? null
       : { confirmedAbandon: true as const, goalId: options.currentGoalId, revision: positiveRevision(options.currentRevision, "current revision") };
     const payload = { objective: options.text, operation: "start_new" as const, parentGoalId: options.parentGoal ?? null, replaceActive };
-    const goal = runtime.controlPlaneStateRoot === undefined
+    const goal = isDomainHarnessRuntime(runtime)
       ? await new GoalManager(taskWriterFactory(runtime)).startNewGoal({
           context: taskMutationContext(runtime, options.sessionId),
           objective: payload.objective,
@@ -201,7 +202,7 @@ export async function executeGoalAbandon(
   try {
     assertCanonicalSessionId(options.sessionId);
     const revision = positiveRevision(options.revision, "revision");
-    const goal = runtime.controlPlaneStateRoot === undefined
+    const goal = isDomainHarnessRuntime(runtime)
       ? await new GoalManager(taskWriterFactory(runtime)).abandonActiveGoal({ context: taskMutationContext(runtime, options.sessionId), goalId: options.goalId, reason: options.reason, revision })
       : (await executeTaskActionThroughApplicationService({
           actionKind: "goal.decide",

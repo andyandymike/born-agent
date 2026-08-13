@@ -146,6 +146,10 @@ describe("Phase 20E delegated promotion composition", () => {
       capabilityUserStateRoot: join(userState, "capabilities"),
       cliEntryPath: resolve("dist", "cli.js"),
       cwd: workspace,
+      // The full built-path profile runs several real child fixtures in one
+      // process. Keep the product 30s default unchanged and make this explicit
+      // local evidence fixture tolerant of a loaded cold start.
+      delegationHandshakeTimeoutMs: 60_000,
       delegationUserStateRoot: delegationRoot,
       env: environment,
       execPath: process.execPath,

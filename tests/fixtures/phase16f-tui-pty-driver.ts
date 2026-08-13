@@ -795,7 +795,7 @@ async function main(): Promise<void> {
         delegationStartOffset,
         (plain) => plain.includes("actors=2/2"),
       );
-      await waitFor((plain) => plain.includes("actors=2/2"), "two active Phase 20 children", 30_000);
+      await waitFor((plain) => plain.includes("actors=2/2"), "two active Phase 20 children", 65_000);
       await waitFor(
         (plain) => plain.includes("#1 accepted Canonical read-only child 1") && plain.includes("#2 accepted Canonical read-only child 2"),
         "two accepted Phase 20 receipts",

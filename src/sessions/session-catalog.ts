@@ -50,6 +50,13 @@ export interface SessionCatalogResult {
   readonly entries: readonly SessionCatalogEntry[];
 }
 
+/** AS0.2: optional behavior-neutral counters for stable-read characterization. */
+export interface SessionCatalogObservationV1 {
+  readonly onCatalogFullScan?: () => void;
+  readonly onExclusiveSnapshot?: () => void;
+  readonly onFullProjection?: () => void;
+}
+
 export class SessionCatalogError extends Error {
   constructor(
     readonly code: "active_session_writer",
@@ -177,13 +184,17 @@ function errorEntry(path: string, sessionId: string, error: unknown): SessionCat
 }
 
 export class SessionCatalog {
-  constructor(private readonly workspace: string) {}
+  constructor(
+    private readonly workspace: string,
+    private readonly observation?: SessionCatalogObservationV1,
+  ) {}
 
   async scan(limit = 50): Promise<SessionCatalogResult> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
       throw new RangeError("session list limit must be between 1 and 200");
     }
     const started = performance.now();
+    this.observation?.onCatalogFullScan?.();
     const policy = await SessionPathPolicy.create(this.workspace);
     let directory: string;
     try {
@@ -246,6 +257,7 @@ export class SessionCatalog {
         }
         const metadata = await lstat(paths.sessionFilePath);
         bytes += metadata.size;
+        this.observation?.onFullProjection?.();
         entries.push(
           entryFromProjection(
             paths.sessionFilePath,
@@ -305,6 +317,8 @@ export class SessionCatalog {
       throw error;
     }
     try {
+      this.observation?.onExclusiveSnapshot?.();
+      this.observation?.onFullProjection?.();
       return reconstructMultiRunSession(
         await readStoredSession(paths.sessionFilePath),
       );

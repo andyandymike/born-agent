@@ -6,7 +6,7 @@ import { sha256Canonical } from "../completion/canonical-json.js";
 import type { ProcessTreeCleanup } from "../execution/process-tree-cleanup.js";
 import type { PermissionEngineLike } from "../permissions/permission-types.js";
 import { currentHostFingerprint } from "../sessions/process-identity.js";
-import { sanitizeTerminalText } from "../tui/terminal-sanitizer.js";
+import { sanitizeTerminalText } from "../presentation/terminal-sanitizer.js";
 import {
   createMcpServerStartActionIdentity,
   type McpServerStartActionIdentity,

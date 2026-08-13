@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { CliIO, CliRuntime } from "../src/cli/types.js";
+import { createDomainHarness } from "../src/coordination/domain-harness.js";
 import { BackendPreflightError } from "../src/model/backend-factory.js";
 import type { RunEvent } from "../src/events/run-event.js";
 import type { ExecutableResult } from "../src/doctor/types.js";
@@ -162,7 +163,7 @@ export function createRuntime(
       });
     });
 
-  return {
+  const runtime: CliRuntime = {
     agentModelEvidence: () => ({
       backend: "fake",
       endpointScope: "in_process",
@@ -214,6 +215,9 @@ export function createRuntime(
       return backend;
     },
   };
+  return runtime.controlPlaneStateRoot === undefined && runtime.domainHarness === undefined
+    ? { ...runtime, domainHarness: createDomainHarness() }
+    : runtime;
 }
 
 /**
@@ -222,6 +226,8 @@ export function createRuntime(
  * adapter; production Node runtimes and Phase21 integration fixtures retain it.
  */
 export function withoutApplicationControlPlane(runtime: CliRuntime): CliRuntime {
-  const { controlPlaneStateRoot: omitted, ...legacy } = runtime;
-  return omitted === undefined ? runtime : legacy;
+  const { controlPlaneStateRoot: omitted, domainHarness: prior, ...legacy } = runtime;
+  void omitted;
+  void prior;
+  return { ...legacy, domainHarness: createDomainHarness() };
 }

@@ -13,7 +13,12 @@ import {
   type ResourceScopeV1,
   type SessionLedgerHeadV1,
 } from "./application-protocol.js";
-import { CatalogJournal, type CatalogHeadV1, type CatalogRecordV1 } from "./catalog-journal.js";
+import {
+  CatalogJournal,
+  type CatalogHeadV1,
+  type CatalogRecordV1,
+  type CatalogSnapshotV1,
+} from "./catalog-journal.js";
 import {
   durableRecordReferenceV1Schema,
   type DurableRecordReferenceV1,
@@ -297,10 +302,23 @@ export interface SessionCatalogProjectionV1 {
   readonly materializations: readonly SessionMaterializationRecordV1[];
 }
 
+/** AS3.3: deterministic read-path counters; they do not affect authority. */
+export interface SessionRegistryObservationV1 {
+  readonly onRunCatalogFullScan?: (recordCount: number) => void;
+  readonly onRunCatalogIncrementalRead?: (input: Readonly<{
+    readonly anchorRecordCount: number;
+    readonly appendedRecordCount: number;
+  }>) => void;
+}
+
 export class SessionRegistry {
+  private readonly journals = new Map<string, Promise<CatalogJournal>>();
+  private readonly runSnapshots = new Map<string, CatalogSnapshotV1>();
+
   constructor(
     private readonly paths: ControlStatePaths,
     private readonly repositories: RepositoryRegistry,
+    private readonly observation?: SessionRegistryObservationV1,
   ) {}
 
   resourceScope(repositoryId: string): Extract<ResourceScopeV1, { readonly kind: "session_catalog" }> {
@@ -314,6 +332,7 @@ export class SessionRegistry {
   async project(repositoryId: string): Promise<SessionCatalogProjectionV1> {
     const journal = await this.journal(repositoryId);
     const snapshot = await journal.readSnapshot();
+    this.rememberRunSnapshot(repositoryId, snapshot);
     const records = snapshot.records;
     const entries: SessionCatalogEntryV1[] = [];
     const intents: SessionMaterializationIntentV1[] = [];
@@ -340,6 +359,7 @@ export class SessionRegistry {
   }> | null> {
     const journal = await this.journal(repositoryId);
     const snapshot = await journal.readSnapshot();
+    this.rememberRunSnapshot(repositoryId, snapshot);
     const entries: SessionCatalogEntryV1[] = [];
     const intents: SessionMaterializationIntentV1[] = [];
     const materializations: SessionMaterializationRecordV1[] = [];
@@ -812,7 +832,9 @@ export class SessionRegistry {
     ) {
       throw new ApplicationControlError("control_target_invalid", "run cancellation barrier identity is invalid");
     }
-    const snapshot = await (await this.journal(repositoryId)).readSnapshot();
+    const journal = await this.journal(repositoryId);
+    const snapshot = await journal.readIncrementalSnapshot(this.runSnapshots.get(repositoryId) ?? null);
+    this.rememberRunSnapshot(repositoryId, snapshot);
     const owners: Array<Readonly<{ fact: RunOwnerRegistrationV1; record: CatalogRecordV1 }>> = [];
     const observations: Array<Readonly<{ fact: RunOwnerObservationV1; record: CatalogRecordV1 }>> = [];
     const requests: Array<Readonly<{ fact: RunCancelRequestV1; record: CatalogRecordV1 }>> = [];
@@ -919,13 +941,35 @@ export class SessionRegistry {
     if (!z.string().uuid().safeParse(repositoryId).success) {
       throw new ApplicationControlError("control_target_invalid", "repository ID is invalid");
     }
-    const directory = join(this.paths.sessionCatalogRoot, repositoryId);
-    await mkdir(directory, { mode: 0o700, recursive: true });
-    return CatalogJournal.create({
-      directory,
-      paths: this.paths,
-      resourceScope: this.resourceScope(repositoryId),
-    });
+    const existing = this.journals.get(repositoryId);
+    if (existing !== undefined) return existing;
+    const pending = (async () => {
+      const directory = join(this.paths.sessionCatalogRoot, repositoryId);
+      await mkdir(directory, { mode: 0o700, recursive: true });
+      return CatalogJournal.create({
+        directory,
+        observation: {
+          onFullRecordScan: (recordCount) => this.observation?.onRunCatalogFullScan?.(recordCount),
+          onIncrementalRecordRead: (input) => this.observation?.onRunCatalogIncrementalRead?.(input),
+        },
+        paths: this.paths,
+        resourceScope: this.resourceScope(repositoryId),
+      });
+    })();
+    this.journals.set(repositoryId, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.journals.get(repositoryId) === pending) this.journals.delete(repositoryId);
+      throw error;
+    }
+  }
+
+  private rememberRunSnapshot(repositoryId: string, snapshot: CatalogSnapshotV1): void {
+    const current = this.runSnapshots.get(repositoryId);
+    if (current === undefined || snapshot.head.revision >= current.head.revision) {
+      this.runSnapshots.set(repositoryId, snapshot);
+    }
   }
 
   private projectRecord(

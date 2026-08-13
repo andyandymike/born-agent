@@ -1,47 +1,14 @@
 import { z } from "zod";
 
-import type { CliIO, CliRuntime } from "../cli/types.js";
+import type { CliIO } from "../cli/types.js";
 import {
   TaskControlPlaneError,
-  type TaskMutationContext,
-  type TaskMutationWriterFactory,
 } from "../coordination/task-control-plane.js";
+export { taskMutationContext, taskWriterFactory } from "../coordination/task-mutation-host.js";
 import { PlanFileLoaderError } from "../plans/plan-file-loader.js";
 import { SessionCatalogError } from "../sessions/session-catalog.js";
 import { SessionLockError } from "../sessions/session-lock.js";
 import { SessionProjectionError } from "../sessions/reconstruct-multi-run-session.js";
-import { V2SessionWriter } from "../sessions/v2-session-writer.js";
-
-export function taskMutationContext(
-  runtime: CliRuntime,
-  sessionId: string,
-  inputSurface: "cli" | "tui" = "cli",
-  expectedSessionSeq?: number,
-): TaskMutationContext {
-  return {
-    ...(expectedSessionSeq === undefined ? {} : { expectedSessionSeq }),
-    inputSurface,
-    now: runtime.timestamp,
-    randomUuid: runtime.randomUUID,
-    sessionId,
-    workspace: runtime.cwd,
-  };
-}
-
-export function taskWriterFactory(runtime: CliRuntime): TaskMutationWriterFactory {
-  return async (context) => {
-    const writer = await V2SessionWriter.openExisting(
-      context.workspace,
-      context.sessionId,
-      {
-        createEventId: context.randomUuid,
-        timestamp: context.now,
-      },
-    );
-    runtime.observeSessionWriter?.(writer);
-    return writer;
-  };
-}
 
 export function positiveRevision(value: string, label: string): number {
   if (!/^[1-9][0-9]*$/u.test(value)) {

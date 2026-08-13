@@ -22,7 +22,7 @@ import type { ControlArtifactStore } from "../control-artifact-store.js";
 import type { ControlOperationJournal } from "../control-operation-journal.js";
 import type { RepositoryRegistry } from "../repository-registry.js";
 import type { SessionProjectionService, StableSessionApplicationSnapshotV1 } from "../session-projection-service.js";
-import type { SessionRegistry } from "../session-registry.js";
+import type { SessionCatalogRegistryV1 } from "../session-registry-ports.js";
 import {
   createTaskSurfaceQueryDefinitions,
   type TaskSurfaceQueryOperationPortV1,
@@ -67,7 +67,7 @@ export function createCatalogQueryRegistry(input: {
   readonly operations: ControlOperationJournal;
   readonly repositories: RepositoryRegistry;
   readonly sessionProjection: SessionProjectionService;
-  readonly sessions: SessionRegistry;
+  readonly sessions: SessionCatalogRegistryV1;
   readonly taskSurfaceOperations?: TaskSurfaceQueryOperationPortV1;
 }): ApplicationQueryRegistry {
   const repositoryList: ApplicationQueryDefinitionV1 = {

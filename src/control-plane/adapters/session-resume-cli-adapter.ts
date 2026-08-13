@@ -1,14 +1,10 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-
 import type { AgentExitCode } from "../../agent/agent-types.js";
 import type { CliIO, CliRuntime } from "../../cli/types.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
-import { decodeStoredEvents, type DecodedStoredEvent } from "../../events/event-decoder-registry.js";
-import { SessionPathPolicy } from "../../sessions/session-path-policy.js";
-import { parseStrictJson } from "../../system/strict-json.js";
+import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
 import type { ApplicationEnvelopeV1 } from "../application-protocol.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
+import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import { loadExistingHostControlAuthority } from "../host-control-identity.js";
 import { SessionLedgerHeadSigner } from "../session-ledger-head.js";
 import type {
@@ -22,6 +18,7 @@ import {
   contextForRuntime,
   planeForRuntime,
   registerCurrentRepository,
+  registerSessionResumeOwnerForRuntime,
 } from "./agent-cli-adapter.js";
 import {
   preparedReviewFailure,
@@ -53,27 +50,8 @@ interface AppendOnlyEvidenceV1 {
 }
 
 async function readAppendOnlyEvidence(workspace: string, sessionId: string): Promise<AppendOnlyEvidenceV1> {
-  const path = (await (await SessionPathPolicy.create(workspace)).inspectExistingSession(sessionId)).sessionFilePath;
-  const before = await readFile(path);
-  if (before.byteLength === 0 || before.at(-1) !== 0x0a) {
-    throw new SessionResumeOwnerError("resume_effect_reconciliation_required", "resume session evidence has an incomplete durable tail");
-  }
-  const after = await readFile(path);
-  if (!before.equals(after)) {
-    throw new SessionResumeOwnerError("resume_owner_active", "resume session changed during stable evidence read");
-  }
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(before);
-  const lines = text.slice(0, -1).split("\n");
-  const events = decodeStoredEvents(lines.map((line) => parseStrictJson(line)));
-  const rawSha256 = new Map<string, string>();
-  events.forEach((event, index) => {
-    const line = lines[index];
-    if (line === undefined || event.sessionSeq !== index + 1) {
-      throw new SessionResumeOwnerError("resume_effect_reconciliation_required", "resume evidence sequence is inconsistent");
-    }
-    rawSha256.set(event.eventId, createHash("sha256").update(line, "utf8").digest("hex"));
-  });
-  return Object.freeze({ events, rawSha256 });
+  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
+  return Object.freeze({ events: evidence.events, rawSha256: evidence.rawSha256 });
 }
 
 function exactApplicationCommit(
@@ -361,8 +339,15 @@ export async function executeSessionResumeThroughApplicationServiceResult(
   if (runtime.controlPlaneStateRoot === undefined) {
     throw new TypeError("session resume application adapter requires a Host control state root");
   }
-  const plane = await planeForRuntime(runtime, io, owner);
-  const surface = options.inputSurface ?? "cli";
+  const releaseOwner = await registerSessionResumeOwnerForRuntime({
+    io,
+    owner,
+    runtime,
+    sessionId: options.sessionId,
+  });
+  try {
+    const plane = await planeForRuntime(runtime, io);
+    const surface = options.inputSurface ?? "cli";
   const context = contextForRuntime(plane, runtime, surface);
   const repository = await registerCurrentRepository(plane, context, runtime, io);
   if (!("repositoryId" in repository)) {
@@ -514,10 +499,13 @@ export async function executeSessionResumeThroughApplicationServiceResult(
   if (typeof result.exitCode === "number" && [0, 1, 2, 3, 4, 5, 6, 7, 8, 130].includes(result.exitCode)) {
     return applicationResult(envelope, result.exitCode as AgentExitCode, null);
   }
-  return applicationResult(envelope, 1, Object.freeze({
-    code: "control_operation_corrupt",
-    message: "session resume completed without a valid owner exit code",
-  }));
+    return applicationResult(envelope, 1, Object.freeze({
+      code: "control_operation_corrupt",
+      message: "session resume completed without a valid owner exit code",
+    }));
+  } finally {
+    releaseOwner();
+  }
 }
 
 /** Compatibility facade for CLI callers that still consume process exit codes. */

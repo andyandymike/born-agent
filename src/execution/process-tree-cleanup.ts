@@ -125,7 +125,12 @@ export class NodeProcessTreeCleanup implements ProcessTreeCleanup {
   }
 
   private get forceWaitMs(): number {
-    return this.options.forceWaitMs ?? 2000;
+    // Windows taskkill /T may return before the process object and its final
+    // descendant handles disappear under a loaded built-path run. Keep the
+    // verification bounded, but allow enough time to distinguish that normal
+    // teardown from a genuinely unverified tree. Callers still fail closed
+    // when this ten-second proof window expires.
+    return this.options.forceWaitMs ?? 10_000;
   }
 }
 

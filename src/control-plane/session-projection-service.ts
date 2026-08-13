@@ -49,8 +49,8 @@ import type {
 import type {
   SessionCatalogEntryV1,
   SessionMaterializationRecordV1,
-  SessionRegistry,
 } from "./session-registry.js";
+import type { SessionCatalogRegistryV1 } from "./session-registry-ports.js";
 
 export interface ProductSessionProjectionBodyV1 {
   readonly background: unknown;
@@ -449,8 +449,9 @@ export class SessionProjectionService {
   constructor(private readonly options: {
     readonly broker: SessionOwnerBroker;
     readonly disclosureProfileSha256: string;
+    readonly observation?: Readonly<{ readonly onFullProjection?: () => void }>;
     readonly repositories: RepositoryRegistry;
-    readonly sessions: SessionRegistry;
+    readonly sessions: SessionCatalogRegistryV1;
     readonly signer: SessionLedgerHeadSigner;
   }) {}
 
@@ -463,6 +464,7 @@ export class SessionProjectionService {
     readonly writer: V2SessionWriter;
   }): ActiveSessionReadPortV1<ProductSessionProjectionBodyV1> {
     const stableForEvents = (events: readonly DecodedStoredEvent[]) => {
+      this.options.observation?.onFullProjection?.();
       const tail = events.at(-1);
       const head = tail === undefined
         ? this.options.signer.create({
@@ -594,15 +596,18 @@ export class SessionProjectionService {
       // snapshot. If that port is busy or invalid we fail closed; falling back
       // to the inactive JSONL reader would mislabel an in-flight head as a
       // merely stale projection and could authorize a concurrent mutation.
-      let snapshot = await active.readStableSnapshot();
+      // A prepared action names an immutable historical prefix. Read that
+      // prefix directly when the active owner can reproduce it: projecting the
+      // owner's newer in-flight tail first can reject a legitimate transient
+      // domain prefix that is unrelated to the prepared target.
+      const snapshot = input.requestedHead !== null && active.readStablePrefix !== undefined
+        ? await active.readStablePrefix(input.requestedHead)
+        : await active.readStableSnapshot();
       if (
         input.requestedHead !== null &&
         sha256Canonical(snapshot.head.publicHead) !== sha256Canonical(input.requestedHead)
       ) {
-        if (active.readStablePrefix === undefined) {
-          throw new ApplicationControlError("control_stale_projection", "active owner cannot reproduce the requested prefix");
-        }
-        snapshot = await active.readStablePrefix(input.requestedHead);
+        throw new ApplicationControlError("control_stale_projection", "active owner cannot reproduce the requested prefix");
       }
       if (
         snapshot.head.publicHead.sessionId !== input.sessionId ||

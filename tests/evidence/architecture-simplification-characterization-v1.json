@@ -1,0 +1,318 @@
+{
+  "agentTerminalGoldens": [
+    {
+      "eventTypes": [
+        "run.started",
+        "backend.selected",
+        "agent.step.started",
+        "text.delta",
+        "model.usage",
+        "agent.step.completed",
+        "usage",
+        "run.completed"
+      ],
+      "exitCode": 0,
+      "modelCallCount": 1,
+      "scenario": "completed",
+      "terminalType": "run.completed",
+      "writerClosed": true
+    },
+    {
+      "eventTypes": [
+        "run.started",
+        "backend.selected",
+        "agent.step.started",
+        "run.failed"
+      ],
+      "exitCode": 6,
+      "modelCallCount": 1,
+      "scenario": "request_timeout",
+      "terminalType": "run.failed",
+      "writerClosed": true
+    },
+    {
+      "eventTypes": [
+        "run.started",
+        "backend.selected",
+        "agent.step.started",
+        "run.cancelled"
+      ],
+      "exitCode": 130,
+      "modelCallCount": 1,
+      "scenario": "user_cancelled",
+      "terminalType": "run.cancelled",
+      "writerClosed": true
+    },
+    {
+      "eventTypes": [
+        "run.started",
+        "backend.selected"
+      ],
+      "exitCode": 1,
+      "modelCallCount": 0,
+      "scenario": "persistence_failure",
+      "terminalType": null,
+      "writerClosed": true
+    }
+  ],
+  "backgroundHandoff": {
+    "crashPrefixes": [
+      {
+        "durableState": "original",
+        "faultPointId": "handoff.lock.durable",
+        "retryOutcome": "worker_handoff_conflict"
+      },
+      {
+        "durableState": "next",
+        "faultPointId": "handoff.rename.complete",
+        "retryOutcome": "worker_handoff_conflict"
+      }
+    ],
+    "faultPoints": [
+      {
+        "anchor": "await exclusiveRecord(lock",
+        "id": "handoff.lock.durable",
+        "order": 1
+      },
+      {
+        "anchor": "const current = await this.readHandoff()",
+        "id": "handoff.current.read",
+        "order": 2
+      },
+      {
+        "anchor": "await exclusiveRecord(temporary",
+        "id": "handoff.candidate.durable",
+        "order": 3
+      },
+      {
+        "anchor": "await rename(temporary, target)",
+        "id": "handoff.rename.complete",
+        "order": 4
+      },
+      {
+        "anchor": "await unlink(lock)",
+        "id": "handoff.lock.removed",
+        "order": 5
+      }
+    ],
+    "twoProcessCas": {
+      "conflictCount": 1,
+      "contenderCount": 2,
+      "finalOwner": "parent",
+      "finalState": "terminal",
+      "winnerCount": 1
+    }
+  },
+  "baselineId": "architecture-simplification-characterization-v1",
+  "dependencyBoundaries": {
+    "rules": [
+      {
+        "description": "control-plane adapters do not own command-layer implementations",
+        "id": "control-plane-adapter-to-command"
+      },
+      {
+        "description": "domain and runtime modules do not depend on CLI, command, or TUI surfaces",
+        "id": "domain-runtime-to-surface"
+      },
+      {
+        "description": "core MCP, repository, and tool modules do not depend on TUI presentation",
+        "id": "core-to-tui"
+      },
+      {
+        "description": "application use cases do not depend on CLI, command, or TUI surfaces",
+        "id": "use-case-to-surface"
+      }
+    ],
+    "violations": [
+      {
+        "from": "src/agent/agent-execution-cli-ports.ts",
+        "importKind": "type",
+        "ruleId": "domain-runtime-to-surface",
+        "to": "src/cli/types.ts"
+      },
+      {
+        "from": "src/background/background-worker-runtime.ts",
+        "importKind": "type",
+        "ruleId": "domain-runtime-to-surface",
+        "to": "src/cli/types.ts"
+      },
+      {
+        "from": "src/control-plane/adapters/chat-application-cli-adapter.ts",
+        "importKind": "value",
+        "ruleId": "control-plane-adapter-to-command",
+        "to": "src/commands/chat.ts"
+      },
+      {
+        "from": "src/control-plane/adapters/graph-composite-cli-port.ts",
+        "importKind": "value",
+        "ruleId": "control-plane-adapter-to-command",
+        "to": "src/commands/task-control-plane-command.ts"
+      },
+      {
+        "from": "src/delegation/delegation-owner-cli-ports.ts",
+        "importKind": "type",
+        "ruleId": "domain-runtime-to-surface",
+        "to": "src/cli/types.ts"
+      },
+      {
+        "from": "src/delegation/runtime/delegation-child-runtime.ts",
+        "importKind": "type",
+        "ruleId": "domain-runtime-to-surface",
+        "to": "src/cli/types.ts"
+      },
+      {
+        "from": "src/mcp/mcp-result-mapper.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      },
+      {
+        "from": "src/mcp/mcp-schema-guard.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      },
+      {
+        "from": "src/mcp/mcp-server-launcher.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      },
+      {
+        "from": "src/mcp/mcp-tool-catalog.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      },
+      {
+        "from": "src/repository-intelligence/navigation-snippet-reader.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      },
+      {
+        "from": "src/tools/validators/json-schema-tool-validator.ts",
+        "importKind": "value",
+        "ruleId": "core-to-tui",
+        "to": "src/tui/terminal-sanitizer.ts"
+      }
+    ]
+  },
+  "generatedBy": "pnpm architecture:characterize",
+  "reproduction": [
+    "pnpm architecture:characterize -- --write",
+    "pnpm architecture:characterize -- --check --report test-results/architecture-as0.2-command.json",
+    "pnpm test tests/unit/architecture-simplification-characterization.test.ts --maxWorkers=1 --reporter=json --outputFile=test-results/architecture-as0.2-vitest.json",
+    "pnpm architecture:gate -- --profile metric --report test-results/architecture-as0.2-command.json --report-argv-json [\"pnpm\",\"architecture:characterize\",\"--\",\"--check\",\"--report\",\"test-results/architecture-as0.2-command.json\"] --report test-results/architecture-as0.2-vitest.json --report-argv-json [\"pnpm\",\"test\",\"tests/unit/architecture-simplification-characterization.test.ts\",\"--maxWorkers=1\",\"--reporter=json\",\"--outputFile=test-results/architecture-as0.2-vitest.json\"] --receipt-out test-results/architecture-as0.2-receipt.json"
+  ],
+  "schemaVersion": 1,
+  "sessionReads": {
+    "catalogFullScanCount": 1,
+    "exclusiveSnapshotCount": 1,
+    "fixtureEventCount": 5,
+    "fullProjectionCount": 2,
+    "polling": {
+      "activeChild": {
+        "immediateReadCount": 1,
+        "intervalMs": 100,
+        "readAttemptsPerIdleSecond": 11
+      },
+      "preStart": {
+        "immediateReadCount": 1,
+        "intervalMs": 50,
+        "readAttemptsPerIdleSecond": 21
+      }
+    }
+  },
+  "surfaceRoutes": [
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/control-plane/adapters/agent-cli-adapter.ts",
+      "legacyToken": "return executeAgentExecution(",
+      "productAuthority": "application_service",
+      "productFile": "src/cli/run-cli.ts",
+      "productToken": "executeAgentThroughApplicationService",
+      "surfaceId": "agent"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/control-plane/adapters/chat-application-cli-adapter.ts",
+      "legacyToken": "executeChat(options, runtime, io)",
+      "productAuthority": "application_service",
+      "productFile": "src/cli/run-cli.ts",
+      "productToken": "executeChatThroughApplicationService",
+      "surfaceId": "chat"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/commands/goal.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/commands/goal.ts",
+      "productToken": "executeTaskActionThroughApplicationService",
+      "surfaceId": "goal"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/commands/plan.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/commands/plan.ts",
+      "productToken": "executeTaskActionThroughApplicationService",
+      "surfaceId": "plan"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/commands/graph.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/commands/graph.ts",
+      "productToken": "executeTaskActionThroughApplicationService",
+      "surfaceId": "graph"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/commands/delegations.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/commands/delegations.ts",
+      "productToken": "executeTaskActionThroughApplicationService",
+      "surfaceId": "delegations"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/commands/sessions.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/commands/sessions.ts",
+      "productToken": "executeSessionResumeThroughRuntimeAdapter",
+      "surfaceId": "sessions"
+    },
+    {
+      "legacyAuthority": "explicit_no_state_root",
+      "legacyFile": "src/tui/run-tui.ts",
+      "legacyToken": "runtime.controlPlaneStateRoot === undefined",
+      "productAuthority": "application_service",
+      "productFile": "src/tui/run-tui.ts",
+      "productToken": "executeAgentThroughApplicationService",
+      "surfaceId": "tui"
+    }
+  ],
+  "workspaceSnapshot": {
+    "entryCount": 2,
+    "limits": {
+      "maxDepth": 32,
+      "maxFileBytes": 16777216,
+      "maxFiles": 25000,
+      "maxPathBytes": 1024,
+      "maxTotalBytes": 536870912
+    },
+    "materializeLimitCheckAfterPayloadReadCount": 2,
+    "payloadBytesRead": 80,
+    "payloadReadCount": 4,
+    "retainedPayloadBytes": 80,
+    "returnedPayloadBytes": 40,
+    "snapshotSha256": "cfd9e17ac18bc130a098dda3bef3df019c405efd0902f236da5aabe2175377d7",
+    "totalBytes": 40
+  }
+}

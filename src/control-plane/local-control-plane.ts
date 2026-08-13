@@ -42,7 +42,7 @@ import { ApplicationControlError } from "./application-errors.js";
 import type { TaskSurfaceQueryOperationPortV1 } from "./use-cases/task-surface-queries.js";
 import { createNodeApplicationHostRuntime } from "./application-host-runtime.js";
 import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
-import type { ActiveDelegationControlRegistry } from "./active-delegation-control-registry.js";
+import type { ActiveDelegationRegistryPortV1 } from "./active-owner-router.js";
 
 export type ActiveSessionWriterObserverFactoryV1 = (input: Readonly<{
   readonly repositoryId: string;
@@ -64,7 +64,7 @@ export interface Phase21ALocalControlPlane {
 }
 
 export async function createPhase21ALocalControlPlane(input: {
-  readonly activeDelegations?: ActiveDelegationControlRegistry;
+  readonly activeDelegations?: ActiveDelegationRegistryPortV1;
   readonly broker?: SessionOwnerBroker;
   readonly chatExecution?: ChatExecutionPortV1;
   readonly delivery?: SessionDeliveryCoordinator;
@@ -82,6 +82,7 @@ export async function createPhase21ALocalControlPlane(input: {
   readonly taskSurfaceOperations?: TaskSurfaceQueryOperationPortV1;
 }): Promise<Phase21ALocalControlPlane> {
   const authority = await loadOrCreateHostControlAuthority({ root: input.stateRoot });
+  const surfaceContexts = new Map<"cli" | "tui", AuthenticatedCallContextV1>();
   const hostRuntime = createNodeApplicationHostRuntime();
   const artifacts = new ControlArtifactStore(authority.paths, authority.integrityKey);
   const repositories = new RepositoryRegistry(artifacts, authority.identity, authority.paths);
@@ -216,10 +217,16 @@ export async function createPhase21ALocalControlPlane(input: {
     artifacts,
     authority,
     broker,
-    context: (surface: "cli" | "tui", clientId: string = randomUUID()) => Object.freeze({
-      principal: authority.localOwner,
-      surface: Object.freeze({ clientId, connectionId: randomUUID(), surface }),
-    }),
+    context: (surface: "cli" | "tui", clientId?: string) => {
+      const existing = clientId === undefined ? surfaceContexts.get(surface) : undefined;
+      if (existing !== undefined) return existing;
+      const created = Object.freeze({
+        principal: authority.localOwner,
+        surface: Object.freeze({ clientId: clientId ?? randomUUID(), connectionId: randomUUID(), surface }),
+      });
+      if (clientId === undefined) surfaceContexts.set(surface, created);
+      return created;
+    },
     delivery,
     operations,
     queries: new DefaultApplicationQueryService({

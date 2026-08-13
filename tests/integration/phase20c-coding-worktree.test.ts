@@ -15,14 +15,18 @@ import { DelegationGroupLeaseStore } from "../../src/delegation/delegation-group
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
 import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
 import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
+import { disposeApplicationHostForStateRoot } from "../../src/control-plane/adapters/agent-cli-adapter.js";
 import { createMemoryIO, createRuntime } from "../helpers.js";
 import { SESSION_ID, writeLegacySession } from "../unit/phase16b-test-helpers.js";
 
 const execFile = promisify(nodeExecFile);
 const roots: string[] = [];
+const applicationHostStateRoots: string[] = [];
 const realBuiltCodingTest = process.env.BORN_RUN_BUILT_WORKER_TEST === "1" ? it : it.skip;
 
 afterEach(async () => {
+  await Promise.all(applicationHostStateRoots.splice(0).map((stateRoot) =>
+    disposeApplicationHostForStateRoot(stateRoot)));
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true, maxRetries: 5 })));
 });
 
@@ -151,6 +155,9 @@ describe("Phase 20C real coding child worktree", () => {
       workerUserStateRoot: delegationRoot,
       worktreeUserStateRoot: worktreeRoot,
     });
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      applicationHostStateRoots.push(runtime.controlPlaneStateRoot);
+    }
     const allocationIo = createMemoryIO();
     expect(await runCli([
       "graph", "worktree-allocate", SESSION_ID,

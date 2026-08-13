@@ -9,7 +9,7 @@ import { ApplicationControlError } from "../application-errors.js";
 import { createStrictCodec, type SessionLedgerHeadV1 } from "../application-protocol.js";
 import type { SessionOwnerBroker } from "../session-owner-broker.js";
 import type { SessionProjectionService } from "../session-projection-service.js";
-import type { SessionRegistry } from "../session-registry.js";
+import type { RunLifecycleRegistryV1 } from "../session-registry-ports.js";
 import { runCancelResultCodec } from "./action-result-codecs.js";
 
 const payloadSchema = z.object({
@@ -34,7 +34,7 @@ function targetOwnerGeneration(targetIdentity: unknown): string {
 export function createRunCancelAction(input: {
   readonly broker: SessionOwnerBroker;
   readonly sessionProjection: SessionProjectionService;
-  readonly sessions: SessionRegistry;
+  readonly sessions: RunLifecycleRegistryV1;
 }): ApplicationActionDefinitionV1<RunCancelPayloadV1> {
   const definition: ApplicationActionDefinitionV1<RunCancelPayloadV1> = {
     actionKind: "run.cancel",

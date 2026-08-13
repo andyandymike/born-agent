@@ -178,7 +178,17 @@ export class TuiSessionProjectionPort {
       const normalized = error instanceof TuiSessionProjectionError
         ? error
         : new TuiSessionProjectionError("control_resync_required", "TUI exact snapshot validation failed", { cause: error });
-      if (normalized.code !== "control_stale_projection") {
+      // A transient active-writer lock or an authorization/payload rejection
+      // says nothing about the identity of the full snapshot that was just
+      // installed. Freezing delivery for those failures can permanently block
+      // the very typed safety action that is meant to stop the active owner.
+      // Only an actual presentation/cursor integrity failure is sticky; a
+      // later full view remains the sole thaw path for that class.
+      if (
+        normalized.code === "control_resync_required" ||
+        normalized.code === "control_operation_corrupt" ||
+        normalized.code === "control_session_history_missing_or_corrupt"
+      ) {
         this.backend.delivery.requireFullResync(this.backend.context, scope.sessionId, "event_identity_mismatch");
       }
       throw normalized;

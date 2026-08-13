@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { sha256Canonical } from "../completion/canonical-json.js";
 import { WorktreeError } from "./worktree-errors.js";
-import { captureWorkspaceSnapshot, type WorkspaceBaselineCaptureV1 } from "./workspace-baseline.js";
+import { captureWorkspaceSnapshotManifest, type WorkspaceBaselineCaptureV1 } from "./workspace-baseline.js";
 
 function isMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -51,7 +51,7 @@ export async function materializeWorkspaceBaseline(input: {
     }
     await chmod(target, file.mode === "100755" ? 0o755 : 0o644);
   }
-  const captured = await captureWorkspaceSnapshot({
+  const captured = await captureWorkspaceSnapshotManifest({
     baselineManifestSha256: input.baseline.manifest.manifestSha256,
     workspaceId: input.workspaceId,
     workspaceRoot: input.workspaceRoot,

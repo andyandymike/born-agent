@@ -23,14 +23,15 @@ import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
 import type { RepositoryRegistry } from "../repository-registry.js";
 import type { SessionOwnerBroker } from "../session-owner-broker.js";
 import type { SessionProjectionService } from "../session-projection-service.js";
-import type { SessionCatalogEntryV1, SessionRegistry } from "../session-registry.js";
+import type { SessionCatalogEntryV1 } from "../session-registry.js";
+import type { SessionCatalogRegistryV1 } from "../session-registry-ports.js";
 
 export interface SessionDomainActionDependenciesV1 {
   readonly broker: SessionOwnerBroker;
   readonly createEventId: () => string;
   readonly repositories: RepositoryRegistry;
   readonly sessionProjection: SessionProjectionService;
-  readonly sessions: SessionRegistry;
+  readonly sessions: SessionCatalogRegistryV1;
   readonly timestamp: () => string;
   readonly waitForRetry: (delayMs: number) => Promise<void>;
 }

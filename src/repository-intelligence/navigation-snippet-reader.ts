@@ -1,4 +1,4 @@
-import { sanitizeTerminalText } from "../tui/terminal-sanitizer.js";
+import { sanitizeTerminalText } from "../presentation/terminal-sanitizer.js";
 import { SensitivePathPolicy } from "../tools/sensitive-path-policy.js";
 import { WorkspacePathPolicy } from "../tools/workspace-path-policy.js";
 import type { SourceRange } from "./navigation-types.js";

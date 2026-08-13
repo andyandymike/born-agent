@@ -16,7 +16,11 @@ import type { TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-pro
 import type { ManagedWorktreeManager } from "./managed-worktree-manager.js";
 import type { OriginVerificationResultV1, OriginVerificationRuntime } from "./origin-verification-runtime.js";
 import { WorktreeError } from "./worktree-errors.js";
-import { captureWorkspaceSnapshot, type CapturedWorkspaceFileV1 } from "./workspace-baseline.js";
+import {
+  captureWorkspaceSnapshot,
+  captureWorkspaceSnapshotManifest,
+  type CapturedWorkspaceFileV1,
+} from "./workspace-baseline.js";
 import { promotionBundleSchema, type PromotionBundleV1, type WorkspaceBaselineManifestV1 } from "./worktree-schema.js";
 import { createTaskPromotionGoalChangeRecordedData } from "./task-promotion-goal-change.js";
 
@@ -270,7 +274,7 @@ export class WorktreePromotionRuntime {
       throw new WorktreeError("worktree_approval_denied", decision === "cancelled" ? "promotion was cancelled" : "promotion was denied");
     }
     await planner.revalidate(patchPlan, input.signal);
-    const freshWorkspace = await captureWorkspaceSnapshot({ baselineManifestSha256: baseline.manifestSha256, workspaceId: workspace.identity.workspaceId, workspaceRoot: workspace.workspacePath });
+    const freshWorkspace = await captureWorkspaceSnapshotManifest({ baselineManifestSha256: baseline.manifestSha256, workspaceId: workspace.identity.workspaceId, workspaceRoot: workspace.workspacePath });
     if (freshWorkspace.manifest.snapshotSha256 !== bundle.workspaceSnapshotSha256) {
       throw new WorktreeError("worktree_promotion_stale", "workspace changed after promotion approval");
     }

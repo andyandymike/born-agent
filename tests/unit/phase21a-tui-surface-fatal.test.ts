@@ -1,14 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import type { CliRuntime } from "../../src/cli/types.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
   brokerForStateRoot,
+  disposeApplicationHostForStateRoot,
+  planeForRuntime,
   requestTuiSurfaceFatalForRuntime,
 } from "../../src/control-plane/adapters/agent-cli-adapter.js";
+import { createMemoryIO, createRuntime } from "../helpers.js";
+
+const temporary: string[] = [];
+
+afterEach(async () => {
+  for (const root of temporary.splice(0)) {
+    await disposeApplicationHostForStateRoot(root);
+    await rm(root, { force: true, recursive: true });
+  }
+});
 
 describe("Phase 21A TUI surface fatal owner routing", () => {
-  it("signals only the exact registered run owner and never creates a human cancel", () => {
-    const stateRoot = `tui-surface-fatal-${crypto.randomUUID()}`;
+  it("signals only the exact registered run owner and never creates a human cancel", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "tui-surface-fatal-"));
+    temporary.push(stateRoot);
+    const runtime = createRuntime({ controlPlaneStateRoot: stateRoot });
+    await planeForRuntime(runtime, createMemoryIO().io);
     const sessionId = crypto.randomUUID();
     const requestCancel = vi.fn();
     const requestHostEmergencyStop = vi.fn();
@@ -28,7 +46,7 @@ describe("Phase 21A TUI surface fatal owner routing", () => {
 
     try {
       const outcome = requestTuiSurfaceFatalForRuntime(
-        { controlPlaneStateRoot: stateRoot } as CliRuntime,
+        runtime,
         sessionId,
       );
 
@@ -48,7 +66,7 @@ describe("Phase 21A TUI surface fatal owner routing", () => {
 
   it("fails closed when the current session has no exact active owner", () => {
     expect(requestTuiSurfaceFatalForRuntime(
-      { controlPlaneStateRoot: `tui-surface-fatal-${crypto.randomUUID()}` } as CliRuntime,
+      createRuntime({ controlPlaneStateRoot: `tui-surface-fatal-${crypto.randomUUID()}` }),
       crypto.randomUUID(),
     )).toEqual({ kind: "unknown_owner" });
   });

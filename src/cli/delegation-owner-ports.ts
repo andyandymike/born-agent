@@ -1,8 +1,8 @@
-import type { CliIO, CliRuntime } from "../cli/types.js";
+import type { CliIO, CliRuntime } from "./types.js";
 import type {
   DelegationOwnerInteractionPortV1,
   DelegationOwnerRuntimePortV1,
-} from "./delegation-owner-execution-service.js";
+} from "../delegation/delegation-owner-execution-service.js";
 
 /** CLI composition only; execution core consumes the explicit owner ports. */
 export function createDelegationOwnerRuntimePort(
@@ -55,6 +55,9 @@ export function createDelegationOwnerRuntimePort(
       ? {}
       : { releaseDelegationGroupLease: (input) => runtime.releaseDelegationGroupLease!(input) }),
     timestamp: () => runtime.timestamp(),
+    waitForRetry: (delayMs) => new Promise((resolve) => {
+      runtime.setTimer(resolve, delayMs);
+    }),
   });
 }
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 
-import type { CliIO } from "../cli/types.js";
+import type { SurfaceIO } from "../presentation/surface-io.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import type { Phase20DelegationSessionEventData } from "../delegation/delegation-event-schema.js";
@@ -19,6 +19,7 @@ import { openBackgroundSessionWriter } from "./background-session-writer.js";
 import { sealBackgroundExecutable } from "./background-executable-descriptor.js";
 import { BackgroundOperationStore } from "./background-operation-store.js";
 import {
+  backgroundHandoffTransitionId,
   backgroundHandoffRecordSchema,
   graphWorkerBootstrapSchema,
   graphWorkerCancelControlSchema,
@@ -372,7 +373,7 @@ export class BackgroundWorkerRuntime {
   constructor(private readonly options: {
     readonly createExecutor: (input: {
       readonly approvalMode: "defer";
-      readonly io: CliIO;
+  readonly io: SurfaceIO;
       readonly runtimeProfileId: string;
       readonly sessionId: string;
       readonly writerFactory: TaskMutationWriterFactory;
@@ -391,7 +392,7 @@ export class BackgroundWorkerRuntime {
     readonly git?: GitWorktreePort;
     readonly heartbeatIntervalMs?: number;
     readonly ipc?: BackgroundWorkerIpcPort;
-    readonly io: CliIO;
+    readonly io: SurfaceIO;
     readonly nodeVersion: string;
     readonly operationId: string;
     readonly repositoryId: string;
@@ -473,6 +474,11 @@ export class BackgroundWorkerRuntime {
         expectedState: "launching",
         next: workerHandoff,
         nonce: randomUUID(),
+        transitionId: backgroundHandoffTransitionId({
+          operationId: launch.operationId,
+          transition: "worker_claim",
+          workerId: launch.workerId,
+        }),
       });
       workerOwned = true;
 
@@ -808,6 +814,11 @@ export class BackgroundWorkerRuntime {
           updatedAt: context.now(),
         }),
         nonce: randomUUID(),
+        transitionId: backgroundHandoffTransitionId({
+          operationId: launch.operationId,
+          transition: "worker_terminal",
+          workerId: launch.workerId,
+        }),
       });
       return Object.freeze({
         graphStatus,
@@ -897,6 +908,11 @@ export class BackgroundWorkerRuntime {
         updatedAt: context.now(),
       }),
       nonce: randomUUID(),
+      transitionId: backgroundHandoffTransitionId({
+        operationId: launch.operationId,
+        transition: "worker_failed",
+        workerId: launch.workerId,
+      }),
     });
   }
 }

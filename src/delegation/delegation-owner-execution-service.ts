@@ -164,6 +164,8 @@ export interface DelegationOwnerRuntimePortV1 {
   onCancel(listener: () => void): () => void;
   randomUUID(): string;
   timestamp(): string;
+  /** Host timer used only for bounded lock/writer handoff retries. */
+  waitForRetry(delayMs: number): Promise<void>;
 }
 
 /** @internal Exact proof helper shared by every pre-admission cancellation fence. */

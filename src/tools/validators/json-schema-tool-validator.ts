@@ -1,7 +1,7 @@
 import { canonicalJson } from "../../completion/canonical-json.js";
 import type { GuardedMcpSchema } from "../../mcp/mcp-schema-guard.js";
 import { McpCoreError } from "../../mcp/mcp-errors.js";
-import { sanitizeTerminalText } from "../../tui/terminal-sanitizer.js";
+import { sanitizeTerminalText } from "../../presentation/terminal-sanitizer.js";
 import type {
   RuntimeToolValidator,
   RuntimeValidationIssue,

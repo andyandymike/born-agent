@@ -52,19 +52,17 @@ import type { DelegationChildOperationV1 } from "../delegation/delegation-operat
 import type { DelegationPreEffectRecoveryResultV1 } from "../delegation/delegation-pre-effect-recovery.js";
 import type { DelegationGroupLeaseRecordV1 } from "../delegation/delegation-group-lease-store.js";
 import type { DelegationGroupTakeoverResultV1 } from "../delegation/delegation-group-takeover.js";
+import type { SurfaceIO } from "../presentation/surface-io.js";
+import type { DomainHarnessV1 } from "../coordination/domain-harness.js";
 
-export interface OutputWriter {
-  write(value: string): void;
-}
-
-export interface CliIO {
-  readonly stderr: OutputWriter;
-  readonly stdout: OutputWriter;
-}
+export type { OutputWriter } from "../presentation/surface-io.js";
+export type CliIO = SurfaceIO;
 
 export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
-  /** PHASE21: Host-owned state root; absent test embedders keep legacy adapters. */
+  /** Product Node runtimes always provide this Host-owned state root. */
   readonly controlPlaneStateRoot?: string;
+  /** AS4.1: explicit test/eval-only direct-domain authority. */
+  readonly domainHarness?: DomainHarnessV1;
   readonly hooksSuppressed?: boolean;
   readonly supportsDelegationProposalTool?: true;
   agentModelEvidence(provider: ChatProvider): ModelEvidence | null;

@@ -21,17 +21,18 @@ import { DelegationControlPlane } from "../../delegation/delegation-control-plan
 import { durableDelegationCancelSignalV1Schema } from "../../delegation/delegation-cancellation-signal.js";
 import { preparedChildEnvelopeSchema } from "../../delegation/context/child-envelope-schema.js";
 import { contextCapsuleSchema } from "../../delegation/context/context-capsule-schema.js";
-import { decodeStoredEvents, type DecodedStoredEvent } from "../../events/event-decoder-registry.js";
+import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
 import { SessionCatalog } from "../../sessions/session-catalog.js";
 import { reconstructMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
-import { SessionPathPolicy } from "../../sessions/session-path-policy.js";
+import { SessionLockError } from "../../sessions/session-lock.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
 import { parseStrictJson } from "../../system/strict-json.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
+import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import type {
   ActiveDelegationControlPortV1,
-  ActiveDelegationControlRegistry,
 } from "../active-delegation-control-registry.js";
+import type { ActiveDelegationRegistryPortV1 } from "../active-owner-router.js";
 import type { ActiveSessionWriterObserverFactoryV1 } from "../local-control-plane.js";
 import type { SessionLedgerHeadSigner } from "../session-ledger-head.js";
 import type {
@@ -80,6 +81,11 @@ function exactApplicationCommit(
     value.authorization_decision_sha256 === binding.authorizationDecisionSha256;
 }
 
+function isTransientWriterHandoff(error: unknown): boolean {
+  return (error instanceof SessionLockError && error.code === "active_session_lock") ||
+    (error instanceof Error && error.message === "session writer is closed");
+}
+
 function eventReference(event: DecodedStoredEvent, rawSha256: ReadonlyMap<string, string>): DurableRecordReferenceV1 {
   const recordSha256 = rawSha256.get(event.eventId);
   if (recordSha256 === undefined) {
@@ -106,23 +112,8 @@ function resolvedHead(
 }
 
 async function readEvidence(workspace: string, sessionId: string) {
-  const paths = await (await SessionPathPolicy.create(workspace)).inspectExistingSession(sessionId);
-  const bytes = await readFile(paths.sessionFilePath);
-  if (bytes.byteLength === 0 || bytes.at(-1) !== 0x0a) {
-    throw new DelegationError("delegation_effect_reconciliation_required", "Delegation session evidence has no complete durable tail");
-  }
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const lines = text.slice(0, -1).split("\n");
-  const events = decodeStoredEvents(lines.map((line) => parseStrictJson(line)));
-  const rawSha256 = new Map<string, string>();
-  events.forEach((event, index) => {
-    const line = lines[index];
-    if (line === undefined || event.sessionSeq !== index + 1) {
-      throw new DelegationError("delegation_effect_reconciliation_required", "Delegation session evidence sequence is inconsistent");
-    }
-    rawSha256.set(event.eventId, createHash("sha256").update(line, "utf8").digest("hex"));
-  });
-  return Object.freeze({ events, rawSha256 });
+  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
+  return Object.freeze({ events: evidence.events, rawSha256: evidence.rawSha256 });
 }
 
 type DelegationCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readEvidence>>;
@@ -251,7 +242,7 @@ async function readExactPreparedArtifact(
 
 export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwnerPortV1 {
   constructor(private readonly options: Readonly<{
-    readonly activeDelegations: ActiveDelegationControlRegistry;
+    readonly activeDelegations: ActiveDelegationRegistryPortV1;
     readonly activeSessionWriterObserverFactory?: ActiveSessionWriterObserverFactoryV1;
     readonly interaction: DelegationOwnerInteractionPortV1;
     /** Test/embedded read port; production defaults to the strict raw JSONL reader above. */
@@ -421,7 +412,7 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     if (surface !== "cli" && surface !== "tui") {
       throw new DelegationError("delegation_authority_expansion", "Delegation cancellation requires a local surface");
     }
-    const mutationContext: TaskMutationContext = Object.freeze({
+    const baseMutationContext: TaskMutationContext = Object.freeze({
       authenticatedApplication: Object.freeze({
         actionIdentitySha256: sha256Canonical({
           application_commit: input.context.applicationCommit,
@@ -433,24 +424,42 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
         requestId: input.context.requestId,
         surface: input.context.call.surface,
       }),
-      expectedSessionSeq: version.head.sequence,
       inputSurface: surface,
       now: () => runtime.timestamp(),
       randomUuid: () => runtime.randomUUID(),
       sessionId: scope.sessionId,
       workspace: runtime.cwd,
     });
-    let writer = activeWriter.current;
-    let closeWriter = false;
-    if (writer === null || writer.isClosed()) {
-      writer = await this.#openWriter(runtime, mutationContext);
-      closeWriter = true;
-    }
-    try {
+    const requestWithWriter = async (writer: V2SessionWriter) => {
       const tail = writer.readDurableTailIdentity();
       if (scope.sessionId !== tail.sessionId) {
         throw new DelegationError("delegation_revision_conflict", "active Delegation cancellation target is invalid");
       }
+      const expectedIdentity = version.head.sequence === 0
+        ? null
+        : writer.readDurableEventIdentity(version.head.eventId!);
+      const expectedRawSha256 = expectedIdentity?.rawEventSha256 ?? null;
+      if (
+        (expectedIdentity !== null && (
+          expectedIdentity.sequence !== version.head.sequence ||
+          expectedIdentity.sessionId !== version.head.sessionId
+        )) ||
+        !this.options.signer.verify(version.head, expectedRawSha256)
+      ) {
+        throw new DelegationError(
+          "delegation_revision_conflict",
+          "Delegation cancellation prepared head is not an exact durable prefix",
+        );
+      }
+      // The commit already revalidated the prepared target. The active owner
+      // may append progress between that check and dispatch, so a
+      // safety-reducing cancellation binds the signed prepared prefix and then
+      // appends at the exact current writer tail. Requiring tail equality here
+      // creates a post-dispatch unknown-effect race under ordinary progress.
+      const mutationContext: TaskMutationContext = Object.freeze({
+        ...baseMutationContext,
+        expectedSessionSeq: tail.sequence,
+      });
     const operationEvents = writer.events.filter((event) => applicationOperationId(event) === input.context.operationId);
     if (
       operationEvents.length > 1 ||
@@ -463,12 +472,6 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     }
     if (operationEvents.length === 0 && input.reconcileOnly) return null;
     if (operationEvents.length === 0) {
-      if (
-        tail.eventId !== version.head.eventId || tail.sequence !== version.head.sequence ||
-        !this.options.signer.verify(version.head, tail.rawEventSha256)
-      ) {
-        throw new DelegationError("delegation_revision_conflict", "Delegation changed before cancellation dispatch");
-      }
       await new DelegationControlPlane(borrowedTaskMutationWriterFactory(writer)).cancel({
         context: mutationContext,
         delegationId: input.delegationId,
@@ -528,9 +531,27 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
       }));
     }
       return execution;
-    } finally {
-      if (closeWriter) await writer.close();
+    };
+    for (let attempt = 0; attempt < 512; attempt += 1) {
+      let writer = activeWriter.current;
+      let closeWriter = false;
+      try {
+        if (writer === null || writer.isClosed()) {
+          writer = await this.#openWriter(runtime, baseMutationContext);
+          closeWriter = true;
+        }
+        return await requestWithWriter(writer);
+      } catch (error) {
+        if (!isTransientWriterHandoff(error) || attempt === 511) throw error;
+      } finally {
+        if (closeWriter && writer !== null) await writer.close().catch(() => undefined);
+      }
+      // A closing writer can lose only before the append gate. Re-acquiring the
+      // exact session writer and scanning this Application operation id is safe:
+      // an already-durable request is observed, never appended twice.
+      await runtime.waitForRetry(10);
     }
+    throw new DelegationError("delegation_effect_reconciliation_required", "Delegation cancellation writer handoff did not converge");
   }
 
   /** Observation-only response-loss recovery; no command or owner effect is invoked. */

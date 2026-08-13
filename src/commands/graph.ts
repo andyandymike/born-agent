@@ -4,6 +4,7 @@ import { ArtifactError } from "../artifacts/artifact-types.js";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { canonicalJson } from "../completion/canonical-json.js";
+import { isDomainHarnessRuntime } from "../coordination/domain-harness.js";
 import { SessionCatalog, SessionCatalogError } from "../sessions/session-catalog.js";
 import { SessionLockError } from "../sessions/session-lock.js";
 import { assertCanonicalSessionId } from "../sessions/session-path-policy.js";
@@ -304,7 +305,7 @@ export async function executeGraphShow(options: GraphShowOptions, runtime: CliRu
   try {
     assertCanonicalSessionId(options.sessionId);
     const revisionNumber = options.revision === undefined ? undefined : positive(options.revision, "revision");
-    const application = runtime.controlPlaneStateRoot === undefined
+    const application = isDomainHarnessRuntime(runtime)
       ? null
       : await queryGraphRevisionsThroughApplicationService({
           io,
@@ -389,7 +390,7 @@ export async function executeGraphReplace(options: GraphReplaceOptions, runtime:
       ? null
       : { revision: positive(options.baseRevision, "base revision"), sha256: sha(options.baseSha256) };
     let applicationExitCode: 0 | 1 | 2 | 8 = 0;
-    const result = runtime.controlPlaneStateRoot === undefined
+    const result = isDomainHarnessRuntime(runtime)
       ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).replace({ base, context: taskMutationContext(runtime, options.sessionId), graph })
       : await (async () => {
           const application = await executeTaskActionThroughApplicationService({
@@ -418,7 +419,7 @@ export async function executeGraphApprove(options: GraphDecisionOptions, runtime
     assertCanonicalSessionId(options.sessionId);
     const payload = { decision: "approve" as const, revision: positive(options.revision, "revision"), sha256: sha(options.sha256) };
     let applicationExitCode: 0 | 1 | 2 | 8 = 0;
-    const result = runtime.controlPlaneStateRoot === undefined
+    const result = isDomainHarnessRuntime(runtime)
       ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).approve({ context: taskMutationContext(runtime, options.sessionId), revision: payload.revision, sha256: payload.sha256 })
       : await (async () => {
           const application = await executeTaskActionThroughApplicationService({
@@ -450,7 +451,7 @@ export async function executeGraphReject(options: GraphDecisionOptions, runtime:
       sha256: sha(options.sha256),
     };
     let applicationExitCode: 0 | 1 | 2 | 8 = 0;
-    const result = runtime.controlPlaneStateRoot === undefined
+    const result = isDomainHarnessRuntime(runtime)
       ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).reject({ context: taskMutationContext(runtime, options.sessionId), ...(options.reason === undefined ? {} : { reason: options.reason }), revision: payload.revision, sha256: payload.sha256 })
       : await (async () => {
           const application = await executeTaskActionThroughApplicationService({
@@ -482,7 +483,7 @@ export async function executeGraphEnqueue(options: GraphEnqueueOptions, runtime:
       sha256: sha(options.sha256),
     };
     let applicationExitCode: 0 | 1 | 2 | 8 = 0;
-    const result = runtime.controlPlaneStateRoot === undefined
+    const result = isDomainHarnessRuntime(runtime)
       ? await new TaskExecutionControlPlane(taskWriterFactory(runtime)).enqueue({ context: taskMutationContext(runtime, options.sessionId), ...payload })
       : await (async () => {
           const application = await executeTaskActionThroughApplicationService({
@@ -517,7 +518,7 @@ export async function executeGraphEnqueue(options: GraphEnqueueOptions, runtime:
 export async function executeGraphStatus(options: GraphStatusOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const application = runtime.controlPlaneStateRoot === undefined
+    const application = isDomainHarnessRuntime(runtime)
       ? null
       : await queryGraphStatusThroughApplicationService({ io, live: options.live, runtime, sessionId: options.sessionId });
     if (application !== null && application.value === null) return application.exitCode;
@@ -570,7 +571,7 @@ export async function executeGraphCancel(options: GraphCancelOptions, runtime: C
     assertCanonicalSessionId(options.sessionId);
     const revision = positive(options.revision, "revision");
     const graphSha256 = sha(options.sha256);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const applicationCancellation = await requestActiveGraphCancelThroughApplicationService({
         io,
         reason: options.reason,
@@ -626,7 +627,7 @@ export async function executeGraphCancel(options: GraphCancelOptions, runtime: C
 export async function executeGraphRun(options: GraphRunOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const view = await querySessionViewThroughApplicationService({
         io,
         runtime,
@@ -747,7 +748,7 @@ export async function executeGraphResume(options: GraphResumeOptions, runtime: C
     }
     const revision = positive(options.revision, "revision");
     const graphSha256 = sha(options.sha256);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const application = await executeTaskActionThroughApplicationService({
         actionKind: "graph.resume",
         io,
@@ -930,7 +931,7 @@ export async function executeGraphRetry(options: GraphRetryOptions, runtime: Cli
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.terminalEvent);
     const attemptNumber = positive(options.attempt, "attempt");
-    const applicationView = runtime.controlPlaneStateRoot === undefined
+    const applicationView = isDomainHarnessRuntime(runtime)
       ? null
       : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
     if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
@@ -953,7 +954,7 @@ export async function executeGraphRetry(options: GraphRetryOptions, runtime: Cli
       terminalEventId: options.terminalEvent,
     };
     let applicationExitCode: 0 | 1 | 2 | 8 = 0;
-    const result: TaskExecutionMutationResultV1 | null = runtime.controlPlaneStateRoot === undefined
+    const result: TaskExecutionMutationResultV1 | null = isDomainHarnessRuntime(runtime)
       ? await new TaskExecutionControlPlane(taskWriterFactory(runtime)).retry({
           attemptNumber: payload.attemptNumber,
           attemptTerminal: payload.attemptTerminal,
@@ -995,7 +996,7 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
     if (options.node !== undefined && !/^[a-z][a-z0-9-]{0,63}$/u.test(options.node)) {
       throw new TaskGraphError("task_graph_schema_invalid", "node selector is invalid");
     }
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryGraphLogsThroughApplicationService({
         ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
         io,
@@ -1090,7 +1091,7 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
 export async function executeGraphWorktrees(options: GraphWorktreesOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const queried = await queryGraphWorktreesThroughApplicationService({ io, runtime, sessionId: options.sessionId });
       if (queried.value === null) return queried.exitCode;
       const { graph, ...result } = queried.value;
@@ -1139,7 +1140,7 @@ export async function executeGraphWorktrees(options: GraphWorktreesOptions, runt
 export async function executeGraphWorktreeAllocate(options: GraphWorktreeAllocateOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const application = await executeTaskActionThroughApplicationService({
         actionKind: "worktree.allocate",
         io,
@@ -1194,7 +1195,7 @@ export async function executeGraphPromote(options: GraphPromoteOptions, runtime:
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.attemptId);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const application = await executeTaskActionThroughApplicationService({
         actionKind: "promotion.apply",
         io,
@@ -1244,7 +1245,7 @@ export async function executeGraphOriginVerify(options: GraphOriginVerifyOptions
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.promotionOperation);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const application = await executeTaskActionThroughApplicationService({
         actionKind: "promotion.verify_origin",
         io,
@@ -1292,7 +1293,7 @@ export async function executeGraphWorktreeCleanup(options: GraphWorktreeCleanupO
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.graphId);
-    if (runtime.controlPlaneStateRoot !== undefined) {
+    if (!isDomainHarnessRuntime(runtime)) {
       const application = await executeTaskActionThroughApplicationService({
         actionKind: "worktree.cleanup",
         io,

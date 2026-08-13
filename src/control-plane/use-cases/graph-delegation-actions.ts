@@ -15,7 +15,7 @@ import { taskGraphRevisionContentSchema } from "../../task-graph/task-graph-sche
 import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
 import type { ReconstructedMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
 import type { ApplicationActionDefinitionV1 } from "../application-action-registry.js";
-import type { ActiveDelegationControlRegistry } from "../active-delegation-control-registry.js";
+import type { ActiveDelegationRegistryPortV1 } from "../active-owner-router.js";
 import { createStrictCodec } from "../application-protocol.js";
 import {
   executeSessionDomainAction,
@@ -122,7 +122,7 @@ function recoverExecution(session: ReconstructedMultiRunSession): TaskExecutionP
 
 export function createGraphDelegationActionDefinitions(
   dependencies: SessionDomainActionDependenciesV1,
-  activeDelegations?: ActiveDelegationControlRegistry,
+  activeDelegations?: ActiveDelegationRegistryPortV1,
 ): readonly ApplicationActionDefinitionV1[] {
   const graphPropose: ApplicationActionDefinitionV1<z.infer<typeof graphProposePayloadSchema>, TaskGraphRevisionProjectionV1> = {
     actionKind: "graph.propose",

@@ -12,6 +12,7 @@ import { BackgroundError } from "./background-errors.js";
 import { revalidateBackgroundExecutable, sealBackgroundExecutable, type SealedBackgroundExecutableV1 } from "./background-executable-descriptor.js";
 import { BackgroundOperationStore } from "./background-operation-store.js";
 import {
+  backgroundHandoffTransitionId,
   backgroundHandoffRecordSchema,
   backgroundLaunchRecordSchema,
   graphWorkerBootstrapSchema,
@@ -176,7 +177,11 @@ export class BackgroundWorkerLauncher {
       workerNonceSha256,
     });
     await store.createLaunch(launch);
-    await store.createHandoff(handoff);
+    await store.createHandoffV2({
+      handoff,
+      launch,
+      transitionId: backgroundHandoffTransitionId({ operationId, transition: "genesis", workerId }),
+    });
     writer = await this.writerFactory(this.options.context);
     try {
       const current = reconstructMultiRunSession(writer.events);
@@ -336,6 +341,11 @@ export class BackgroundWorkerLauncher {
         updatedAt: this.options.context.now(),
       }),
       nonce: this.options.context.randomUuid(),
+      transitionId: backgroundHandoffTransitionId({
+        operationId: input.operationId,
+        transition: "launch_failed",
+        workerId: input.workerId,
+      }),
     });
     const writer = await this.writerFactory(this.options.context);
     try {

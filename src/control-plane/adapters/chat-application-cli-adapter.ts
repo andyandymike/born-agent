@@ -1,12 +1,15 @@
 import type { StreamingChatExitCode } from "../../chat/run-streaming-chat.js";
+import { runStreamingChat } from "../../chat/run-streaming-chat.js";
 import type { ChatCommandOptions } from "../../chat/types.js";
 import type { CliIO, CliRuntime } from "../../cli/types.js";
-import { executeChat } from "../../commands/chat.js";
 import { sha256Canonical } from "../../completion/canonical-json.js";
+import { isDomainHarnessRuntime } from "../../coordination/domain-harness.js";
+import { ConsoleEventRenderer } from "../../render/console-event-renderer.js";
 import {
   commitCliSessionMessageWithTypedCancellation,
   contextForRuntime,
   planeForRuntime,
+  registerChatExecutionForRuntime,
   registerCurrentRepository,
   reportApplicationFailure,
   reviewPreparedBeforeCommit,
@@ -25,21 +28,32 @@ export async function executeChatThroughApplicationService(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<StreamingChatExitCode> {
-  if (runtime.controlPlaneStateRoot === undefined) {
-    return await executeChat(options, runtime, io) as StreamingChatExitCode;
+  if (isDomainHarnessRuntime(runtime)) {
+    return await runStreamingChat(
+      options,
+      runtime,
+      new ConsoleEventRenderer(io, options.verbose),
+    ) as StreamingChatExitCode;
   }
 
   const preparedExecution = await prepareCliChatExecution({ io, options, runtime });
   if (!preparedExecution.ok) return preparedExecution.exitCode as StreamingChatExitCode;
 
-  const plane = await planeForRuntime(runtime, io, undefined, preparedExecution.execution);
-  const context = contextForRuntime(plane, runtime, "cli");
-  const repository = await registerCurrentRepository(plane, context, runtime, io);
-  if (!("repositoryId" in repository)) {
-    return reportApplicationFailure(repository, io) as StreamingChatExitCode;
-  }
+  const releaseExecution = await registerChatExecutionForRuntime({
+    execution: preparedExecution.execution,
+    io,
+    payloadSha256: sha256Canonical(preparedExecution.payload),
+    runtime,
+  });
+  try {
+    const plane = await planeForRuntime(runtime, io);
+    const context = contextForRuntime(plane, runtime, "cli");
+    const repository = await registerCurrentRepository(plane, context, runtime, io);
+    if (!("repositoryId" in repository)) {
+      return reportApplicationFailure(repository, io) as StreamingChatExitCode;
+    }
 
-  const sessionCatalogHead = await plane.sessions.head(repository.repositoryId);
+    const sessionCatalogHead = await plane.sessions.head(repository.repositoryId);
   const preparedSession = await plane.actions.prepare(context, {
     actionKind: "session.create",
     payload: {},
@@ -139,8 +153,11 @@ export async function executeChatThroughApplicationService(
   if (committed.status !== "ok" || committed.result === null) {
     return reportApplicationFailure(committed, io) as StreamingChatExitCode;
   }
-  const result = committed.result as Readonly<{ readonly exitCode?: unknown }>;
-  return typeof result.exitCode === "number" && CHAT_EXIT_CODES.has(result.exitCode)
-    ? result.exitCode as StreamingChatExitCode
-    : 1;
+    const result = committed.result as Readonly<{ readonly exitCode?: unknown }>;
+    return typeof result.exitCode === "number" && CHAT_EXIT_CODES.has(result.exitCode)
+      ? result.exitCode as StreamingChatExitCode
+      : 1;
+  } finally {
+    releaseExecution();
+  }
 }

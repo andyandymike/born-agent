@@ -238,6 +238,7 @@ describe("Phase 21A application delivery integration", () => {
     })).toThrow(expect.objectContaining({ code: "control_resync_required" }));
 
     const nextCommandPlane = await planeForRuntime(runtime, createMemoryIO().io);
+    expect(nextCommandPlane).toBe(firstPlane);
     expect(nextCommandPlane.delivery).toBe(firstPlane.delivery);
     expect(() => nextCommandPlane.delivery.assertMutationAllowed(context, sessionId))
       .toThrow(expect.objectContaining({ code: "control_resync_required" }));

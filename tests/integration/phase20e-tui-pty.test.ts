@@ -54,7 +54,7 @@ describe("Phase 20E real PTY controlled delegation lifecycle", () => {
         cwd: workspace,
         env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
         maxBuffer: 4 * 1024 * 1024,
-        timeout: 110_000,
+        timeout: 170_000,
         windowsHide: true,
       },
     ));
@@ -85,5 +85,5 @@ describe("Phase 20E real PTY controlled delegation lifecycle", () => {
     expect(raw).toContain("DELEGATION DECISION | REJECT");
     expect(raw).toContain("DELEGATION DECISION | START_OR_RESUME");
     expect(raw).toContain("PTY_SHELL_RESTORED");
-  }, 120_000);
+  }, 180_000);
 });

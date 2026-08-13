@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -212,6 +212,18 @@ describe("Phase 19D bounded background worker", () => {
     });
     expect(waiting.background.workers[0]).toMatchObject({ operationId: launched.result.operationId, status: "terminal", workerId: launched.result.workerId });
     expect(waiting.taskExecution?.nodes[0]?.attempts[0]?.status).toBe("terminal");
+    const operationStore = await BackgroundOperationStore.openExisting({
+      operationId: launched.result.operationId,
+      repositoryId: repository.identity.repositoryId,
+      root: workerRoot,
+    });
+    expect(await operationStore.readHandoffAuthority()).toMatchObject({
+      handoff: { owner: "worker", state: "terminal" },
+      protocol: "v2",
+      revision: 2,
+    });
+    expect((await operationStore.inspectHandoff()).legacyLockPresent).toBe(false);
+    expect(await lstat(operationStore.paths.handoff).then(() => true).catch(() => false)).toBe(false);
 
     const resumeIo = createMemoryIO();
     expect(await runCli(["graph", "resume", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256, "--foreground", "--json"], resumeIo.io, runtime), resumeIo.readStderr()).toBe(8);

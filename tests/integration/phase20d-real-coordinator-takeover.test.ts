@@ -21,7 +21,7 @@ import { SessionLedgerHeadSigner } from "../../src/control-plane/session-ledger-
 import {
   createDelegationOwnerInteractionPort,
   createDelegationOwnerRuntimePort,
-} from "../../src/delegation/delegation-owner-cli-ports.js";
+} from "../../src/cli/delegation-owner-ports.js";
 import { createMemoryIO } from "../helpers.js";
 
 const roots: string[] = [];
@@ -37,7 +37,11 @@ afterEach(async () => {
 });
 
 async function waitForFile(path: string): Promise<string> {
-  for (let attempt = 0; attempt < 1_200; attempt += 1) {
+  // Two real built children must both reach accepted receipts before the
+  // coordinator is killed. A loaded Windows gate can exceed the old 60s
+  // observation window even though each handshake remains within its explicit
+  // fixture bound, so retain a separate two-minute evidence deadline.
+  for (let attempt = 0; attempt < 2_400; attempt += 1) {
     try {
       return await readFile(path, "utf8");
     } catch {

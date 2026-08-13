@@ -102,7 +102,7 @@ import {
 import {
   createDelegationOwnerInteractionPort,
   createDelegationOwnerRuntimePort,
-} from "../delegation/delegation-owner-cli-ports.js";
+} from "./delegation-owner-ports.js";
 import { DelegationOperationStore } from "../delegation/delegation-operation-store.js";
 import { classifyDelegationReconcileOutcome } from "../delegation/delegation-reconciler.js";
 import { DelegationPreEffectRecovery } from "../delegation/delegation-pre-effect-recovery.js";
