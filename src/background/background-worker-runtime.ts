@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import type { CliIO } from "../cli/types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import type { Phase20DelegationSessionEventData } from "../delegation/delegation-event-schema.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { currentProcessIdentity } from "../sessions/process-identity.js";
 import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
@@ -40,8 +41,266 @@ function hash(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function assertAuthenticatedControlMatchesWriter(input: Readonly<{
+  readonly control: GraphWorkerCancelControlV1;
+  readonly repositoryId: string;
+  readonly sessionId: string;
+  readonly writer: V2SessionWriter;
+}>): void {
+  const control = input.control;
+  if (control.schemaVersion === 1) return;
+  const event = input.writer.events.at(control.sessionCancel.sessionSeq - 1);
+  const value = event?.data as Readonly<Record<string, unknown>> | undefined;
+  let durableIdentity: ReturnType<V2SessionWriter["readDurableEventIdentity"]> | null = null;
+  if (event !== undefined) {
+    try {
+      durableIdentity = input.writer.readDurableEventIdentity(event.eventId);
+    } catch {
+      durableIdentity = null;
+    }
+  }
+  if (
+    control.repositoryId !== input.repositoryId || control.sessionId !== input.sessionId ||
+    event === undefined || value === undefined ||
+    event.scope !== "session" || event.eventId !== control.sessionCancel.eventId ||
+    event.sessionId !== input.sessionId || event.sessionSeq !== control.sessionCancel.sessionSeq ||
+    event.type !== "task_graph.cancel.requested" || durableIdentity === null ||
+    durableIdentity.sequence !== control.sessionCancel.sessionSeq ||
+    durableIdentity.sessionId !== input.sessionId ||
+    durableIdentity.rawEventSha256 !== control.sessionCancel.rawEventSha256 ||
+    value.graph_id !== control.graphId || value.graph_revision !== control.graphRevision ||
+    value.graph_sha256 !== control.graphSha256 || value.reason !== control.reason ||
+    value.request_id !== control.requestId || sha256Canonical(value.origin) !== sha256Canonical(control.origin)
+  ) {
+    throw new BackgroundError(
+      "worker_control_stale",
+      "background cancel control failed its exact locked session application binding",
+    );
+  }
+}
+
 async function defaultWriterFactory(context: TaskMutationContext): Promise<V2SessionWriter> {
   return openBackgroundSessionWriter(context);
+}
+
+const CANCELLABLE_DELEGATION_STATUSES = new Set([
+  "approved",
+  "queued",
+  "active",
+  "waiting_approval",
+  "reconciling",
+  "receipt_ready",
+  "cancelling",
+]);
+
+/**
+ * Bind a verified Graph cancellation to every non-terminal delegation owned by
+ * that exact Graph before any process-local cancellation signal is delivered.
+ * The Graph cancel event is the authenticated root; this is an idempotent
+ * owner-internal cascade and never manufactures a second human operation.
+ */
+export async function persistDelegationCancelCascade(input: Readonly<{
+  readonly context: TaskMutationContext;
+  readonly control: GraphWorkerCancelControlV1;
+  readonly graphId: string;
+  readonly graphRevision: number;
+  readonly graphSha256: string;
+  readonly operationId: string;
+  readonly repositoryId: string;
+  readonly sessionId: string;
+  readonly workerId: string;
+  readonly writerFactory: TaskMutationWriterFactory;
+}>): Promise<void> {
+  const writer = await input.writerFactory(input.context);
+  try {
+    let session = reconstructMultiRunSession(writer.events);
+    const current = session.background.current;
+    if (
+      current === null || current.status !== "running" ||
+      current.operationId !== input.operationId || current.workerId !== input.workerId ||
+      current.graphId !== input.graphId || current.graphRevision !== input.graphRevision ||
+      current.graphSha256 !== input.graphSha256 ||
+      input.control.operationId !== current.operationId ||
+      input.control.workerId !== current.workerId ||
+      input.control.workerNonceSha256 !== current.workerNonceSha256 ||
+      input.control.graphId !== current.graphId ||
+      input.control.graphRevision !== current.graphRevision ||
+      input.control.graphSha256 !== current.graphSha256
+    ) {
+      throw new BackgroundError(
+        "worker_control_stale",
+        "authenticated delegation cancel cascade lost its exact background Graph owner",
+      );
+    }
+    let root;
+    if (input.control.schemaVersion === 2) {
+      assertAuthenticatedControlMatchesWriter({
+        control: input.control,
+        repositoryId: input.repositoryId,
+        sessionId: input.sessionId,
+        writer,
+      });
+      root = writer.events.at(input.control.sessionCancel.sessionSeq - 1);
+      if (
+        root === undefined || root.eventId !== input.control.sessionCancel.eventId ||
+        root.type !== "task_graph.cancel.requested" ||
+        writer.readDurableEventIdentity(root.eventId).rawEventSha256 !== input.control.sessionCancel.rawEventSha256
+      ) {
+        throw new BackgroundError(
+          "worker_control_stale",
+          "authenticated delegation cancel cascade lost its exact Graph cancel root",
+        );
+      }
+    } else {
+      const existingRoots = writer.events.filter((event) => {
+        if (event.scope !== "session" || event.type !== "task_graph.cancel.requested") return false;
+        const value = event.data as Readonly<Record<string, unknown>>;
+        return value.graph_id === input.graphId && value.graph_revision === input.graphRevision &&
+          value.graph_sha256 === input.graphSha256 && value.request_id === input.control.requestId &&
+          value.reason === input.control.reason;
+      });
+      if (existingRoots.length > 1) {
+        throw new BackgroundError(
+          "worker_reconciliation_required",
+          "internal Graph deadline cancellation root is ambiguous",
+        );
+      }
+      root = existingRoots[0] ?? await writer.appendTaskGraphEvent("task_graph.cancel.requested", {
+        active_attempt_id: session.taskExecution?.activeAttempt?.attemptId ?? null,
+        graph_id: input.graphId,
+        graph_revision: input.graphRevision,
+        graph_sha256: input.graphSha256,
+        reason: input.control.reason,
+        request_id: input.control.requestId,
+      });
+    }
+    const candidates = session.delegations.revisions.filter((revision) =>
+      CANCELLABLE_DELEGATION_STATUSES.has(revision.status) &&
+      revision.binding.graphId === input.graphId &&
+      revision.binding.graphRevision === input.graphRevision &&
+      revision.binding.graphSha256 === input.graphSha256);
+    const admittedCandidateKeys = new Set(candidates.flatMap((revision) => {
+      const actorId = revision.attempts.at(-1)?.actorId;
+      return actorId !== null && actorId !== undefined &&
+          session.delegations.activeActorSlots.some((slot) => slot.actorId === actorId)
+        ? [`${revision.delegationId}\0${String(revision.delegationRevision)}`]
+        : [];
+    }));
+    const activeCandidates = candidates.filter((revision) =>
+      admittedCandidateKeys.has(`${revision.delegationId}\0${String(revision.delegationRevision)}`) ||
+      ["active", "waiting_approval", "reconciling", "receipt_ready"].includes(revision.status));
+    const activeGroupIds = new Set(activeCandidates.flatMap((revision) => {
+      const actorId = revision.attempts.at(-1)?.actorId;
+      return actorId === null || actorId === undefined
+        ? []
+        : session.delegations.activeActorSlots
+          .filter((slot) => slot.actorId === actorId)
+          .map((slot) => slot.groupId);
+    }));
+    if (activeCandidates.length > 0 && activeGroupIds.size !== 1) {
+      throw new BackgroundError(
+        "worker_reconciliation_required",
+        "active Graph delegation cancellation has no unique durable group binding",
+      );
+    }
+    if (activeGroupIds.size === 1) {
+      const groupId = [...activeGroupIds][0]!;
+      const groupActors = new Set(session.delegations.activeActorSlots
+        .filter((slot) => slot.groupId === groupId)
+        .map((slot) => slot.actorId));
+      const groupDelegations = candidates.filter((revision) => {
+        const actorId = revision.attempts.at(-1)?.actorId;
+        return actorId !== null && actorId !== undefined && groupActors.has(actorId);
+      });
+      const barrier = session.delegations.barriers.find((candidate) =>
+        candidate.status === "suspended" &&
+        groupDelegations.every((revision) => candidate.requiredDelegationIds.includes(revision.delegationId)));
+      if (groupDelegations.length !== activeCandidates.length || barrier === undefined) {
+        throw new BackgroundError(
+          "worker_reconciliation_required",
+          "active Graph delegation cancellation lost its exact group/barrier binding",
+        );
+      }
+    }
+    const cascadedRequest = (delegationId: string) => writer.events.find((event) => {
+      if (event.scope !== "session" || event.type !== "delegation.cancel.requested") return false;
+      const value = event.data as Phase20DelegationSessionEventData<"delegation.cancel.requested">;
+      const revision = candidates.find((candidate) => candidate.delegationId === delegationId);
+      return revision !== undefined &&
+        value.delegation_id === revision.delegationId &&
+        value.delegation_revision === revision.delegationRevision &&
+        value.delegation_sha256 === revision.delegationSha256 &&
+        value.parent_actor_id === revision.parentActorId &&
+        value.parent_run_id === revision.parentRunId &&
+        value.reason === input.control.reason &&
+        value.root_event_id === root.eventId && (
+          input.control.schemaVersion === 2
+            ? sha256Canonical(value.origin) === sha256Canonical(input.control.origin)
+            : sha256Canonical(value.origin) === sha256Canonical({ input_surface: "internal", kind: "host" })
+        );
+    });
+    for (const revision of candidates) {
+      const existingRequest = cascadedRequest(revision.delegationId);
+      if (revision.status === "cancelling" && existingRequest === undefined) {
+        throw new BackgroundError(
+          "worker_reconciliation_required",
+          "Graph delegation was already cancelling from a different durable root",
+        );
+      }
+      const cancelRequestId = existingRequest?.scope === "session" && existingRequest.type === "delegation.cancel.requested"
+        ? existingRequest.data.cancel_request_id
+        : input.context.randomUuid();
+      if (existingRequest === undefined) {
+        await writer.appendDelegationEvent("delegation.cancel.requested", {
+          cancel_request_id: cancelRequestId,
+          delegation_id: revision.delegationId,
+          delegation_revision: revision.delegationRevision,
+          delegation_sha256: revision.delegationSha256,
+          origin: input.control.schemaVersion === 2
+            ? input.control.origin
+            : { input_surface: "internal" as const, kind: "host" as const },
+          parent_actor_id: revision.parentActorId,
+          parent_run_id: revision.parentRunId,
+          reason: input.control.reason,
+          root_event_id: root.eventId,
+        });
+      }
+      const admitted = admittedCandidateKeys.has(
+        `${revision.delegationId}\0${String(revision.delegationRevision)}`,
+      );
+      if (!admitted && revision.attempts.every((attempt) => attempt.startedEventId === null)) {
+        await writer.appendDelegationEvent("delegation.cancelled", {
+          cancel_request_id: cancelRequestId,
+          delegation_id: revision.delegationId,
+          delegation_revision: revision.delegationRevision,
+          delegation_sha256: revision.delegationSha256,
+          parent_actor_id: revision.parentActorId,
+          parent_run_id: revision.parentRunId,
+          terminal_event_id: null,
+        });
+      }
+    }
+    session = reconstructMultiRunSession(writer.events);
+    if (candidates.some((candidate) => {
+      const currentRevision = session.delegations.revisions.find((revision) =>
+        revision.delegationId === candidate.delegationId &&
+        revision.delegationRevision === candidate.delegationRevision &&
+        revision.delegationSha256 === candidate.delegationSha256);
+      const admitted = admittedCandidateKeys.has(
+        `${candidate.delegationId}\0${String(candidate.delegationRevision)}`,
+      );
+      const hadStartedEffect = candidate.attempts.some((attempt) => attempt.startedEventId !== null);
+      return currentRevision === undefined ||
+        currentRevision.status !== (admitted || hadStartedEffect ? "cancelling" : "cancelled");
+    })) {
+      throw new BackgroundError(
+        "worker_reconciliation_required",
+        "authenticated Graph cancellation did not durably bind every selected delegation",
+      );
+    }
+  } finally {
+    await writer.close();
+  }
 }
 
 export interface BackgroundWorkerIpcPort {
@@ -231,15 +490,37 @@ export class BackgroundWorkerRuntime {
       const discoverControl = async (): Promise<void> => {
         if (pendingControl !== null) return;
         const controls = await store!.listCancelControls();
-        const selected = controls.find((control) =>
+        const selectedControls = controls.filter((control) =>
           control.operationId === launch.operationId && control.workerId === launch.workerId &&
           control.workerNonceSha256 === launch.workerNonceSha256 && control.graphId === launch.graphId &&
           control.graphRevision === launch.graphRevision && control.graphSha256 === launch.graphSha256
         );
-        if (selected !== undefined) {
-          pendingControl = selected;
-          controller.abort();
+        let lastFailure: unknown = null;
+        for (const selected of selectedControls) {
+          try {
+            await persistDelegationCancelCascade({
+              context: context!,
+              control: selected,
+              graphId: launch.graphId,
+              graphRevision: launch.graphRevision,
+              graphSha256: launch.graphSha256,
+              operationId: launch.operationId,
+              repositoryId: launch.repositoryId,
+              sessionId: launch.sessionId,
+              workerId: launch.workerId,
+              writerFactory: this.writerFactory,
+            });
+            // This is the only process-local cancellation boundary: exact Graph
+            // control and every selected delegation are already durable under one
+            // writer snapshot before the active child can observe the signal.
+            pendingControl = selected;
+            controller.abort();
+            return;
+          } catch (error) {
+            lastFailure = error;
+          }
         }
+        if (lastFailure !== null) throw lastFailure;
       };
       const flushControl = async (): Promise<void> => {
         await discoverControl();
@@ -251,30 +532,44 @@ export class BackgroundWorkerRuntime {
           const session = reconstructMultiRunSession(writer.events);
           const current = session.background.current;
           const execution = session.taskExecution;
+          const controlSha256 = sha256Canonical(control);
+          const acceptedEvents = writer.events.filter((event) => {
+            if (event.scope !== "session" || event.type !== "task_worker.control.accepted") return false;
+            const value = event.data as Readonly<Record<string, unknown>>;
+            return value.control_sha256 === controlSha256 && value.graph_id === launch.graphId &&
+              value.graph_revision === launch.graphRevision && value.graph_sha256 === launch.graphSha256 &&
+              value.operation_id === launch.operationId && value.request_id === control.requestId &&
+              value.worker_id === launch.workerId;
+          });
+          const alreadyAccepted = current?.acceptedControlIds.includes(control.requestId) === true;
+          const exactAcceptedEvent = alreadyAccepted && acceptedEvents.length === 1;
+          const exactAcceptedPrefix = exactAcceptedEvent && execution?.activeAttempt === null &&
+            ["queued", "running", "cancelled"].includes(execution.status);
           if (
             current === null || current.operationId !== launch.operationId || current.workerId !== launch.workerId ||
             current.status !== "running" || execution === null || execution.graph.graphSha256 !== launch.graphSha256 ||
-            !["queued", "running"].includes(execution.status)
+            (!exactAcceptedPrefix && !["queued", "running"].includes(execution.status)) ||
+            (alreadyAccepted && !exactAcceptedPrefix)
           ) {
             throw new BackgroundError("worker_control_stale", "cancel control no longer targets the current worker and Graph");
           }
-          if (!current.acceptedControlIds.includes(control.requestId)) {
+          if (control.schemaVersion === 2) {
+            assertAuthenticatedControlMatchesWriter({
+              control,
+              repositoryId: launch.repositoryId,
+              sessionId: launch.sessionId,
+              writer,
+            });
+          }
+          if (!alreadyAccepted) {
             await writer.appendTaskGraphEvent("task_worker.control.accepted", {
-              control_sha256: sha256Canonical(control),
+              control_sha256: controlSha256,
               graph_id: launch.graphId,
               graph_revision: launch.graphRevision,
               graph_sha256: launch.graphSha256,
               operation_id: launch.operationId,
               request_id: control.requestId,
               worker_id: launch.workerId,
-            });
-            await writer.appendTaskGraphEvent("task_graph.cancel.requested", {
-              active_attempt_id: execution.activeAttempt?.attemptId ?? null,
-              graph_id: launch.graphId,
-              graph_revision: launch.graphRevision,
-              graph_sha256: launch.graphSha256,
-              reason: control.reason,
-              request_id: control.requestId,
             });
             if (execution.activeAttempt === null) {
               await writer.appendTaskGraphEvent("task_graph.terminal", {
@@ -285,11 +580,35 @@ export class BackgroundWorkerRuntime {
                 status: "cancelled",
               });
             }
+          } else if (execution.status !== "cancelled") {
+            await writer.appendTaskGraphEvent("task_graph.terminal", {
+              graph_id: launch.graphId,
+              graph_revision: launch.graphRevision,
+              graph_sha256: launch.graphSha256,
+              reason: "background cancellation recovered after accepted-control response loss",
+              status: "cancelled",
+            });
           }
         } finally {
           await writer.close();
         }
-        await store!.consumeCancel(control, randomUUID());
+        let consumed = false;
+        let consumeFailure: unknown = null;
+        for (let attempt = 0; attempt < 3 && !consumed; attempt += 1) {
+          try {
+            await store!.consumeCancel(control, randomUUID());
+            consumed = true;
+          } catch (error) {
+            consumeFailure = error;
+            const [evidence, active] = await Promise.all([
+              store!.readCancelEvidence(control.requestId),
+              store!.listCancelControls(),
+            ]);
+            consumed = evidence !== null && sha256Canonical(evidence) === sha256Canonical(control) &&
+              !active.some((candidate) => candidate.requestId === control.requestId);
+          }
+        }
+        if (!consumed) throw consumeFailure;
         pendingControl = null;
       };
       const scheduler = new DeterministicTaskScheduler({
@@ -369,10 +688,10 @@ export class BackgroundWorkerRuntime {
       writeHeartbeat();
       const heartbeatTimer = setInterval(writeHeartbeat, this.options.heartbeatIntervalMs ?? 5_000);
       const controlTimer = setInterval(() => {
-        controlPoll = controlPoll.then(discoverControl).catch((error: unknown) => {
-          sidecarFailure = error instanceof Error ? error : new Error(String(error));
-          controller.abort();
-        });
+        // A locked/partial/transient session observation is not cancellation
+        // authority. Keep the durable control in place and retry; never expose a
+        // raw AbortSignal until persistDelegationCancelCascade succeeds.
+        controlPoll = controlPoll.then(discoverControl).catch(() => undefined);
       }, Math.min(1_000, this.options.heartbeatIntervalMs ?? 5_000));
       const lifetimeMs = Math.max(1, Math.min(MAX_WORKER_LIFETIME_MS, owned.graph.content.graphBudget.maxDurationMs));
       const deadlineTimer = setTimeout(() => {
@@ -388,10 +707,7 @@ export class BackgroundWorkerRuntime {
           workerId: launch.workerId,
           workerNonceSha256: launch.workerNonceSha256,
         });
-        void store!.createCancel(internal).then(() => discoverControl()).catch((error: unknown) => {
-          sidecarFailure = error instanceof Error ? error : new Error(String(error));
-          controller.abort();
-        });
+        void store!.createCancelIdempotent(internal).then(() => discoverControl()).catch(() => undefined);
       }, lifetimeMs);
       let result: TaskSchedulerRunResultV1;
       try {

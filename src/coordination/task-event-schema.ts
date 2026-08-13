@@ -14,6 +14,7 @@ import {
   sha256Schema,
 } from "../plans/plan-schema.js";
 import { canonicalStoredTextSchema } from "./task-text-schema.js";
+import { persistedUserActionOriginV2Schema } from "../control-plane/application-protocol.js";
 
 const callIdSchema = z.string().min(1).max(200);
 const noteSchema = canonicalStoredTextSchema({ maximumBytes: 4 * 1024 });
@@ -23,12 +24,7 @@ const reasonSchema = canonicalStoredTextSchema({
   nonblank: true,
 });
 
-export const userOriginSchema = z
-  .object({
-    input_surface: z.enum(["cli", "tui"]),
-    kind: z.literal("user"),
-  })
-  .strict();
+export const userOriginSchema = persistedUserActionOriginV2Schema;
 
 export const agentOriginSchema = z
   .object({

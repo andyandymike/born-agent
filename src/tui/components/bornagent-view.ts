@@ -16,6 +16,7 @@ import { renderPlanPanel } from "./plan-panel.js";
 import { renderTodoList } from "./todo-list.js";
 import { renderGraphPanel } from "./graph-panel.js";
 import { renderDelegationPanel } from "./delegation-panel.js";
+import { preparedActionMatchesSessionView } from "../prepared-action-view-binding.js";
 
 const DEFAULT_TRANSCRIPT_VIEWPORT_ROWS = 16;
 const MAX_TRANSCRIPT_VIEWPORT_ROWS = 100;
@@ -103,6 +104,7 @@ export class BornAgentViewComponent implements Component {
       ...renderDelegationPanel(this.#view.delegations, this.#ephemeral).map((line) => this.#line(line, width)),
       ...phase16,
       ...this.#renderTranscript(width),
+      ...this.#renderPreparedAction(width),
       ...this.#renderPlanDecision(width),
       ...this.#renderApproval(width),
       ...this.#renderDiagnostic(width),
@@ -215,8 +217,7 @@ export class BornAgentViewComponent implements Component {
     const approval = this.#view.approval;
     if (
       approval === null ||
-      approval.expiresState.status !== "active" ||
-      (this.#view.session.actionBlocked || this.#ephemeral.sessionBusy)
+      approval.expiresState.status !== "active"
     ) {
       return [
         this.#line("APPROVAL | no active request", width),
@@ -291,6 +292,57 @@ export class BornAgentViewComponent implements Component {
           : confirmFocused
             ? "cancel  [CONFIRM]"
             : "[CANCEL]  confirm (default cancel)",
+        width,
+      ),
+    ];
+  }
+
+  #renderPreparedAction(width: number): string[] {
+    const dialog = this.#ephemeral.preparedActionDialog;
+    if (dialog === null) return [];
+    const target = dialog.target;
+    const sessionTarget =
+      target.kind === "existing_resource" &&
+      target.resourceScope.kind === "session" &&
+      target.expectedVersion.kind === "session_ledger_head"
+        ? {
+            sequence: target.expectedVersion.head.sequence,
+            sessionId: target.resourceScope.sessionId,
+          }
+        : null;
+    const stale = !preparedActionMatchesSessionView(dialog, {
+      sessionBusy: this.#ephemeral.sessionBusy,
+      sessionId: this.#view.session.id,
+      sessionSeq: this.#view.session.lastSessionSeq,
+    });
+    const confirmFocused = this.#ephemeral.preparedActionFocus === "confirm";
+    return [
+      this.#line(
+        `HOST PREPARED ACTION | ${dialog.actionKind}${stale ? " | STALE" : ""}`,
+        width,
+      ),
+      this.#line(`summary: ${dialog.summary}`, width),
+      ...(sessionTarget === null
+        ? [this.#line(`target=${target.kind}`, width)]
+        : [this.#line(
+            `target=session:${sessionTarget.sessionId} seq=${String(sessionTarget.sequence)}`,
+            width,
+          )]),
+      this.#line(
+        `prepared=${dialog.preparedActionId} sha256=${dialog.preparedActionSha256}`,
+        width,
+      ),
+      this.#line(
+        `display_sha256=${dialog.displaySha256} expires=${dialog.expiresAt}`,
+        width,
+      ),
+      ...dialog.warnings.map((warning) => this.#line(`WARNING | ${warning}`, width)),
+      this.#line(
+        stale
+          ? "[CANCEL]  confirm disabled by stale identity"
+          : confirmFocused
+            ? "cancel  [CONFIRM EXACT PREPARED ACTION]"
+            : "[CANCEL]  confirm exact prepared action (default cancel)",
         width,
       ),
     ];

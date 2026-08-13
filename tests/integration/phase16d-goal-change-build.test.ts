@@ -99,7 +99,7 @@ describe("Phase 16D Build Goal change integration", () => {
     const node = createNodeRuntime({
       approvalInput: { interactive: false, readLine: async () => null },
       cwd,
-      env: {},
+      env: { BORN_CONTROL_STATE_ROOT: join(cwd, ".bornagent", "test-control") },
       execPath: process.execPath,
       killProcess: (identity, signal) => process.kill(identity, signal),
       nodeVersion: process.versions.node,

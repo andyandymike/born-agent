@@ -70,6 +70,8 @@ export const delegationChildCancelFrameSchema = z.object({
   childAttemptId: uuid,
   cancelRequestId: uuid,
   reasonSha256: sha256,
+  /** Host surface failure is distinct from a durable user cancellation. */
+  kind: z.enum(["user_cancel", "tui_surface_fatal"]),
 }).strict();
 
 export type DelegationChildHandshakeV1 = Readonly<z.infer<typeof delegationChildHandshakeSchema>>;

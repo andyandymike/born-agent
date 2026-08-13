@@ -23,6 +23,7 @@ import type {
 import {
   createMemoryIO,
   InMemorySessionWriter,
+  withoutApplicationControlPlane,
 } from "../helpers.js";
 
 const execFileAsync = promisify(execFile);
@@ -201,7 +202,7 @@ async function runCodingScenario(options: {
   const writer = options.writer ?? new InMemorySessionWriter();
   const approval = vi.fn(async () => "approved" as const);
   const modelConfigurations: ModelTurnRequest["model"][] = [];
-  const baseRuntime = createNodeRuntime({
+  const baseRuntime = withoutApplicationControlPlane(createNodeRuntime({
     approvalInput: {
       interactive: false,
       readLine: async () => null,
@@ -215,7 +216,7 @@ async function runCodingScenario(options: {
     onCancel: () => () => undefined,
     platform: process.platform,
     version: "0.0.0-phase7-test",
-  });
+  }));
   const runtime: CliRuntime = {
     ...baseRuntime,
     agentModelEvidence: () => ({

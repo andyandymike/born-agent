@@ -9,6 +9,8 @@ import type { RunEvent } from "../../src/events/run-event.js";
 import { reconstructMultiRunSession } from "../../src/sessions/reconstruct-multi-run-session.js";
 import { readStoredSession } from "../../src/sessions/read-stored-session.js";
 import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import {
   FakeStreamingChatClient,
   fixedStream,
@@ -259,6 +261,7 @@ describe("Phase 9 sessions CLI", () => {
 
   it("requires explicit degradation before constructing a backend", async () => {
     const cwd = await createWorkspace();
+    const controlPlaneStateRoot = await createWorkspace();
     const createModelBackend = vi.fn(
       (request: { readonly model: string; readonly provider: string }) =>
         new FakeStreamingChatClient(fixedStream(), {
@@ -267,6 +270,7 @@ describe("Phase 9 sessions CLI", () => {
         }),
     );
     const runtime = createRuntime({
+      controlPlaneStateRoot,
       createModelBackend,
       createSessionWriter: V2SessionWriter.create,
       cwd,
@@ -301,10 +305,16 @@ describe("Phase 9 sessions CLI", () => {
     ).toBe(2);
     expect(denied.readStderr()).toContain("--allow-degraded-resume");
     expect(createModelBackend).toHaveBeenCalledOnce();
-  });
+    expect((await readStoredSession(session.path)).some((event) => event.type === "session.resume.requested")).toBe(false);
+    const authority = await loadOrCreateHostControlAuthority({ root: controlPlaneStateRoot });
+    const operation = (await new ControlOperationJournal(authority.paths).list())
+      .find((candidate) => candidate.actionKind === "session.resume");
+    expect(operation).toMatchObject({ state: "blocked_unknown_effect" });
+  }, 30_000);
 
   it("creates a new canonical-degraded run only after durable resume facts", async () => {
     const cwd = await createWorkspace();
+    const controlPlaneStateRoot = await createWorkspace();
     const createModelBackend = vi.fn(
       (request: { readonly model: string; readonly provider: string }) =>
         new FakeStreamingChatClient(fixedStream(["resumed answer"]), {
@@ -313,6 +323,7 @@ describe("Phase 9 sessions CLI", () => {
         }),
     );
     const runtime = createRuntime({
+      controlPlaneStateRoot,
       createModelBackend,
       createSessionWriter: V2SessionWriter.create,
       cwd,
@@ -377,12 +388,32 @@ describe("Phase 9 sessions CLI", () => {
     );
     expect(request).toMatchObject({
       data: {
+        application_commit: {
+          action_kind: "session.resume",
+        },
         message: "one more check",
+        new_run_id: after.lastRun!.runId,
         requested_mode: "canonical_degraded",
         source_run_id: before.lastRun!.runId,
       },
     });
-  });
+    const applicationCommit = request?.type === "session.resume.requested"
+      ? request.data.application_commit
+      : undefined;
+    expect(applicationCommit).toBeDefined();
+    expect(after.lastRun!.started.data.application_commit).toEqual(applicationCommit);
+    const authority = await loadOrCreateHostControlAuthority({ root: controlPlaneStateRoot });
+    const operations = await new ControlOperationJournal(authority.paths).list();
+    const resumeOperation = operations.find((operation) => operation.actionKind === "session.resume");
+    expect(resumeOperation).toMatchObject({
+      primaryDomainRecord: { recordId: applicationCommit?.operation_id },
+      state: "completed",
+    });
+    expect(resumeOperation?.underlyingOperationRefs.map((reference) => reference.recordId)).toEqual([
+      after.lastRun!.started.eventId,
+      after.lastRun!.terminal!.eventId,
+    ]);
+  }, 30_000);
 
   it("refuses show while a writer lock exists", async () => {
     const cwd = await createWorkspace();

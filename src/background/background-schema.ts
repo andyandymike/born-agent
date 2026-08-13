@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { sha256Canonical } from "../completion/canonical-json.js";
+import { persistedUserActionOriginV2Schema } from "../control-plane/application-protocol.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -68,7 +69,7 @@ export const graphWorkerHeartbeatSchema = z.object({
   workerProcessStartIdentity: z.string().min(1).max(256),
 }).strict();
 
-export const graphWorkerCancelControlSchema = z.object({
+const graphWorkerCancelControlV1Schema = z.object({
   graphId: uuid,
   graphRevision: positive,
   graphSha256: sha256,
@@ -80,6 +81,44 @@ export const graphWorkerCancelControlSchema = z.object({
   workerId: uuid,
   workerNonceSha256: sha256,
 }).strict();
+
+export const authenticatedGraphWorkerCancelControlV2Schema = z.object({
+  graphId: uuid,
+  graphRevision: positive,
+  graphSha256: sha256,
+  operationId: uuid,
+  origin: persistedUserActionOriginV2Schema.refine(
+    (origin) => origin.kind === "authenticated_surface",
+    "background application control requires an authenticated origin",
+  ),
+  reason: z.string().min(1).max(2048).refine((value) => !value.includes("\0")),
+  repositoryId: sha256,
+  requestId: uuid,
+  requestedAt: z.string().datetime({ offset: true }),
+  schemaVersion: z.literal(2),
+  sessionCancel: z.object({
+    eventId: uuid,
+    rawEventSha256: sha256,
+    sessionSeq: positive,
+  }).strict(),
+  sessionId: uuid,
+  workerId: uuid,
+  workerNonceSha256: sha256,
+}).strict().superRefine((value, context) => {
+  const origin = value.origin;
+  if (
+    origin.kind !== "authenticated_surface" ||
+    origin.application_commit.action_kind !== "graph.cancel" ||
+    origin.application_commit.operation_id !== value.requestId
+  ) {
+    context.addIssue({ code: "custom", message: "background control is not bound to its graph.cancel application operation" });
+  }
+});
+
+export const graphWorkerCancelControlSchema = z.discriminatedUnion("schemaVersion", [
+  graphWorkerCancelControlV1Schema,
+  authenticatedGraphWorkerCancelControlV2Schema,
+]);
 
 export const backgroundLaunchRecordSchema = z.object({
   cliEntryPath: boundedPath,
@@ -134,6 +173,7 @@ export type GraphWorkerReadyV1 = Readonly<z.infer<typeof graphWorkerReadySchema>
 export type GraphWorkerParentAckV1 = Readonly<z.infer<typeof graphWorkerParentAckSchema>>;
 export type GraphWorkerHeartbeatV1 = Readonly<z.infer<typeof graphWorkerHeartbeatSchema>>;
 export type GraphWorkerCancelControlV1 = Readonly<z.infer<typeof graphWorkerCancelControlSchema>>;
+export type AuthenticatedGraphWorkerCancelControlV2 = Readonly<z.infer<typeof authenticatedGraphWorkerCancelControlV2Schema>>;
 export type BackgroundLaunchRecordV1 = Readonly<z.infer<typeof backgroundLaunchRecordSchema>>;
 export type BackgroundHandoffRecordV1 = Readonly<z.infer<typeof backgroundHandoffRecordSchema>>;
 export type BackgroundTerminalReceiptV1 = Readonly<z.infer<typeof backgroundTerminalReceiptSchema>>;

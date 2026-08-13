@@ -40,13 +40,16 @@ export class ApprovalController {
     intent: Extract<UserIntent, { type: "decide_approval" }>,
   ): Promise<ApprovalControllerResult> {
     const view = this.currentView();
-    if (view.session.actionBlocked) return { status: "blocked" };
     if (view.approval === null || !matchesApproval(view.approval, intent)) {
       return { status: "stale" };
     }
     if (view.approval.expiresState.status !== "active") {
       return { status: "expired" };
     }
+    // actionBlocked fences a new surface mutation while a prior effect is
+    // unresolved. This decision belongs to the already-active owner and is
+    // exact-bound to its durable request/hash above; blocking it would turn a
+    // normal pending MCP/command approval into an implicit denial.
 
     try {
       // The port is the existing core approval API: it owns durable

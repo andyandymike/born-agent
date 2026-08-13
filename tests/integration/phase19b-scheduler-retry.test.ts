@@ -1,9 +1,11 @@
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
+import { planeForRuntime } from "../../src/control-plane/adapters/agent-cli-adapter.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
 import { createMemoryIO, createRuntime } from "../helpers.js";
 import {
@@ -41,6 +43,7 @@ describe("Phase 19B deterministic scheduler retry", () => {
     }), "utf8");
     let calls = 0;
     const runtime = createRuntime({
+      controlPlaneStateRoot: join(workspace, "phase21a-control"),
       createTaskAttemptExecutor: () => ({
         start: async () => {
           calls += 1;
@@ -108,7 +111,13 @@ describe("Phase 19B deterministic scheduler retry", () => {
     expect(failed?.terminal).toBe("known_failed");
     const stale = createMemoryIO();
     expect(await runCli(["graph", "retry", SESSION_ID, "--node", "retry", "--attempt", "1", "--terminal-event", "00000000-0000-4000-8000-000000000099"], stale.io, runtime)).toBe(8);
-    expect(stale.readStderr()).toContain("task_graph_revision_conflict");
+    expect(stale.readStderr()).toContain("control_stale_projection");
+    expect(stale.readStderr()).not.toContain("control_operation_busy");
+    expect(stale.readStderr()).not.toContain("Authorize attempt 1");
+    expect((await (await planeForRuntime(runtime, createMemoryIO().io)).operations.list())
+      .filter((candidate) => candidate.actionKind === "graph.retry")).toEqual([]);
+    expect((await new SessionCatalog(workspace).read(SESSION_ID)).events
+      .filter((event) => event.scope === "session" && event.type === "task_node.retry.requested")).toEqual([]);
 
     const retryIo = createMemoryIO();
     expect(await runCli(["graph", "retry", SESSION_ID, "--node", "retry", "--attempt", "1", "--terminal-event", failed!.terminalEventId!, "--json"], retryIo.io, runtime)).toBe(0);
@@ -116,6 +125,33 @@ describe("Phase 19B deterministic scheduler retry", () => {
       command: "graph.retry",
       result: { execution: { nodes: [{ nextAttemptOrigin: "user", status: "pending" }] }, resumeRequired: true },
     });
+    expect(retryIo.readStderr()).toContain("Authorize attempt 1 of node retry for one fresh retry.");
+    session = await new SessionCatalog(workspace).read(SESSION_ID);
+    const retryEvent = session.events.find((event) => event.scope === "session" && event.type === "task_node.retry.requested");
+    expect(retryEvent?.scope === "session" && retryEvent.type === "task_node.retry.requested" && "origin" in retryEvent.data
+      ? retryEvent.data
+      : null).toMatchObject({
+        origin: {
+          application_commit: { action_kind: "graph.retry" },
+          kind: "authenticated_surface",
+        },
+        previous_terminal: "known_failed",
+      });
+    const operation = (await (await planeForRuntime(runtime, createMemoryIO().io)).operations.list())
+      .find((candidate) =>
+        candidate.actionKind === "graph.retry" &&
+        candidate.domainRecordRefs.some((reference) => reference.recordId === retryEvent?.eventId)
+      );
+    expect(operation).toMatchObject({
+      domainRecordRefs: [{ recordId: retryEvent?.eventId }],
+      state: "completed",
+      underlyingOperationRefs: [],
+    });
+    const rawLine = (await readFile(join(workspace, ".bornagent", "sessions", `${SESSION_ID}.jsonl`), "utf8"))
+      .trimEnd()
+      .split("\n")
+      .find((line) => (JSON.parse(line) as { event_id: string }).event_id === retryEvent?.eventId);
+    expect(operation?.primaryDomainRecord?.recordSha256).toBe(createHash("sha256").update(rawLine!, "utf8").digest("hex"));
     expect(await runCli(["graph", "resume", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256, "--foreground"], createMemoryIO().io, runtime)).toBe(0);
     session = await new SessionCatalog(workspace).read(SESSION_ID);
     expect(session.taskExecution?.status).toBe("completed");
@@ -126,5 +162,5 @@ describe("Phase 19B deterministic scheduler retry", () => {
     const logDocument = JSON.parse(logs.readStdout()) as { readonly result: { readonly records: readonly unknown[] } };
     expect(logDocument.result.records).toHaveLength(2);
     expect(logs.readStdout()).toContain("fixture_known_failure");
-  });
+  }, 30_000);
 });

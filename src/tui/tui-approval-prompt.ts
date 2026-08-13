@@ -37,11 +37,17 @@ function matchesPreview(
 export class TuiApprovalPrompt implements ApprovalPrompt, CoreApprovalPort {
   private earlyDecision: CoreApprovalDecision | null = null;
   private pending: PendingApproval | null = null;
+  private readonly viewWaiters = new Set<() => void>();
 
   public constructor(private readonly currentView: () => TuiViewState) {}
 
   public get hasPendingRequest(): boolean {
     return this.pending !== null || this.earlyDecision !== null;
+  }
+
+  /** Notify the prompt that a complete durable TUI view was installed. */
+  public notifyViewChanged(): void {
+    for (const notify of this.viewWaiters) notify();
   }
 
   public async request(
@@ -55,11 +61,8 @@ export class TuiApprovalPrompt implements ApprovalPrompt, CoreApprovalPort {
     if (this.pending !== null) {
       throw new Error("only one TUI approval request may be pending");
     }
-    const approval = this.currentView().approval;
-    if (approval === null || !matchesPreview(approval, preview)) {
-      this.earlyDecision = null;
-      return "denied";
-    }
+    const approval = await this.waitForApprovalView(preview, signal);
+    if (approval === null) return signal.aborted ? "cancelled" : "denied";
     const early = this.earlyDecision;
     if (early !== null) {
       this.earlyDecision = null;
@@ -129,5 +132,57 @@ export class TuiApprovalPrompt implements ApprovalPrompt, CoreApprovalPort {
       throw new Error("TUI approval decision is stale");
     }
     pending.settle(decision.decision);
+  }
+
+  private async waitForApprovalView(
+    preview: ApprovalPreview,
+    signal: AbortSignal,
+  ): Promise<ApprovalView | null> {
+    for (;;) {
+      const view = this.currentView();
+      const approval = view.approval;
+      if (approval !== null) {
+        if (matchesPreview(approval, preview)) return approval;
+        if (approval.expiresState.status === "active") {
+          this.earlyDecision = null;
+          return null;
+        }
+        // A decided request remains in the reconstructed view until the next
+        // durable request reaches the typed projection. It is not a competing
+        // authority and must not turn that delivery gap into a denial.
+      }
+      if (signal.aborted) {
+        this.earlyDecision = null;
+        return null;
+      }
+      // The request is already durable when ApprovalPrompt.request is called,
+      // but Phase21 TUI facts arrive through a named-query refresh. Wait for a
+      // complete view notification instead of treating that expected delivery
+      // gap as a user denial. The bound preview/hash check above remains the
+      // authority edge and any different observed request fails closed.
+      await new Promise<void>((resolve) => {
+        const observedApproval = approval;
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", finish);
+          this.viewWaiters.delete(finish);
+          resolve();
+        };
+        this.viewWaiters.add(finish);
+        signal.addEventListener("abort", finish, { once: true });
+        // Avoid a lost wake-up when the view changed between the read above
+        // and waiter registration. This microtask is only a recheck; unlike a
+        // bounded spin it never interprets delivery latency as denial.
+        queueMicrotask(() => {
+          const current = this.currentView();
+          if (
+            signal.aborted ||
+            current.approval !== observedApproval
+          ) finish();
+        });
+      });
+    }
   }
 }

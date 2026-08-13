@@ -37,8 +37,9 @@ import type { WorktreePromotionRuntime } from "../worktrees/promotion-runtime.js
 import type { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
 import type { BackgroundWorkerRuntimeResultV1 } from "../background/background-worker-runtime.js";
 import type { BackgroundWorkerLiveObservationV1 } from "../background/background-worker-live-status.js";
-import type { BackgroundExecutableDescriptorV1 } from "../background/background-schema.js";
-import type { TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import type { BackgroundWorkerProjectionV1 } from "../background/background-projector.js";
+import type { BackgroundExecutableDescriptorV1, GraphWorkerCancelControlV1 } from "../background/background-schema.js";
+import type { AuthenticatedTaskMutationBindingV1, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import type { HookCommandOperationReconciliationResult } from "../hooks/hook-command-operation-reconciler.js";
 import type { PluginLeaseReconciliationResultV1 } from "../plugins/plugin-lifecycle.js";
@@ -47,6 +48,7 @@ import type { DelegationChildTerminalFrameV1 } from "../delegation/runtime/child
 import type { DelegationChildLauncher } from "../delegation/runtime/child-launcher.js";
 import type { DelegationChildExecutableDescriptorV1 } from "../delegation/runtime/child-executable-descriptor.js";
 import type { DelegationOperationInspectionV1 } from "../delegation/delegation-reconciler.js";
+import type { DelegationChildOperationV1 } from "../delegation/delegation-operation-schema.js";
 import type { DelegationPreEffectRecoveryResultV1 } from "../delegation/delegation-pre-effect-recovery.js";
 import type { DelegationGroupLeaseRecordV1 } from "../delegation/delegation-group-lease-store.js";
 import type { DelegationGroupTakeoverResultV1 } from "../delegation/delegation-group-takeover.js";
@@ -61,6 +63,8 @@ export interface CliIO {
 }
 
 export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
+  /** PHASE21: Host-owned state root; absent test embedders keep legacy adapters. */
+  readonly controlPlaneStateRoot?: string;
   readonly hooksSuppressed?: boolean;
   readonly supportsDelegationProposalTool?: true;
   agentModelEvidence(provider: ChatProvider): ModelEvidence | null;
@@ -108,6 +112,8 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly writerFactory?: TaskMutationWriterFactory;
   }) => TaskAttemptExecutor;
   readonly createBackgroundWorkerLauncher?: (options: {
+    readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
+    readonly inputSurface?: "cli" | "tui";
     readonly sessionId: string;
   }) => BackgroundWorkerLauncher;
   readonly doctorBackgroundWorker?: () => Promise<BackgroundExecutableDescriptorV1>;
@@ -123,6 +129,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly operationId: string;
   }) => Promise<DelegationChildTerminalFrameV1>;
   readonly createDelegationChildLauncher?: (options: {
+    readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
     readonly approvalPrompt?: ApprovalPrompt;
     readonly io: CliIO;
     readonly inputSurface?: "cli" | "tui";
@@ -138,6 +145,8 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   };
   readonly doctorDelegationChild?: () => Promise<DelegationChildExecutableDescriptorV1>;
   readonly inspectDelegationOperations?: (sessionId: string) => Promise<readonly DelegationOperationInspectionV1[]>;
+  /** Host-only bounded durable sidecar snapshot for fixed application queries. */
+  readonly inspectDelegationOperationSidecars?: (sessionId: string) => Promise<readonly DelegationChildOperationV1[]>;
   readonly reconcileDelegationPreEffectOperation?: (input: {
     readonly inputSurface?: "cli" | "tui";
     readonly operationId: string;
@@ -163,25 +172,48 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly reason: "terminal" | "cancelled" | "reconciled";
     readonly sessionId: string;
   }) => Promise<DelegationGroupLeaseRecordV1>;
+  /** Host-only exact durable lease observation for Application response-loss recovery. */
+  readonly inspectDelegationGroupLease?: (input: {
+    readonly groupId: string;
+    readonly repositoryId: string;
+    readonly sessionId: string;
+  }) => Promise<DelegationGroupLeaseRecordV1 | null>;
   readonly reconcileDelegationGroupTakeover?: (input: {
     readonly delegationId: string;
     readonly inputSurface?: "cli" | "tui";
     readonly sessionId: string;
   }) => Promise<DelegationGroupTakeoverResultV1>;
   readonly observeBackgroundWorkerLive?: (options: {
+    readonly current?: BackgroundWorkerProjectionV1;
+    readonly repositoryId?: string;
     readonly sessionId: string;
   }) => Promise<BackgroundWorkerLiveObservationV1 | null>;
   readonly queueBackgroundWorkerCancel?: (options: {
+    readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
+    readonly current?: BackgroundWorkerProjectionV1;
     readonly graphRevision: number;
     readonly graphSha256: string;
     readonly reason: string;
+    readonly repositoryId?: string;
+    readonly requestId?: string;
+    readonly requestedAt?: string;
+    readonly sessionCancel?: Readonly<{ readonly eventId: string; readonly rawEventSha256: string; readonly sessionSeq: number }>;
     readonly sessionId: string;
-  }) => Promise<{ readonly controlSha256: string; readonly operationId: string; readonly requestId: string; readonly workerId: string }>;
+  }) => Promise<{ readonly control: GraphWorkerCancelControlV1; readonly controlSha256: string; readonly operationId: string; readonly requestId: string; readonly workerId: string }>;
+  readonly observeBackgroundWorkerCancel?: (options: {
+    readonly backgroundOperationId: string;
+    readonly repositoryId: string;
+    readonly requestId: string;
+  }) => Promise<{ readonly control: GraphWorkerCancelControlV1; readonly controlSha256: string } | null>;
   readonly createManagedWorktreeManager?: (options: {
+    readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
+    readonly inputSurface?: "cli" | "tui";
     readonly io: CliIO;
     readonly sessionId: string;
   }) => Promise<ManagedWorktreeManager>;
   readonly createWorktreePromotionRuntime?: (options: {
+    readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
+    readonly inputSurface?: "cli" | "tui";
     readonly io: CliIO;
     readonly sessionId: string;
   }) => Promise<WorktreePromotionRuntime>;

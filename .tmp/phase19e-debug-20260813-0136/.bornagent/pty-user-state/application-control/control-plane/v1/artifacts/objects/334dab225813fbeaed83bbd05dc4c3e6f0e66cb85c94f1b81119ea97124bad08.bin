@@ -1,0 +1,1 @@
+{"base":null,"editablePlan":{"items":[{"acceptance":"The Graph can be approved, queued, inspected, and cancelled from a real PTY.","id":"pty-graph","required":true,"title":"Exercise Graph TUI controls"}],"schema_version":1,"title":"Phase 19 PTY"},"goalId":"286e964e-ca42-4775-b796-6c94617e743f","goalRevision":1}

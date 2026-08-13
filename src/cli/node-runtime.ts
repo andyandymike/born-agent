@@ -51,10 +51,11 @@ import { HookCommandRunner } from "../hooks/hook-command-runner.js";
 import { HookCommandSupervisor } from "../hooks/hook-command-supervisor.js";
 import { HookCommandOperationReconciler } from "../hooks/hook-command-operation-reconciler.js";
 import { executeAgent } from "../commands/agent.js";
-import { executeDelegationsStart } from "../commands/delegations.js";
+import { renderDelegationOwnerOutcome } from "../commands/delegations.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import {
   taskMutationBlocker,
+  type AuthenticatedTaskMutationBindingV1,
   type TaskMutationContext,
 } from "../coordination/task-control-plane.js";
 import type { PreparedTaskWorkspaceV1, TaskAttemptExecutionResultV1 } from "../scheduling/deterministic-task-scheduler.js";
@@ -69,7 +70,9 @@ import { BackgroundDeferredApprovalPrompt } from "../background/background-appro
 import { BackgroundError } from "../background/background-errors.js";
 import { BackgroundWorkerLauncher } from "../background/background-worker-launcher.js";
 import { BackgroundWorkerRuntime } from "../background/background-worker-runtime.js";
-import { resolveWorkerUserStateRoot } from "../background/background-operation-store.js";
+import { openBackgroundSessionWriter } from "../background/background-session-writer.js";
+import type { BackgroundWorkerProjectionV1 } from "../background/background-projector.js";
+import { BackgroundOperationStore, resolveWorkerUserStateRoot } from "../background/background-operation-store.js";
 import { observeBackgroundWorkerLive } from "../background/background-worker-live-status.js";
 import { queueBackgroundWorkerCancel } from "../background/background-worker-control.js";
 import { sealBackgroundExecutable } from "../background/background-executable-descriptor.js";
@@ -89,11 +92,23 @@ import { DelegationChildLauncher } from "../delegation/runtime/child-launcher.js
 import { sealDelegationChildExecutable } from "../delegation/runtime/child-executable-descriptor.js";
 import { capabilitySnapshotSchema } from "../capabilities/capability-snapshot.js";
 import { DelegationError } from "../delegation/delegation-errors.js";
+import {
+  executeDelegationOwnerStart,
+} from "../delegation/delegation-owner-execution-service.js";
+import {
+  persistedUserActionOriginV2Schema,
+  type PersistedUserActionOriginV2,
+} from "../control-plane/application-protocol.js";
+import {
+  createDelegationOwnerInteractionPort,
+  createDelegationOwnerRuntimePort,
+} from "../delegation/delegation-owner-cli-ports.js";
 import { DelegationOperationStore } from "../delegation/delegation-operation-store.js";
 import { classifyDelegationReconcileOutcome } from "../delegation/delegation-reconciler.js";
 import { DelegationPreEffectRecovery } from "../delegation/delegation-pre-effect-recovery.js";
 import { DelegationGroupLeaseStore } from "../delegation/delegation-group-lease-store.js";
 import { DelegationGroupTakeoverReconciler } from "../delegation/delegation-group-takeover.js";
+import { resolveControlStateRoot } from "../control-plane/control-state-root.js";
 import { readVerifiedChildReceipt } from "../delegation/receipts/child-receipt-verifier.js";
 import {
   DelegationApprovalPromptQueue,
@@ -274,10 +289,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
   };
   const delegationWriterFactory = (context: TaskMutationContext) =>
     delegationWriterQueue(context.sessionId).wrap(
-      (value) => V2SessionWriter.openExisting(value.workspace, value.sessionId, {
-        createEventId: value.randomUuid,
-        timestamp: value.now,
-      }),
+      (value) => openBackgroundSessionWriter(value),
     )(context);
   const delegationApprovalQueue = (sessionId: string) => {
     const current = delegationApprovalQueues.get(sessionId);
@@ -300,6 +312,48 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     sessionId,
     workspace: options.cwd,
   });
+  const recoveryOwnerBinding = (
+    session: Awaited<ReturnType<SessionCatalog["read"]>>,
+    operation: NonNullable<Awaited<ReturnType<DelegationOperationStore["read"]>>>,
+  ): AuthenticatedTaskMutationBindingV1 => {
+    const slot = [...session.events].reverse().find((event) =>
+      event.scope === "session" && event.type === "delegation.actor_slot.claimed" &&
+      event.data.actor_id === operation.childActorId);
+    const lease = slot?.scope === "session" && slot.type === "delegation.actor_slot.claimed"
+      ? [...session.events].reverse().find((event) =>
+          event.scope === "session" && event.type === "delegation.group.lease.acquired" &&
+          event.data.group_id === slot.data.group_id &&
+          event.data.parent_run_id === operation.parentRunId &&
+          event.data.origin?.kind === "authenticated_surface")
+      : undefined;
+    const origin = lease?.scope === "session" && lease.type === "delegation.group.lease.acquired"
+      ? lease.data.origin
+      : undefined;
+    if (origin?.kind !== "authenticated_surface") {
+      throw new DelegationError(
+        "delegation_effect_reconciliation_required",
+        "cancelled pre-effect recovery has no exact originating application owner",
+      );
+    }
+    return Object.freeze({
+      actionIdentitySha256: origin.action_identity_sha256,
+      applicationCommit: Object.freeze({
+        actionKind: origin.application_commit.action_kind,
+        authorizationDecisionSha256: origin.application_commit.authorization_decision_sha256,
+        operationId: origin.application_commit.operation_id,
+        preparedActionSha256: origin.application_commit.prepared_action_sha256,
+        principalId: origin.application_commit.principal_id,
+        schemaVersion: 1 as const,
+      }),
+      authenticationId: origin.authentication_id,
+      requestId: origin.request_id,
+      surface: Object.freeze({
+        clientId: origin.client_id,
+        connectionId: `recovery:${origin.request_id}`,
+        surface: origin.surface,
+      }),
+    });
+  };
   const repositoryRuleIdentity = async (workspace: string): Promise<string> => {
     const source = await (await RepositorySourceSnapshotter.create(workspace, { environment: options.env })).snapshot();
     return sha256Canonical({
@@ -307,9 +361,12 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       source_state_sha256: source.snapshot.sourceStateSha256,
     });
   };
-  const createManagedWorktreeManager: NonNullable<CliRuntime["createManagedWorktreeManager"]> = async ({ io, sessionId }) =>
+  const createManagedWorktreeManager: NonNullable<CliRuntime["createManagedWorktreeManager"]> = async ({ authenticatedMutation, inputSurface, io, sessionId }) =>
     new ManagedWorktreeManager({
-      context: taskContext(sessionId),
+      context: Object.freeze({
+        ...taskContext(sessionId, inputSurface),
+        ...(authenticatedMutation === undefined ? {} : { authenticatedApplication: authenticatedMutation }),
+      }),
       git: new NodeGitWorktreePort({ environment: options.env }),
       managedRoot: worktreeUserStateRoot(),
       prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
@@ -621,6 +678,17 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             scheduler_lease_nonce_sha256: input.schedulerLeaseNonceSha256,
           },
           writer,
+          // A foreground Graph Host emergency is not SIGINT. Supplying it as
+          // the Agent's authenticated lifecycle channel prevents the raw
+          // node-runtime onCancel bridge from fabricating run.cancelled.
+          applicationCancellation: {
+            hostEmergencyReason: () =>
+              input.signal.reason === "tui_surface_fatal"
+                ? "tui_surface_fatal" as const
+                : undefined,
+            signal: input.signal,
+            terminalBinding: () => undefined,
+          },
         });
         await Promise.race([
           startedSignal,
@@ -802,6 +870,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     });
     };
   return {
+    controlPlaneStateRoot: resolveControlStateRoot({ env: options.env, platform: options.platform }),
     // PHASE8: loopback selection alone is not live verification. Coding
     // completion remains closed until a separate immutable Ollama evidence run
     // exists; read-only runs do not need to claim that stronger status.
@@ -920,12 +989,21 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                 "canonical fake backend selection does not match its exact package-owned fixture identity",
               );
             }
+            const childCancellation = new AbortController();
+            const stopChildCancellation = onCancel((reason) => {
+              childCancellation.abort(reason);
+            });
             const childRuntime: CliRuntime = {
               ...createNodeRuntime({
                 ...options,
                 approvalPromptOverride: prompt,
                 cwd: operation.executionWorkspacePath,
-                onCancel,
+                onCancel: (listener) => {
+                  const forward = () => listener();
+                  if (childCancellation.signal.aborted) forward();
+                  else childCancellation.signal.addEventListener("abort", forward, { once: true });
+                  return () => childCancellation.signal.removeEventListener("abort", forward);
+                },
               }),
               ...options.taskAgentRuntimeOverrides,
               ...(canonicalFake
@@ -939,6 +1017,9 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
                     createModelBackend: () =>
                       new Phase20CanonicalFakeChildBackend(
                         envelope.prepared.effectiveAuthority.taskProfile,
+                        options.env.BORN_PHASE20_CANONICAL_FAKE_OBSERVATION_MS === undefined
+                          ? 300
+                          : Number(options.env.BORN_PHASE20_CANONICAL_FAKE_OBSERVATION_MS),
                       ),
                   }
                 : {}),
@@ -995,7 +1076,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
               runId: operation.childRunId,
               sessionId: operation.sessionId,
               writer,
+              applicationCancellation: {
+                hostEmergencyReason: () => childCancellation.signal.reason === "tui_surface_fatal"
+                  ? "tui_surface_fatal" as const
+                  : undefined,
+                signal: childCancellation.signal,
+                terminalBinding: () => undefined,
+              },
             });
+            stopChildCancellation();
             const narrative = stdout.text() || stderr.text() || `delegated child exited with code ${String(exitCode)}`;
             return {
               exitCode,
@@ -1017,6 +1106,16 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         nodeExecutablePath: options.execPath,
         nodeVersion: options.nodeVersion,
       })).descriptor,
+      inspectDelegationOperationSidecars: async (sessionId) => {
+        const stores = await DelegationOperationStore.listExisting(delegationUserStateRoot());
+        const results = [];
+        for (const store of stores) {
+          const operation = await store.read();
+          if (operation === null || operation.sessionId !== sessionId) continue;
+          results.push(operation);
+        }
+        return Object.freeze(results);
+      },
       inspectDelegationOperations: async (sessionId) => {
         const session = await new SessionCatalog(options.cwd).read(sessionId);
         const stores = await DelegationOperationStore.listExisting(delegationUserStateRoot());
@@ -1064,8 +1163,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             "pre-effect operation does not belong to the selected session",
           );
         }
+        const session = await new SessionCatalog(options.cwd).read(sessionId);
+        const context = operation.failure?.code === "delegation_cancelled"
+          ? Object.freeze({
+              ...taskContext(sessionId, inputSurface),
+              authenticatedApplication: recoveryOwnerBinding(session, operation),
+            })
+          : taskContext(sessionId, inputSurface);
         const recovery = await new DelegationPreEffectRecovery(delegationWriterFactory).reconcile({
-          context: taskContext(sessionId, inputSurface),
+          context,
           releaseAdmissionClaims: true,
           store,
         });
@@ -1153,6 +1259,20 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
           reason: input.reason,
         });
       },
+      inspectDelegationGroupLease: async (input) => {
+        const stores = await DelegationGroupLeaseStore.listExisting(delegationUserStateRoot());
+        const repositoryStores = stores.filter((store) => store.repositoryId === input.repositoryId);
+        if (repositoryStores.length > 1) {
+          throw new DelegationError(
+            "delegation_lease_busy",
+            "delegation group lease observation found ambiguous repository stores",
+          );
+        }
+        const current = await repositoryStores[0]?.read() ?? null;
+        if (current === null) return null;
+        if (current.groupId !== input.groupId || current.sessionId !== input.sessionId) return null;
+        return current;
+      },
       reconcileDelegationGroupTakeover: async ({ delegationId, inputSurface, sessionId }) => {
         const identity = currentProcessIdentity();
         return new DelegationGroupTakeoverReconciler({
@@ -1165,10 +1285,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
           writerFactory: delegationWriterFactory,
         }).reconcile({ delegationId });
       },
-      createDelegationChildLauncher: ({ approvalPrompt, inputSurface, io, observeSessionWriter, sessionId }) => new DelegationChildLauncher({
+      createDelegationChildLauncher: ({ authenticatedMutation, approvalPrompt, inputSurface, io, observeSessionWriter, sessionId }) => new DelegationChildLauncher({
         approvalQueue: delegationApprovalQueue(sessionId),
         cliEntryPath: options.cliEntryPath!,
-        context: taskContext(sessionId, inputSurface),
+        context: Object.freeze({
+          ...taskContext(sessionId, inputSurface),
+          ...(authenticatedMutation === undefined ? {} : { authenticatedApplication: authenticatedMutation }),
+        }),
         environment: options.env,
         ...(options.delegationCancellationGraceMs === undefined
           ? {}
@@ -1197,19 +1320,25 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         nodeExecutablePath: options.execPath,
         nodeVersion: options.nodeVersion,
       })).descriptor,
-      createBackgroundWorkerLauncher: ({ sessionId }: { readonly sessionId: string }) => new BackgroundWorkerLauncher({
+      createBackgroundWorkerLauncher: ({ authenticatedMutation, inputSurface, sessionId }) => new BackgroundWorkerLauncher({
         cliEntryPath: options.cliEntryPath!,
-        context: taskContext(sessionId),
+        context: Object.freeze({
+          ...taskContext(sessionId, inputSurface),
+          ...(authenticatedMutation === undefined ? {} : { authenticatedApplication: authenticatedMutation }),
+        }),
         environment: options.env,
         nodeExecutablePath: options.execPath,
         nodeVersion: options.nodeVersion,
         userStateRoot: workerUserStateRoot(),
         worktreeUserStateRoot: worktreeUserStateRoot(),
       }),
-      observeBackgroundWorkerLive: async ({ sessionId }: { readonly sessionId: string }) => {
-        const session = await new SessionCatalog(options.cwd).read(sessionId);
+      observeBackgroundWorkerLive: async ({ current: boundCurrent, repositoryId, sessionId }) => {
+        const current = boundCurrent ?? (await new SessionCatalog(options.cwd).read(sessionId)).background.current ?? undefined;
+        if (current !== undefined && repositoryId !== undefined && current.repositoryId !== repositoryId) {
+          throw new BackgroundError("worker_reconciliation_required", "live worker subject belongs to another repository");
+        }
         return observeBackgroundWorkerLive({
-          current: session.background.current,
+          current: current ?? null,
           ownerProbe: new NodeProcessIdentityProbe(),
           userStateRoot: workerUserStateRoot(),
         });
@@ -1224,27 +1353,53 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         userStateRoot: workerUserStateRoot(),
       }).reconcile({ graphRevision, graphSha256 }),
       queueBackgroundWorkerCancel: async (input: {
+        readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
+        readonly current?: BackgroundWorkerProjectionV1;
         readonly graphRevision: number;
         readonly graphSha256: string;
         readonly reason: string;
+        readonly repositoryId?: string;
+        readonly requestId?: string;
+        readonly requestedAt?: string;
+        readonly sessionCancel?: Readonly<{ readonly eventId: string; readonly rawEventSha256: string; readonly sessionSeq: number }>;
         readonly sessionId: string;
       }) => {
-        const session = await new SessionCatalog(options.cwd).read(input.sessionId);
+        const current = input.current ?? (await new SessionCatalog(options.cwd).read(input.sessionId)).background.current ?? undefined;
         const queued = await queueBackgroundWorkerCancel({
-          current: session.background.current,
+          ...(input.authenticatedMutation === undefined ? {} : { authenticatedMutation: input.authenticatedMutation }),
+          current: current ?? null,
           graphRevision: input.graphRevision,
           graphSha256: input.graphSha256,
           now: () => new Date().toISOString(),
           randomUuid: randomUUID,
           reason: input.reason,
+          ...(input.repositoryId === undefined ? {} : { repositoryId: input.repositoryId }),
+          ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+          ...(input.requestedAt === undefined ? {} : { requestedAt: input.requestedAt }),
+          ...(input.sessionCancel === undefined ? {} : { sessionCancel: input.sessionCancel }),
+          sessionId: input.sessionId,
           userStateRoot: workerUserStateRoot(),
         });
         return Object.freeze({
+          control: queued.control,
           controlSha256: queued.controlSha256,
           operationId: queued.control.operationId,
           requestId: queued.control.requestId,
           workerId: queued.control.workerId,
         });
+      },
+      observeBackgroundWorkerCancel: async (input: {
+        readonly backgroundOperationId: string;
+        readonly repositoryId: string;
+        readonly requestId: string;
+      }) => {
+        const store = await BackgroundOperationStore.openExisting({
+          operationId: input.backgroundOperationId,
+          repositoryId: input.repositoryId,
+          root: workerUserStateRoot(),
+        });
+        const control = await store.readCancelEvidence(input.requestId);
+        return control === null ? null : Object.freeze({ control, controlSha256: sha256Canonical(control) });
       },
       runInternalGraphWorker: async (input: {
         readonly io: Parameters<NonNullable<CliRuntime["runInternalGraphWorker"]>>[0]["io"];
@@ -1282,6 +1437,58 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
               await writer.close();
             }
           };
+          const ownerExecutionAuthority = async (): Promise<AuthenticatedTaskMutationBindingV1> => {
+            const state = await readDelegatedState();
+            const matches = state.events.filter((event) => {
+              if (event.scope !== "session" || event.type !== "task_worker.spawn.requested") return false;
+              const value = event.data as Readonly<Record<string, unknown>>;
+              return value.operation_id === coordination.backgroundOperationId &&
+                value.graph_id === coordination.graphId &&
+                value.graph_revision === coordination.graphRevision &&
+                value.graph_sha256 === coordination.graphSha256 &&
+                value.repository_id === coordination.repositoryId;
+            });
+            if (matches.length !== 1) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "background delegation owner has no unique durable Graph run authority",
+              );
+            }
+            const value = matches[0]!.data as Readonly<Record<string, unknown>>;
+            const origin = persistedUserActionOriginV2Schema.parse(value.origin) as PersistedUserActionOriginV2;
+            if (
+              origin.kind !== "authenticated_surface" ||
+              origin.application_commit.action_kind !== "graph.run" ||
+              origin.surface !== "cli"
+            ) {
+              throw new BackgroundError(
+                "worker_reconciliation_required",
+                "background delegation owner authority is not an authenticated Graph run",
+              );
+            }
+            return Object.freeze({
+              actionIdentitySha256: origin.action_identity_sha256,
+              applicationCommit: Object.freeze({
+                actionKind: origin.application_commit.action_kind,
+                authorizationDecisionSha256: origin.application_commit.authorization_decision_sha256,
+                operationId: origin.application_commit.operation_id,
+                preparedActionSha256: origin.application_commit.prepared_action_sha256,
+                principalId: origin.application_commit.principal_id,
+                schemaVersion: 1 as const,
+              }),
+              authenticationId: origin.authentication_id,
+              requestId: origin.request_id,
+              surface: Object.freeze({
+                clientId: origin.client_id,
+                // Connection identity is not persisted in event origins. This
+                // synthetic local field is never serialized or re-authorized;
+                // the exact application commit/action identity above is.
+                connectionId: `background-${coordination.backgroundOperationId}`,
+                surface: "cli" as const,
+              }),
+            });
+          };
+          const ownerAuthority = await ownerExecutionAuthority();
           while (!coordination.signal.aborted) {
             const state = await readDelegatedState();
             if (
@@ -1319,12 +1526,25 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
               });
             }
             const selected = ready[0]!;
-            const exitCode = await executeDelegationsStart({
-              delegationId: selected.delegationId,
-              inputSurface: "cli",
-              json: true,
-              sessionId: coordination.sessionId,
-            }, delegatedRuntime, input.io);
+            // PHASE21: the background worker is an already-authorized owner of
+            // the exact Graph operation.  It must not re-enter the human CLI
+            // application surface, synthesize a local_owner principal, or
+            // create/auto-confirm another application operation.  The typed
+            // owner service consumes the queued delegation and preserves the
+            // Phase 20 background-operation/group-lease lineage directly.
+            const exitCode = renderDelegationOwnerOutcome(
+              await executeDelegationOwnerStart({
+                delegationId: selected.delegationId,
+                inputSurface: "cli",
+                sessionId: coordination.sessionId,
+              }, createDelegationOwnerRuntimePort(delegatedRuntime, input.io),
+              createDelegationOwnerInteractionPort(delegatedRuntime, input.io), {
+                authenticatedMutation: ownerAuthority,
+                cancellationSignal: coordination.signal,
+              }),
+              true,
+              input.io,
+            );
             const observed = await readDelegatedState();
             const matching = [...observed.delegations.revisions].reverse().find((revision) =>
               revision.delegationId === selected.delegationId);
@@ -1332,7 +1552,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
               ["accepted", "failed", "cancelled"].includes(matching.status) &&
               observed.delegations.activeActorSlots.length === 0 &&
               observed.delegations.activeConflictClaims.length === 0;
-            if (!groupClosed || (exitCode !== 0 && exitCode !== 8)) {
+            if (!groupClosed || (exitCode !== 0 && exitCode !== 8 && exitCode !== 130)) {
               throw new BackgroundError(
                 "worker_reconciliation_required",
                 "background delegated child did not reach a clean durable group boundary",
@@ -1340,7 +1560,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             }
             handledGroups += 1;
           }
-          throw new BackgroundError("worker_control_stale", "background delegation coordination was cancelled");
+          return Object.freeze({ handledGroups, requestedActionRef: null, status: "ready" as const });
         },
         createExecutor: (executorInput) => createTaskAttemptExecutor(executorInput),
         currentCliEntryPath: options.cliEntryPath!,
@@ -1353,11 +1573,20 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       }).run(),
     }),
     createManagedWorktreeManager,
-    createWorktreePromotionRuntime: async ({ io, sessionId }) => {
-      const manager = await createManagedWorktreeManager({ io, sessionId });
+    createWorktreePromotionRuntime: async ({ authenticatedMutation, inputSurface, io, sessionId }) => {
+      const manager = await createManagedWorktreeManager({
+        ...(authenticatedMutation === undefined ? {} : { authenticatedMutation }),
+        ...(inputSurface === undefined ? {} : { inputSurface }),
+        io,
+        sessionId,
+      });
       const prompt = new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr });
+      const compositeContext = Object.freeze({
+        ...taskContext(sessionId, inputSurface),
+        ...(authenticatedMutation === undefined ? {} : { authenticatedApplication: authenticatedMutation }),
+      });
       const originVerification = new OriginVerificationRuntime({
-        context: taskContext(sessionId),
+        context: compositeContext,
         createExecutor: () => new LocalExecutor({
           clock: { now: () => performance.now() },
           platform: options.platform,
@@ -1382,7 +1611,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         prompt,
       });
       return new WorktreePromotionRuntime({
-        context: taskContext(sessionId),
+        context: compositeContext,
         manager,
         originVerification,
         prompt,

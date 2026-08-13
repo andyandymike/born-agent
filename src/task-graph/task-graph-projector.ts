@@ -347,8 +347,8 @@ export class TaskGraphProjector {
         }
         case "task_node.retry.requested": {
           const revision = exact(event);
-          if (revision.status !== "failed" || currentApproved !== revision || currentExecution !== null) {
-            throw new TaskGraphError("task_graph_revision_conflict", "manual retry requires the exact failed approved Graph with no active execution");
+          if (!["failed", "cancelled"].includes(revision.status) || currentApproved !== revision || currentExecution !== null) {
+            throw new TaskGraphError("task_graph_revision_conflict", "manual retry requires the exact failed or cancelled approved Graph with no active execution");
           }
           revision.status = "waiting_for_user";
           revision.terminalEventId = null;

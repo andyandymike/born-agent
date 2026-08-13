@@ -1,14 +1,22 @@
 import { z } from "zod";
 
 import { backgroundExecutableDescriptorSchema } from "./background-schema.js";
+import { persistedUserActionOriginV2Schema } from "../control-plane/application-protocol.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const graph = { graph_id: uuid, graph_revision: positive, graph_sha256: sha256 } as const;
 
+function legacyOrAuthenticatedUserEvent<T extends z.ZodRawShape>(fields: T) {
+  return z.union([
+    z.object(fields).strict(),
+    z.object({ ...fields, origin: persistedUserActionOriginV2Schema }).strict(),
+  ]);
+}
+
 export const phase19BackgroundSessionEventDataSchemas = {
-  "task_worker.spawn.requested": z.object({
+  "task_worker.spawn.requested": legacyOrAuthenticatedUserEvent({
     ...graph,
     descriptor: backgroundExecutableDescriptorSchema,
     descriptor_sha256: sha256,
@@ -16,7 +24,7 @@ export const phase19BackgroundSessionEventDataSchemas = {
     repository_id: sha256,
     worker_id: uuid,
     worker_nonce_sha256: sha256,
-  }).strict(),
+  }),
   "task_worker.started": z.object({
     ...graph,
     descriptor_sha256: sha256,

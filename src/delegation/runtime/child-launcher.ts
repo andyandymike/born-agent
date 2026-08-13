@@ -26,6 +26,7 @@ import {
   type DelegationChildOperationV1,
 } from "../delegation-operation-schema.js";
 import { DelegationError } from "../delegation-errors.js";
+import { durableDelegationCancelSignalV1Schema } from "../delegation-cancellation-signal.js";
 import type { DelegationRevisionProjectionV1 } from "../delegation-projector.js";
 import type { ContextCapsuleV1 } from "../context/context-capsule-schema.js";
 import type { PreparedChildEnvelopeV1 } from "../context/child-envelope-schema.js";
@@ -176,9 +177,32 @@ function releasedCounters(reserved: TaskGraphBudgetV1, used: ChildReceiptBudgetU
     command_output_bytes: Math.max(0, reserved.maxCommandOutputBytes - used.commandOutputBytes),
     duration_ms: Math.max(0, reserved.maxDurationMs - used.durationMs),
     model_steps: Math.max(0, reserved.maxModelSteps - used.modelSteps),
-    reported_tokens: reserved.maxReportedTokens === null || used.reportedTokens === null
+    reported_tokens: reserved.maxReportedTokens === null
       ? null
-      : Math.max(0, reserved.maxReportedTokens - used.reportedTokens),
+      : used.reportedTokens === null
+        ? 0
+        : Math.max(0, reserved.maxReportedTokens - used.reportedTokens),
+  };
+}
+
+function heldCounters(reserved: TaskGraphBudgetV1, used: ChildReceiptBudgetUsageV1) {
+  return {
+    artifact_bytes: 0,
+    attempts: 0,
+    changed_bytes: 0,
+    changed_files: 0,
+    command_executions: 0,
+    command_output_bytes: 0,
+    duration_ms: 0,
+    model_steps: 0,
+    // An interrupted provider may not report token usage. Retain the whole
+    // finite token reservation rather than claiming it was unused; this keeps
+    // cancellation fail-closed without making the budget ledger unbalanced.
+    reported_tokens: reserved.maxReportedTokens === null
+      ? null
+      : used.reportedTokens === null
+        ? reserved.maxReportedTokens
+        : 0,
   };
 }
 
@@ -362,11 +386,12 @@ function waitTerminal(input: {
     let settled = false;
     let approval = Promise.resolve();
     const abort = new AbortController();
-    let cancellationRequested = input.signal?.aborted === true;
+    let cancellationRequested = false;
     let deliveredCancelRequestId: string | null = null;
     let cancelPollBusy = false;
     let cancelPoll: ReturnType<typeof setInterval> | null = null;
     let cancellationGrace: ReturnType<typeof setTimeout> | null = null;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     const armCancellationGrace = () => {
       if (cancellationGrace !== null || settled) return;
       cancellationGrace = setTimeout(() => finish(new DelegationError(
@@ -376,16 +401,16 @@ function waitTerminal(input: {
     };
     const cancelModal = () => {
       cancellationRequested = true;
-      if (cancelPoll !== null) {
-        clearInterval(cancelPoll);
-        cancelPoll = null;
-      }
+      // Closing an approval modal must not disable the durable typed-cancel
+      // observer. Product signals arrive only after delegation.cancel is
+      // committed; the poll below remains the sole authority that binds and
+      // delivers that exact request to the child.
       abort.abort();
     };
     const finish = (error: Error | null, terminal?: DelegationChildTerminalFrameV1) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      if (timeout !== null) clearTimeout(timeout);
       if (cancellationGrace !== null) clearTimeout(cancellationGrace);
       if (cancelPoll !== null) clearInterval(cancelPoll);
       input.signal?.removeEventListener("abort", requestSignalCancellation);
@@ -442,6 +467,56 @@ function waitTerminal(input: {
     input.child.once("error", onError);
     input.child.once("exit", onExit);
     const requestSignalCancellation = () => {
+      const hostEmergency = input.signal?.reason === "tui_surface_fatal";
+      // Authenticated product owners may only act on a durable typed
+      // delegation.cancel request observed below. A Host/raw abort is not
+      // cancellation authority and must never manufacture a user-origin event.
+      if (input.context.authenticatedApplication !== undefined) {
+        const durable = durableDelegationCancelSignalV1Schema.safeParse(input.signal?.reason);
+        const actor = input.envelope.prepared.actor;
+        if (!hostEmergency && (
+          !durable.success ||
+          durable.data.delegationId !== actor.delegationId ||
+          durable.data.delegationRevision !== actor.delegationRevision ||
+          durable.data.delegationSha256 !== actor.delegationSha256 ||
+          durable.data.parentActorId !== actor.parentActorId ||
+          durable.data.parentRunId !== actor.parentRunId
+        )) return;
+        cancelModal();
+        if (durable.success) {
+          deliveredCancelRequestId = durable.data.cancelRequestId;
+          armCancellationGrace();
+          void send(input.child, {
+            schemaVersion: 1,
+            protocolVersion: 1,
+            frame: "cancel",
+            operationId: input.operation.operationId,
+            childAttemptId: actor.attemptId,
+            cancelRequestId: durable.data.cancelRequestId,
+            reasonSha256: sha256Canonical({ reason: durable.data.reason }),
+            kind: "user_cancel",
+          }).catch(() => undefined);
+          return;
+        }
+        // The exact registered Host owner failed. Deliver an explicitly
+        // non-human terminal signal to the already started child; no durable
+        // delegation.cancel request is invented. The child maps this to its
+        // own run.failed(tui_surface_fatal), after which the normal receipt
+        // and slot/lease release path provides cleanup evidence.
+        deliveredCancelRequestId ??= input.context.randomUuid();
+        armCancellationGrace();
+        void send(input.child, {
+          schemaVersion: 1,
+          protocolVersion: 1,
+          frame: "cancel",
+          operationId: input.operation.operationId,
+          childAttemptId: input.envelope.prepared.actor.attemptId,
+          cancelRequestId: deliveredCancelRequestId,
+          reasonSha256: sha256Canonical({ reason: "tui_surface_fatal" }),
+          kind: "tui_surface_fatal",
+        }).catch(() => undefined);
+        return;
+      }
       cancelModal();
       approval = approval.then(async () => {
         // A separately issued durable cancellation wins this race. Otherwise
@@ -476,6 +551,7 @@ function waitTerminal(input: {
           childAttemptId: input.envelope.prepared.actor.attemptId,
           cancelRequestId,
           reasonSha256: sha256Canonical({ reason }),
+          kind: "user_cancel",
         });
       });
       void approval.catch((error: unknown) => {
@@ -483,7 +559,7 @@ function waitTerminal(input: {
       });
     };
     input.signal?.addEventListener("abort", requestSignalCancellation, { once: true });
-    if (cancellationRequested) requestSignalCancellation();
+    if (input.signal?.aborted === true) requestSignalCancellation();
     const pollDurableCancellation = async () => {
       if (settled || cancelPollBusy) return;
       cancelPollBusy = true;
@@ -512,6 +588,7 @@ function waitTerminal(input: {
             childAttemptId: actor.attemptId,
             cancelRequestId: requested.data.cancel_request_id,
             reasonSha256: sha256Canonical({ reason: requested.data.reason }),
+            kind: "user_cancel",
           }).catch(() => undefined);
         }
       } catch {
@@ -524,7 +601,13 @@ function waitTerminal(input: {
     };
     void pollDurableCancellation();
     cancelPoll = setInterval(() => { void pollDurableCancellation(); }, 100);
-    const timeout = setTimeout(() => finish(new DelegationError("delegation_effect_reconciliation_required", "child terminal timed out and requires reconciliation")), input.timeoutMs);
+    timeout = setTimeout(() => finish(new DelegationError("delegation_effect_reconciliation_required", "child terminal timed out and requires reconciliation")), input.timeoutMs);
+    // A child may consume the durable start frame and exit before the parent
+    // finishes closing the session writer and installs this terminal listener.
+    // EventEmitter does not replay `exit`; ChildProcess exitCode/signalCode are
+    // the durable in-process observation that closes that race. It is still an
+    // unknown effect because no trusted terminal frame was received.
+    if (input.child.exitCode !== null || input.child.signalCode !== null) onExit();
   });
 }
 
@@ -631,6 +714,51 @@ export class DelegationChildLauncher {
     }
   }
 
+  private assertNoDurableCancellationBeforeLaunch(
+    events: readonly Parameters<typeof reconstructMultiRunSession>[0][number][],
+    expected: DelegationRevisionProjectionV1,
+    admitted: boolean = false,
+  ): void {
+    const session = reconstructMultiRunSession(events);
+    const current = session.delegations.revisions.find((candidate) =>
+      candidate.delegationId === expected.delegationId &&
+      candidate.delegationRevision === expected.delegationRevision &&
+      candidate.delegationSha256 === expected.delegationSha256);
+    if (current === undefined) {
+      throw new DelegationError(
+        "delegation_binding_stale",
+        "delegation revision changed before the child launch admission fence",
+      );
+    }
+    if (current.status === "cancelling" || current.status === "cancelled") {
+      throw new DelegationError(
+        "delegation_cancelled",
+        "durable delegation cancellation won before child launch admission",
+      );
+    }
+    const graphCancellation = expected.binding.graphId === null
+      ? undefined
+      : session.events.find((event) => {
+          if (event.scope !== "session" || event.type !== "task_graph.cancel.requested") return false;
+          const value = event.data as Readonly<Record<string, unknown>>;
+          return value.graph_id === expected.binding.graphId &&
+            value.graph_revision === expected.binding.graphRevision &&
+            value.graph_sha256 === expected.binding.graphSha256;
+        });
+    if (graphCancellation !== undefined) {
+      throw new DelegationError(
+        "delegation_cancelled",
+        "durable Graph cancellation won before the child launch admission fence",
+      );
+    }
+    if (current.status !== (admitted ? "active" : "queued")) {
+      throw new DelegationError(
+        "delegation_binding_stale",
+        `delegation is no longer ${admitted ? "active" : "queued"} at the child launch admission fence`,
+      );
+    }
+  }
+
   async launch(input: {
     readonly delegation: DelegationRevisionProjectionV1;
     readonly preparedEnvelope: PreparedChildEnvelopeV1;
@@ -653,7 +781,8 @@ export class DelegationChildLauncher {
         "delegated child cancellation grace must be a bounded positive integer",
       );
     }
-    const cancelled = () => input.signal?.aborted === true;
+    let durablePreStartCancellation = false;
+    const cancelled = () => input.signal?.aborted === true || durablePreStartCancellation;
     if (cancelled()) {
       throw new DelegationError("delegation_cancelled", "delegated child launch was cancelled before admission");
     }
@@ -680,6 +809,12 @@ export class DelegationChildLauncher {
     if (sessionLockNonceSha256 === undefined) {
       await writer.close();
       throw new DelegationError("delegation_handshake_failed", "session writer has no exact lock nonce identity");
+    }
+    try {
+      this.assertNoDurableCancellationBeforeLaunch(writer.events, input.delegation);
+    } catch (error) {
+      await writer.close();
+      throw error;
     }
     const executableEnvelope = createExecutableChildEnvelope({
       schemaVersion: 1,
@@ -772,11 +907,46 @@ export class DelegationChildLauncher {
       await writer.close();
     }
     let child: ChildProcess | null = null;
+    let durableCancelPollBusy = false;
+    let durableCancelPoll: ReturnType<typeof setInterval> | null = null;
+    const stopDurableCancelPoll = () => {
+      if (durableCancelPoll !== null) clearInterval(durableCancelPoll);
+      durableCancelPoll = null;
+    };
+    const pollDurablePreStartCancellation = async () => {
+      if (durableCancelPollBusy || durablePreStartCancellation) return;
+      durableCancelPollBusy = true;
+      try {
+        const parent = await new SessionCatalog(this.options.context.workspace).read(this.options.context.sessionId);
+        const requested = [...parent.events].reverse().find((event) =>
+          event.scope === "session" && event.type === "delegation.cancel.requested" &&
+          event.data.delegation_id === input.delegation.delegationId &&
+          event.data.delegation_revision === input.delegation.delegationRevision &&
+          event.data.delegation_sha256 === input.delegation.delegationSha256 &&
+          event.data.parent_actor_id === input.delegation.parentActorId &&
+          event.data.parent_run_id === input.delegation.parentRunId);
+        if (requested !== undefined) {
+          durablePreStartCancellation = true;
+          child?.kill();
+        }
+      } catch {
+        // A concurrent append can make a projection read transiently busy.
+        // Keep the child before its start barrier and retry; never turn that
+        // observation failure into permission to start an effect.
+      } finally {
+        durableCancelPollBusy = false;
+      }
+    };
+    void pollDurablePreStartCancellation();
+    durableCancelPoll = setInterval(() => { void pollDurablePreStartCancellation(); }, 50);
     let current = (await store.read())!;
     const abortBeforeStart = () => child?.kill();
     input.signal?.addEventListener("abort", abortBeforeStart, { once: true });
     try {
       await revalidateDelegationChildExecutable(sealed);
+      if (cancelled()) {
+        throw new DelegationError("delegation_cancelled", "durable cancellation closed the child spawn fence");
+      }
       child = (this.options.childFactory ?? nodeFactory).spawn({
         argv: [sealed.descriptor.productEntrypointPath, "internal", "delegation-child", "--operation", operationId, "--envelope", envelopePath, "--nonce", rawNonce],
         cwd: input.executionWorkspacePath,
@@ -786,21 +956,31 @@ export class DelegationChildLauncher {
       if (child.pid === undefined) {
         throw new DelegationError("delegation_handshake_failed", "delegated child spawn returned no process identity");
       }
-      current = await store.compareAndSwap({
-        expectedSha256: current.operationSha256,
-        expectedState: "requested",
-        now: this.options.context.now(),
-        mutate: (value) => ({
-          ...value,
-          state: "spawned",
-          process: { pid: child!.pid!, processStartIdentity: `pending:${String(child!.pid)}` },
-        }),
-      });
-      const handshake: DelegationChildHandshakeV1 = await waitHandshake(
+      // Install the IPC listener before any awaited sidecar write. A fast
+      // packaged child may send its one-shot handshake while the parent is
+      // fsyncing the spawned state; EventEmitter does not replay that frame.
+      const handshakePromise = waitHandshake(
         child,
         this.options.handshakeTimeoutMs ?? 30_000,
       );
-      if (cancelled()) {
+      try {
+        current = await store.compareAndSwap({
+          expectedSha256: current.operationSha256,
+          expectedState: "requested",
+          now: this.options.context.now(),
+          mutate: (value) => ({
+            ...value,
+            state: "spawned",
+            process: { pid: child!.pid!, processStartIdentity: `pending:${String(child!.pid)}` },
+          }),
+        });
+      } catch (error) {
+        child.kill();
+        await handshakePromise.catch(() => undefined);
+        throw error;
+      }
+      const handshake: DelegationChildHandshakeV1 = await handshakePromise;
+      if (cancelled() && this.options.context.authenticatedApplication === undefined) {
         throw new DelegationError("delegation_cancelled", "delegated child launch was cancelled during handshake");
       }
       const expectedProof = sha256Canonical({
@@ -830,8 +1010,15 @@ export class DelegationChildLauncher {
           process: { pid: handshake.pid, processStartIdentity: handshake.processStartIdentity },
         }),
       });
+      // Hold the parent-session writer from the final cancellation fence
+      // through the durable start fact, shard seed, and start-frame send. A
+      // typed cross-process cancel must therefore serialize either wholly
+      // before this boundary (pre-effect cancellation) or wholly after it
+      // (active-child cancellation); it cannot observe a durable child.started
+      // fact whose child has not received its start authority.
       writer = await this.writerFactory(this.options.context);
       try {
+        this.assertNoDurableCancellationBeforeLaunch(writer.events, input.delegation);
         await writer.appendDelegationEvent("delegation.child.started", {
           child_actor_id: input.preparedEnvelope.actor.actorId,
           child_attempt_id: input.preparedEnvelope.actor.attemptId,
@@ -847,32 +1034,33 @@ export class DelegationChildLauncher {
           process_id: handshake.pid,
           process_start_identity: handshake.processStartIdentity,
         });
+        current = await store.compareAndSwap({
+          expectedSha256: current.operationSha256,
+          expectedState: "handshaken",
+          now: this.options.context.now(),
+          mutate: (value) => ({ ...value, state: "running" }),
+        });
+        await seedChildSessionShard({
+          operation,
+          parentEvents: writer.events,
+          randomUuid: this.options.context.randomUuid,
+          timestamp: this.options.context.now,
+        });
+        await send(child, {
+          schemaVersion: 1,
+          protocolVersion: 1,
+          frame: "start",
+          operationId,
+          childAttemptId: input.preparedEnvelope.actor.attemptId,
+          envelopeSha256: executableEnvelope.envelopeSha256,
+          startBarrierProofSha256: startBarrierNonceSha256,
+        });
       } finally {
         await writer.close();
       }
-      current = await store.compareAndSwap({
-        expectedSha256: current.operationSha256,
-        expectedState: "handshaken",
-        now: this.options.context.now(),
-        mutate: (value) => ({ ...value, state: "running" }),
-      });
-      const parent = await this.readParentSession();
-      await seedChildSessionShard({
-        operation,
-        parentEvents: parent.events,
-        randomUuid: this.options.context.randomUuid,
-        timestamp: this.options.context.now,
-      });
-      await send(child, {
-        schemaVersion: 1,
-        protocolVersion: 1,
-        frame: "start",
-        operationId,
-        childAttemptId: input.preparedEnvelope.actor.attemptId,
-        envelopeSha256: executableEnvelope.envelopeSha256,
-        startBarrierProofSha256: startBarrierNonceSha256,
-      });
+      stopDurableCancelPoll();
     } catch (error) {
+      stopDurableCancelPoll();
       const normalized = error instanceof DelegationError
         ? error
         : new DelegationError("delegation_handshake_failed", "delegated child launch infrastructure failed", { cause: error });
@@ -900,6 +1088,7 @@ export class DelegationChildLauncher {
           attempt.startedEventId !== null));
       const preEffectState = ["requested", "spawned", "handshaken"].includes(observed.state) &&
         !durableStarted;
+      const hostEmergency = input.signal?.reason === "tui_surface_fatal";
       if (!cancelled() && retryableInfrastructure && preEffectState && cleanupProven) {
         await store.compareAndSwap({
           expectedSha256: observed.operationSha256,
@@ -924,7 +1113,14 @@ export class DelegationChildLauncher {
           recovery.retryEligible,
         );
       }
-      if (!["terminal_observed", "reconciled", "blocked"].includes(observed.state)) {
+      const authenticatedPreStartCancellation =
+        cancelled() && !hostEmergency &&
+        this.options.context.authenticatedApplication !== undefined &&
+        preEffectState && cleanupProven;
+      if (
+        !authenticatedPreStartCancellation &&
+        !["terminal_observed", "reconciled", "blocked"].includes(observed.state)
+      ) {
         await store.compareAndSwap({
           expectedSha256: observed.operationSha256,
           expectedState: observed.state,
@@ -941,33 +1137,119 @@ export class DelegationChildLauncher {
       if (cancelled()) {
         writer = await this.writerFactory(this.options.context);
         try {
-          const cancelRequestId = this.options.context.randomUuid();
-          await writer.appendDelegationEvent("delegation.cancel.requested", {
-            cancel_request_id: cancelRequestId,
-            delegation_id: input.delegation.delegationId,
-            delegation_revision: input.delegation.delegationRevision,
-            delegation_sha256: input.delegation.delegationSha256,
-            origin: { input_surface: this.options.context.inputSurface, kind: "user" },
-            parent_actor_id: input.delegation.parentActorId,
-            parent_run_id: input.delegation.parentRunId,
-            reason: "cancelled before the trusted child start barrier completed",
-            root_event_id: null,
-          });
-          await writer.appendDelegationEvent("delegation.blocked", {
-            blocker_code: "cancelled_before_start_reconciliation_required",
-            delegation_id: input.delegation.delegationId,
-            delegation_revision: input.delegation.delegationRevision,
-            delegation_sha256: input.delegation.delegationSha256,
-            evidence_sha256s: [nonceSha256],
-            parent_actor_id: input.delegation.parentActorId,
-            parent_run_id: input.delegation.parentRunId,
-          });
+          if (hostEmergency) {
+            // Before the child start barrier there is no child effect to
+            // cancel. Persist only a strict blocked/unknown outcome after
+            // verified process cleanup; never fabricate delegation.cancel.
+            await writer.appendDelegationEvent("delegation.blocked", {
+              blocker_code: "tui_surface_fatal",
+              delegation_id: input.delegation.delegationId,
+              delegation_revision: input.delegation.delegationRevision,
+              delegation_sha256: input.delegation.delegationSha256,
+              evidence_sha256s: [nonceSha256],
+              parent_actor_id: input.delegation.parentActorId,
+              parent_run_id: input.delegation.parentRunId,
+            });
+          } else if (this.options.context.authenticatedApplication === undefined) {
+            await writer.appendDelegationEvent("delegation.cancel.requested", {
+              cancel_request_id: this.options.context.randomUuid(),
+              delegation_id: input.delegation.delegationId,
+              delegation_revision: input.delegation.delegationRevision,
+              delegation_sha256: input.delegation.delegationSha256,
+              origin: { input_surface: this.options.context.inputSurface, kind: "user" },
+              parent_actor_id: input.delegation.parentActorId,
+              parent_run_id: input.delegation.parentRunId,
+              reason: "cancelled before the trusted child start barrier completed",
+              root_event_id: null,
+            });
+          } else {
+            const durable = [...writer.events].reverse().find((event) =>
+              event.scope === "session" && event.type === "delegation.cancel.requested" &&
+              event.data.delegation_id === input.delegation.delegationId &&
+              event.data.delegation_revision === input.delegation.delegationRevision &&
+              event.data.delegation_sha256 === input.delegation.delegationSha256 &&
+              event.data.parent_actor_id === input.delegation.parentActorId &&
+              event.data.parent_run_id === input.delegation.parentRunId && (
+                event.data.origin.kind === "authenticated_surface" && (
+                  event.data.origin.application_commit.action_kind === "graph.cancel"
+                    ? event.data.root_event_id !== null
+                    : event.data.origin.application_commit.action_kind === "delegation.cancel" &&
+                      event.data.root_event_id === null
+                ) || event.data.origin.kind === "host" &&
+                  event.data.origin.input_surface === "internal" &&
+                  event.data.root_event_id !== null
+              ));
+            if (durable === undefined) {
+              throw new DelegationError(
+                "delegation_effect_reconciliation_required",
+                "authenticated child pre-start cancellation has no exact durable delegation request",
+              );
+            }
+            if (durable.scope !== "session" || durable.type !== "delegation.cancel.requested") {
+              throw new DelegationError(
+                "delegation_effect_reconciliation_required",
+                "authenticated child pre-start cancellation lost its typed durable request",
+              );
+            }
+            if (durable.data.origin.kind === "host") {
+              const root = writer.events.find((event) =>
+                event.eventId === durable.data.root_event_id &&
+                event.scope === "session" && event.type === "task_graph.cancel.requested" &&
+                event.data.graph_id === input.delegation.binding.graphId &&
+                event.data.graph_revision === input.delegation.binding.graphRevision &&
+                event.data.graph_sha256 === input.delegation.binding.graphSha256 &&
+                event.data.request_id !== undefined && event.data.reason === durable.data.reason);
+              if (root === undefined) {
+                throw new DelegationError(
+                  "delegation_effect_reconciliation_required",
+                  "internal child pre-start cancellation has no exact durable Graph root",
+                );
+              }
+            }
+            if (authenticatedPreStartCancellation) {
+              await store.compareAndSwap({
+                expectedSha256: observed.operationSha256,
+                expectedState: observed.state,
+                now: this.options.context.now(),
+                mutate: (value) => ({
+                  ...value,
+                  failure: {
+                    cancelRequestEventId: durable.eventId,
+                    cancelRequestId: durable.data.cancel_request_id,
+                    code: "delegation_cancelled",
+                    phase,
+                  },
+                  process: processIdentity,
+                  processCleanup: cleanupRecord,
+                  state: "pre_effect_terminal",
+                }),
+              });
+            }
+          }
+          if (!hostEmergency && !authenticatedPreStartCancellation) {
+            await writer.appendDelegationEvent("delegation.blocked", {
+              blocker_code: "cancelled_before_start_reconciliation_required",
+              delegation_id: input.delegation.delegationId,
+              delegation_revision: input.delegation.delegationRevision,
+              delegation_sha256: input.delegation.delegationSha256,
+              evidence_sha256s: [nonceSha256],
+              parent_actor_id: input.delegation.parentActorId,
+              parent_run_id: input.delegation.parentRunId,
+            });
+          }
         } finally {
           await writer.close();
+        }
+        if (authenticatedPreStartCancellation) {
+          await new DelegationPreEffectRecovery(this.writerFactory).reconcile({
+            context: this.options.context,
+            store,
+          });
         }
       }
       throw normalized;
     } finally {
+      stopDurableCancelPoll();
       input.signal?.removeEventListener("abort", abortBeforeStart);
     }
     if (child === null) {
@@ -1243,7 +1525,7 @@ export class DelegationChildLauncher {
         delegation_id: input.delegation.delegationId,
         delegation_revision: input.delegation.delegationRevision,
         delegation_sha256: input.delegation.delegationSha256,
-        held: usageCounters({ artifactBytes: 0, attempts: 0, changedBytes: 0, changedFiles: 0, commandExecutions: 0, commandOutputBytes: 0, durationMs: 0, modelSteps: 0, reportedTokens: usage.reportedTokens === null ? null : 0 }),
+        held: heldCounters(input.reservation.reserved, usage),
         parent_actor_id: input.delegation.parentActorId,
         parent_run_id: input.delegation.parentRunId,
         released: releasedCounters(input.reservation.reserved, usage),

@@ -13,6 +13,15 @@ import { DelegationGroupLeaseStore } from "../../src/delegation/delegation-group
 import { DelegationOperationStore } from "../../src/delegation/delegation-operation-store.js";
 import { createCanonicalPhase20Fixture } from "../../src/delegation/runtime/canonical-phase20-fixture.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
+import { CliDelegationCompositeOwnerPort } from "../../src/control-plane/adapters/delegation-composite-cli-port.js";
+import { ActiveDelegationControlRegistry } from "../../src/control-plane/active-delegation-control-registry.js";
+import { SessionLedgerHeadSigner } from "../../src/control-plane/session-ledger-head.js";
+import {
+  createDelegationOwnerInteractionPort,
+  createDelegationOwnerRuntimePort,
+} from "../../src/delegation/delegation-owner-cli-ports.js";
 import { createMemoryIO } from "../helpers.js";
 
 const roots: string[] = [];
@@ -135,7 +144,7 @@ describe("Phase 20D real coordinator crash takeover", () => {
       worktreeUserStateRoot: join(root, "worktrees"),
     });
     const resumeIO = createMemoryIO();
-    expect(await runCli([
+    const resumeExit = await runCli([
       "delegations",
       "resume",
       "--session",
@@ -143,9 +152,58 @@ describe("Phase 20D real coordinator crash takeover", () => {
       "--delegation",
       fixture.delegationIds[0]!,
       "--json",
-    ], resumeIO.io, runtime), resumeIO.readStderr()).toBe(0);
+    ], resumeIO.io, runtime);
+
+    if (runtime.controlPlaneStateRoot === undefined) throw new Error("Phase 21A control root is unavailable");
+    const authority = await loadOrCreateHostControlAuthority({ root: runtime.controlPlaneStateRoot });
+    const controlOperations = await new ControlOperationJournal(authority.paths).list();
+    if (resumeExit !== 0) {
+      const failed = await new SessionCatalog(workspace).read(fixture.sessionId);
+      const delegationOperations = await Promise.all(
+        (await DelegationOperationStore.listExisting(stateRoot)).map((store) => store.read()),
+      );
+      const leases = await DelegationGroupLeaseStore.listExisting(stateRoot);
+      throw new Error(`real coordinator takeover failed: ${JSON.stringify({
+        controlOperations: controlOperations.map((operation) => ({
+          actionKind: operation.actionKind,
+          errorCode: operation.errorCode,
+          operationId: operation.operationId,
+          state: operation.state,
+          target: operation.target,
+        })),
+        delegationOperations: delegationOperations.map((operation) => operation === null ? null : ({
+          failure: operation.failure,
+          operationId: operation.operationId,
+          state: operation.state,
+        })),
+        events: failed.events.filter((event) => event.scope === "session").slice(-30).map((event) => ({
+          data: event.sessionSeq >= 71 ? event.data : undefined,
+          sequence: event.sessionSeq,
+          type: event.type,
+        })),
+        exit: resumeExit,
+        leases: await Promise.all(leases.map((lease) => lease.read())),
+        projection: {
+          barriers: failed.delegations.barriers,
+          revisions: failed.delegations.revisions.map((revision) => ({
+            delegationId: revision.delegationId,
+            status: revision.status,
+          })),
+        },
+        stderr: resumeIO.readStderr(),
+      })}`);
+    }
+    const resumeOperation = controlOperations.find((operation) =>
+      operation.actionKind === "delegation.resume");
+    expect(resumeOperation).toMatchObject({
+      primaryDomainRecord: expect.objectContaining({ ownerKind: "session" }),
+      state: "completed",
+    });
+    expect(resumeOperation?.underlyingOperationRefs.length).toBeGreaterThanOrEqual(1);
 
     const recovered = await new SessionCatalog(workspace).read(fixture.sessionId);
+    expect(recovered.events.find((event) => event.eventId === resumeOperation?.primaryDomainRecord?.recordId))
+      .toMatchObject({ type: "delegation.resume.requested" });
     expect(recovered.delegations.activeActorSlots).toEqual([]);
     expect(recovered.delegations.activeConflictClaims).toEqual([]);
     expect(recovered.delegations.barriers).toEqual([
@@ -163,5 +221,65 @@ describe("Phase 20D real coordinator crash takeover", () => {
       releaseReason: "reconciled",
       state: "released",
     });
+
+    // The same complete prefix must be sufficient for observation-only
+    // response-loss recovery. Reconciliation may not re-enter the Phase 20
+    // takeover owner or append another session/lease revision.
+    if (resumeOperation?.target.kind !== "existing_resource" ||
+        resumeOperation.target.expectedVersion.kind !== "session_ledger_head" ||
+        resumeOperation.target.resourceScope.kind !== "session") {
+      throw new Error("resume operation has no exact session target");
+    }
+    const resumeEvent = recovered.events.find((event) =>
+      event.scope === "session" && event.type === "delegation.resume.requested" &&
+      event.eventId === resumeOperation.primaryDomainRecord?.recordId
+    );
+    if (resumeEvent?.scope !== "session" || resumeEvent.type !== "delegation.resume.requested") {
+      throw new Error("resume operation has no exact authenticated application commit");
+    }
+    const origin = resumeEvent.data.origin;
+    if (origin.kind !== "authenticated_surface") {
+      throw new Error("resume operation has no exact authenticated application commit");
+    }
+    const commit = origin.application_commit;
+    const eventCountBeforeObservation = recovered.events.length;
+    const leaseBeforeObservation = await leases[0]!.read();
+    const observation = await new CliDelegationCompositeOwnerPort({
+      activeDelegations: new ActiveDelegationControlRegistry(),
+      interaction: createDelegationOwnerInteractionPort(runtime, resumeIO.io),
+      runtime: createDelegationOwnerRuntimePort(runtime, resumeIO.io),
+      signer: new SessionLedgerHeadSigner(authority.integrityKey),
+    }).reconcile!({
+      applicationCommit: Object.freeze({
+        actionKind: commit.action_kind,
+        authorizationDecisionSha256: commit.authorization_decision_sha256,
+        operationId: commit.operation_id,
+        preparedActionSha256: commit.prepared_action_sha256,
+        principalId: commit.principal_id,
+        schemaVersion: 1,
+      }),
+      authenticatedMutation: {} as never,
+      expectedHead: resumeOperation.target.expectedVersion.head,
+      repositoryId: resumeOperation.target.resourceScope.repositoryId,
+      request: Object.freeze({
+        actionKind: "delegation.resume",
+        payload: Object.freeze({ delegationId: fixture.delegationIds[0]! }),
+      }),
+      sessionId: fixture.sessionId,
+    });
+    expect(observation).toMatchObject({
+      primaryEventType: "delegation.resume.requested",
+      result: {
+        kind: "group_takeover",
+        takeover: {
+          groupId: leaseBeforeObservation?.groupId,
+          releasedLeaseSha256: leaseBeforeObservation?.leaseSha256,
+        },
+      },
+      resolvedHead: { eventId: recovered.events.at(-1)?.eventId, sequence: recovered.events.length },
+    });
+    expect(observation?.underlyingOperationRefs).toHaveLength(6);
+    expect((await new SessionCatalog(workspace).read(fixture.sessionId)).events).toHaveLength(eventCountBeforeObservation);
+    expect(await leases[0]!.read()).toEqual(leaseBeforeObservation);
   }, 180_000);
 });

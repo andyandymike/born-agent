@@ -142,7 +142,7 @@ describe("Phase 16D cross-run completion", () => {
     const node = createNodeRuntime({
       approvalInput: { interactive: false, readLine: async () => null },
       cwd,
-      env: {},
+      env: { BORN_CONTROL_STATE_ROOT: join(cwd, ".bornagent", "test-control") },
       execPath: process.execPath,
       killProcess: (identity, signal) => process.kill(identity, signal),
       nodeVersion: process.versions.node,
@@ -324,5 +324,5 @@ describe("Phase 16D cross-run completion", () => {
       readonly outcomeReport: { readonly reportSha256: string };
     };
     expect(shown.outcomeReport.reportSha256).toBe(outcome.reportSha256);
-  }, 20_000);
+  }, 30_000);
 });

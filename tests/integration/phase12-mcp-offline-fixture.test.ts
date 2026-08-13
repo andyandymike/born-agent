@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -276,5 +276,16 @@ describe("Phase 12 offline stdio integration", () => {
     expect(execution.output).toContain("0.0.0");
     await manager.stopAll();
     expect(events.at(-1)?.type).toBe("mcp.server.stopped");
+
+    const reviewedPackage = await readFile(path.join(workspace, "package.json"), "utf8");
+    await writeFile(path.join(workspace, "package.json"), `${reviewedPackage}\n`, "utf8");
+    await expect(
+      manager.startSelected({
+        configs: [loaded.servers.fixture!],
+        reservedModelNames: [],
+        signal: controller.signal,
+        workspaceRealPath: loaded.workspaceRealPath,
+      }),
+    ).rejects.toThrow("neither an exact reviewed fixture nor a run-frozen enabled capability");
   }, 30_000);
 });

@@ -14,6 +14,8 @@ const REPOSITORY = "a".repeat(64);
 const OPERATION = "10000000-0000-4000-8000-000000000019";
 const WORKER = "20000000-0000-4000-8000-000000000019";
 const GRAPH = "30000000-0000-4000-8000-000000000019";
+const SESSION = "70000000-0000-4000-8000-000000000019";
+const APPLICATION = "80000000-0000-4000-8000-000000000019";
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -137,5 +139,83 @@ describe("Phase 19D background protocol contracts", () => {
     expect(prompt.deferred?.requestedActionRef).toMatch(/^approval\/sha256\/[a-f0-9]{64}$/u);
     expect(await prompt.request(preview, new AbortController().signal)).toBe("cancelled");
     expect(deferred).toBe(1);
+  });
+
+  it("keeps an authenticated application cancel idempotent across active and consumed evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "b21a-control-"));
+    roots.push(root);
+    const store = await BackgroundOperationStore.create({ operationId: OPERATION, repositoryId: REPOSITORY, root });
+    await store.createHandoff({
+      graphSha256: "b".repeat(64),
+      operationId: OPERATION,
+      owner: "worker",
+      ownerPid: 1234,
+      ownerProcessStartIdentity: "worker-start",
+      parentNonceSha256: "c".repeat(64),
+      schemaVersion: 1,
+      state: "worker_owned",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      workerId: WORKER,
+      workerNonceSha256: "d".repeat(64),
+    });
+    const current = {
+      acceptedControlIds: [],
+      descriptor: descriptor(),
+      descriptorSha256: sha256Canonical(descriptor()),
+      graphId: GRAPH,
+      graphRevision: 1,
+      graphSha256: "b".repeat(64),
+      operationId: OPERATION,
+      repositoryId: REPOSITORY,
+      spawnEventId: "40000000-0000-4000-8000-000000000019",
+      startedEventId: "50000000-0000-4000-8000-000000000019",
+      status: "running" as const,
+      terminal: null,
+      workerId: WORKER,
+      workerNonceSha256: "d".repeat(64),
+    };
+    const authenticatedMutation = {
+      actionIdentitySha256: "e".repeat(64),
+      applicationCommit: {
+        actionKind: "graph.cancel",
+        authorizationDecisionSha256: "f".repeat(64),
+        operationId: APPLICATION,
+        preparedActionSha256: "1".repeat(64),
+        principalId: "phase21a-local-owner",
+        schemaVersion: 1 as const,
+      },
+      authenticationId: "phase21a-authentication",
+      requestId: "90000000-0000-4000-8000-000000000019",
+      surface: { clientId: "phase21a-client", connectionId: "phase21a-connection", surface: "cli" as const },
+    };
+    const exact = {
+      authenticatedMutation,
+      current,
+      graphRevision: 1,
+      graphSha256: "b".repeat(64),
+      now: () => "2026-08-12T00:00:02.000Z",
+      randomUuid: () => "should-not-be-used",
+      reason: "stop through the application operation",
+      repositoryId: REPOSITORY,
+      requestId: APPLICATION,
+      requestedAt: "2026-08-12T00:00:01.000Z",
+      sessionCancel: {
+        eventId: "a0000000-0000-4000-8000-000000000019",
+        rawEventSha256: "2".repeat(64),
+        sessionSeq: 19,
+      },
+      sessionId: SESSION,
+      userStateRoot: root,
+    };
+    expect(await store.readCancelEvidence(APPLICATION)).toBeNull();
+    const first = await queueBackgroundWorkerCancel(exact);
+    const retry = await queueBackgroundWorkerCancel(exact);
+    expect(retry).toEqual(first);
+    expect(await store.listCancelControls()).toEqual([first.control]);
+    await store.consumeCancel(first.control, "response-lost");
+    expect(await store.readCancelEvidence(APPLICATION)).toEqual(first.control);
+    expect(await queueBackgroundWorkerCancel(exact)).toEqual(first);
+    await expect(queueBackgroundWorkerCancel({ ...exact, reason: "different semantic request" }))
+      .rejects.toMatchObject({ code: "worker_handoff_conflict" });
   });
 });

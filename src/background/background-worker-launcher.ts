@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 
 import { sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { SessionCatalog } from "../sessions/session-catalog.js";
@@ -191,6 +191,9 @@ export class BackgroundWorkerLauncher {
         descriptor_sha256: sealed.descriptorSha256,
         operation_id: operationId,
         repository_id: repository.identity.repositoryId,
+        ...(this.options.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(this.options.context) }),
         worker_id: workerId,
         worker_nonce_sha256: workerNonceSha256,
       });

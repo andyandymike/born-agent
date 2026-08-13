@@ -19,7 +19,11 @@ import {
   fixedStream,
   type FakeStreamBehavior,
 } from "../fakes/fake-chat-client.js";
-import { createMemoryIO, createRuntime } from "../helpers.js";
+import {
+  createMemoryIO,
+  createRuntime,
+  withoutApplicationControlPlane,
+} from "../helpers.js";
 
 const workspaces: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -268,7 +272,7 @@ describe("Phase 16D Plan CLI runtime", () => {
       model: "qwen3:1.7b",
       provider: "ollama",
     });
-    const node = createNodeRuntime({
+    const node = withoutApplicationControlPlane(createNodeRuntime({
       approvalInput: { interactive: false, readLine: async () => null },
       cwd,
       env: {},
@@ -278,7 +282,7 @@ describe("Phase 16D Plan CLI runtime", () => {
       onCancel: () => () => undefined,
       platform: process.platform,
       version: "0.0.0-phase16d",
-    });
+    }));
     let registryError: unknown;
     const runtime: CliRuntime = {
       ...node,

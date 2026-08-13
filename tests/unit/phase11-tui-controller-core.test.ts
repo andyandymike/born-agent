@@ -97,7 +97,7 @@ describe("Phase 11 approval and controller core", () => {
     expect(decideApproval).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed for expired, blocked, and storage-failed decisions", async () => {
+  it("fails closed for expired and storage-failed decisions while preserving an exact active-owner approval", async () => {
     const base = approvalView();
     const expired: TuiViewState = {
       ...base,
@@ -126,7 +126,7 @@ describe("Phase 11 approval and controller core", () => {
       new ApprovalController(() => blocked, {
         decideApproval: async () => undefined,
       }).decide(intent),
-    ).resolves.toEqual({ status: "blocked" });
+    ).resolves.toEqual({ status: "delegated" });
     const failed = await new ApprovalController(() => base, {
       decideApproval: async () => {
         throw new Error("durable write failed");

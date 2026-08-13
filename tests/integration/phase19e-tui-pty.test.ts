@@ -29,6 +29,11 @@ interface PtyEvidence {
   readonly graphCancelled: boolean;
   readonly graphEnqueued: boolean;
   readonly graphNodeVisible: boolean;
+  readonly graphPreparedNoProgress: boolean;
+  readonly hostPreparedActions: readonly string[];
+  readonly hostPreparedExactIdentityVisible: boolean;
+  readonly hostPreparedSummaryVisible: boolean;
+  readonly hostPreparedTargetVisible: boolean;
   readonly outputBase64: string;
   readonly resized: boolean;
   readonly shellExitCode: number;
@@ -68,11 +73,22 @@ describe("Phase 19E real PTY Graph controls", () => {
       graphCancelled: true,
       graphEnqueued: true,
       graphNodeVisible: true,
+      graphPreparedNoProgress: true,
+      hostPreparedExactIdentityVisible: true,
+      hostPreparedSummaryVisible: true,
+      hostPreparedTargetVisible: true,
       resized: true,
       shellExitCode: 0,
       shellRestored: true,
       signal: null,
     });
+    expect(evidence.hostPreparedActions).toEqual(expect.arrayContaining([
+      "graph.decide",
+      "graph.enqueue",
+      "graph.cancel",
+    ]));
+    expect(raw).toContain("HOST PREPARED ACTION | graph.decide");
+    expect(raw).toContain("[CONFIRM EXACT PREPARED ACTION]");
     expect(raw).toContain("GRAPH NODE");
     expect(raw).toContain("PTY_SHELL_RESTORED");
   }, 60_000);

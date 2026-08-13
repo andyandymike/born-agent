@@ -71,6 +71,19 @@ function started(
 }
 
 describe("Phase 11 durable TUI reducer", () => {
+  it("accepts the Phase 21 owner-internal effect admission terminal as a known projection-owned fact", () => {
+    const state = replayPersistedEvents([
+      started(),
+      persisted("task_effect.admission.terminal", {}, 2, { scope: "session" }),
+    ], createInitialTuiViewState());
+
+    expect(state.session).toMatchObject({
+      actionBlocked: false,
+      fatalReason: null,
+      lastSessionSeq: 2,
+    });
+  });
+
   it("accepts Phase 16 Goal baseline and change facts as known no-op UI events", () => {
     const state = replayPersistedEvents(
       [

@@ -37,7 +37,7 @@ import {
   type FakeModelTurnSignal,
   type FakeStreamBehavior,
 } from "../fakes/fake-chat-client.js";
-import { createMemoryIO } from "../helpers.js";
+import { createMemoryIO, withoutApplicationControlPlane } from "../helpers.js";
 
 const execFileAsync = promisify(execFile);
 const workspaces: string[] = [];
@@ -734,17 +734,17 @@ describe("Phase 16F M7 / Phase 17E M8 zero-cost gate", () => {
     let renderer: M7Renderer | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const memory = createMemoryIO();
-    const node = createNodeRuntime({
+    const node = withoutApplicationControlPlane(createNodeRuntime({
       approvalInput: { interactive: false, readLine: async () => null },
       cwd,
-      env: {},
+      env: { BORN_CONTROL_STATE_ROOT: join(cwd, ".bornagent", "test-control") },
       execPath: process.execPath,
       killProcess: (identity, signal) => process.kill(identity, signal),
       nodeVersion: process.versions.node,
       onCancel: () => () => undefined,
       platform: process.platform,
       version: "0.0.0-phase16f-m7",
-    });
+    }));
     const runtime: CliRuntime = {
       ...node,
       agentModelEvidence: () => ({

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { BackgroundWorkerProjectionV1 } from "./background-projector.js";
 import { BackgroundError } from "./background-errors.js";
 import { BackgroundOperationStore } from "./background-operation-store.js";
@@ -11,15 +13,37 @@ export type BackgroundWorkerLiveStateV1 =
   | "owner_unknown"
   | "reconciliation_required";
 
-export interface BackgroundWorkerLiveObservationV1 {
-  readonly evidenceLevel: "durable_only" | "process_and_heartbeat" | "process_only";
-  readonly heartbeatAgeMs: number | null;
-  readonly heartbeatSequence: number | null;
-  readonly observedAt: string;
-  readonly operationId: string;
-  readonly state: BackgroundWorkerLiveStateV1;
-  readonly workerId: string;
-}
+export const backgroundWorkerLiveObservationV1Schema = z.object({
+  evidenceLevel: z.enum(["durable_only", "process_and_heartbeat", "process_only"]),
+  heartbeatAgeMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  heartbeatSequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  observedAt: z.string().datetime({ offset: true }).refine(
+    (value) => {
+      const millis = Date.parse(value);
+      return Number.isFinite(millis) && new Date(millis).toISOString() === value;
+    },
+    "observedAt must be canonical UTC ISO-8601",
+  ),
+  operationId: z.string().uuid(),
+  state: z.enum([
+    "launching",
+    "observed_running",
+    "observed_unresponsive_owner_alive",
+    "owner_confirmed_dead",
+    "owner_unknown",
+    "reconciliation_required",
+  ]),
+  workerId: z.string().uuid(),
+}).strict().superRefine((value, context) => {
+  if ((value.heartbeatAgeMs === null) !== (value.heartbeatSequence === null)) {
+    context.addIssue({ code: "custom", message: "heartbeat age and sequence must be present together" });
+  }
+  if (value.evidenceLevel === "process_and_heartbeat" && value.heartbeatAgeMs === null) {
+    context.addIssue({ code: "custom", message: "heartbeat evidence requires a heartbeat" });
+  }
+});
+
+export type BackgroundWorkerLiveObservationV1 = Readonly<z.infer<typeof backgroundWorkerLiveObservationV1Schema>>;
 
 export async function observeBackgroundWorkerLive(input: {
   readonly current: BackgroundWorkerProjectionV1 | null;

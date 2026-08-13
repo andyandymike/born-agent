@@ -214,8 +214,10 @@ const EVENT_TYPES = new Set<Phase20DelegationSessionEventType>([
   "delegation.queued",
   "delegation.cancel.requested",
   "delegation.cancelled",
+  "delegation.owner.pre_effect.terminal",
   "delegation.stale",
   "delegation.envelope.prepared",
+  "delegation.resume.requested",
   "delegation.parent.barrier.requested",
   "delegation.parent.barrier.suspended",
   "delegation.parent.barrier.released",
@@ -352,7 +354,10 @@ function budgetCountersBalance(
   if (reserved.reportedTokens === null) {
     return used.reportedTokens === null && released.reportedTokens === null && held.reportedTokens === null;
   }
-  return used.reportedTokens !== null && released.reportedTokens !== null && held.reportedTokens !== null &&
+  if (used.reportedTokens === null) {
+    return released.reportedTokens === 0 && held.reportedTokens === reserved.reportedTokens;
+  }
+  return released.reportedTokens !== null && held.reportedTokens !== null &&
     reserved.reportedTokens === used.reportedTokens + released.reportedTokens + held.reportedTokens;
 }
 
@@ -407,6 +412,12 @@ export class DelegationProjector {
     const groupLeases = new Map<string, string>();
     const waitingApprovals = new Map<string, DelegationApprovalProjectionV1>();
     const reservations = new Map<string, DelegationBudgetCountersProjectionV1>();
+    const cancelRequests = new Map<string, Readonly<{
+      readonly delegationKey: string;
+      readonly eventId: string;
+      readonly origin: Phase20DelegationSessionEventData<"delegation.cancel.requested">["origin"];
+      readonly rootEventId: string | null;
+    }>>();
     const settlements = new Map<string, {
       readonly held: DelegationBudgetCountersProjectionV1;
       readonly released: DelegationBudgetCountersProjectionV1;
@@ -626,6 +637,12 @@ export class DelegationProjector {
           revision.envelopePreparationCount += 1;
           break;
         }
+        case "delegation.resume.requested": {
+          // PHASE21: this is a durable application dispatch fence. It records
+          // no owner outcome and therefore cannot itself authorize relaunch.
+          exact(event);
+          break;
+        }
         case "delegation.budget.reserved": {
           const value = data(event, "delegation.budget.reserved");
           const revision = exact(event);
@@ -716,11 +733,63 @@ export class DelegationProjector {
           break;
         }
         case "delegation.cancel.requested": {
+          const value = data(event, "delegation.cancel.requested");
           const revision = exact(event);
           if (["accepted", "failed", "blocked", "cancelled", "stale", "rejected", "superseded"].includes(revision.status)) {
             throw new DelegationError("delegation_cancelled", "terminal delegation cannot be cancelled again");
           }
+          if (cancelRequests.has(value.cancel_request_id)) {
+            throw new DelegationError("delegation_cancelled", "delegation cancel request identity was reused");
+          }
+          cancelRequests.set(value.cancel_request_id, Object.freeze({
+            delegationKey: key(revision.delegationId, revision.delegationRevision),
+            eventId: event.eventId,
+            origin: value.origin,
+            rootEventId: value.root_event_id,
+          }));
           revision.status = "cancelling";
+          break;
+        }
+        case "delegation.owner.pre_effect.terminal": {
+          const value = data(event, "delegation.owner.pre_effect.terminal");
+          const revision = exact(event);
+          const request = cancelRequests.get(value.cancel_request_id);
+          const attempt = value.child_attempt_id === undefined
+            ? null
+            : revision.attempts.find((candidate) =>
+                candidate.attemptId === value.child_attempt_id &&
+                candidate.operationId === value.operation_id) ?? null;
+          const internalRoot = request?.origin.kind === "host" &&
+            request.origin.input_surface === "internal" && request.rootEventId !== null
+            ? events.find((candidate) =>
+                candidate.eventId === request.rootEventId &&
+                candidate.scope === "session" && candidate.type === "task_graph.cancel.requested" &&
+                candidate.data.graph_id === revision.binding.graphId &&
+                candidate.data.graph_revision === revision.binding.graphRevision &&
+                candidate.data.graph_sha256 === revision.binding.graphSha256)
+            : undefined;
+          if (
+            revision.status !== "cancelling" || value.outcome !== "cancelled" ||
+            request?.eventId !== value.cancel_request_event_id ||
+            request.delegationKey !== key(revision.delegationId, revision.delegationRevision) ||
+            sha256Canonical(request.origin) !== sha256Canonical(value.origin) ||
+            !["delegation.start", "delegation.resume", "graph.run", "graph.resume", "graph.retry"].includes(
+              value.owner_application_commit.action_kind,
+            ) ||
+            revision.attempts.some((candidate) => candidate.startedEventId !== null) ||
+            (value.origin.kind === "host" && (
+              value.origin.input_surface !== "internal" || internalRoot === undefined ||
+              attempt === null || attempt.terminalEventId !== null
+            ))
+          ) {
+            throw new DelegationError("delegation_cancelled", "pre-effect terminal has no exact unadmitted typed cancel request");
+          }
+          if (attempt !== null) {
+            attempt.terminal = "cancelled_clean";
+            attempt.terminalEventId = event.eventId;
+          }
+          revision.status = "cancelled";
+          revision.terminalEventId = event.eventId;
           break;
         }
         case "delegation.child.terminal": {
@@ -836,8 +905,13 @@ export class DelegationProjector {
           break;
         }
         case "delegation.cancelled": {
+          const value = data(event, "delegation.cancelled");
           const revision = exact(event);
-          if (!(["cancelling", "reconciling", "cancelled"] as const).includes(revision.status as "cancelling" | "reconciling" | "cancelled")) {
+          const request = cancelRequests.get(value.cancel_request_id);
+          if (
+            !(["cancelling", "reconciling", "cancelled"] as const).includes(revision.status as "cancelling" | "reconciling" | "cancelled") ||
+            request?.delegationKey !== key(revision.delegationId, revision.delegationRevision)
+          ) {
             throw new DelegationError("delegation_cancelled", "delegation cancellation terminal has no matching request");
           }
           revision.status = "cancelled";

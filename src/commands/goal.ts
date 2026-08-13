@@ -13,6 +13,8 @@ import {
   taskMutationContext,
   taskWriterFactory,
 } from "./task-control-plane-command.js";
+import { executeTaskActionThroughApplicationService } from "../control-plane/adapters/task-cli-adapter.js";
+import { querySessionViewThroughApplicationService } from "../control-plane/adapters/task-cli-adapter.js";
 
 export interface GoalShowOptions {
   readonly json: boolean;
@@ -58,16 +60,21 @@ export async function executeGoalShow(
   options: GoalShowOptions,
   runtime: CliRuntime,
   io: CliIO,
-): Promise<0 | 1 | 2> {
+): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-    const state = session.taskState;
+    const applicationView = runtime.controlPlaneStateRoot === undefined
+      ? null
+      : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
+    if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
+    const session = applicationView === null ? await new SessionCatalog(runtime.cwd).read(options.sessionId) : null;
+    const state = applicationView?.value?.taskState ?? session?.taskState;
+    if (state === undefined || state === null) throw new Error("session has no materialized task projection");
     const active = state.goals.find(
       (goal) => goal.content.goalId === state.activeGoalId,
     );
     const last = active ?? state.goals.at(-1) ?? null;
-    const blocker = taskMutationBlocker(session);
+    const blocker = applicationView?.value?.taskMutationBlocker ?? (session === null ? null : taskMutationBlocker(session));
     if (options.json) {
       io.stdout.write(
         `${canonicalJson({
@@ -76,7 +83,7 @@ export async function executeGoalShow(
           goals: state.goals.map(goalDocument),
           historyCount: state.goals.length,
           schemaVersion: 1,
-          sessionId: session.sessionId,
+          sessionId: options.sessionId,
           trackingMode: state.trackingMode,
         })}\n`,
       );
@@ -117,20 +124,21 @@ export async function executeGoalSet(
         "--goal-id and --base-revision must be provided together",
       );
     }
-    const manager = new GoalManager(taskWriterFactory(runtime));
-    const context = taskMutationContext(runtime, options.sessionId);
-    const goal =
-      options.goalId === undefined || options.baseRevision === undefined
-        ? await manager.createInitialGoal({ context, objective: options.text })
-        : await manager.reviseActiveGoal({
-            baseRevision: positiveRevision(
-              options.baseRevision,
-              "base revision",
-            ),
-            context,
-            goalId: options.goalId,
-            objective: options.text,
-          });
+    const baseRevision = options.baseRevision === undefined ? undefined : positiveRevision(options.baseRevision, "base revision");
+    const goal = runtime.controlPlaneStateRoot === undefined
+      ? options.goalId === undefined || baseRevision === undefined
+        ? await new GoalManager(taskWriterFactory(runtime)).createInitialGoal({ context: taskMutationContext(runtime, options.sessionId), objective: options.text })
+        : await new GoalManager(taskWriterFactory(runtime)).reviseActiveGoal({ baseRevision, context: taskMutationContext(runtime, options.sessionId), goalId: options.goalId, objective: options.text })
+      : (await executeTaskActionThroughApplicationService({
+          actionKind: "goal.propose",
+          io,
+          payload: options.goalId === undefined || baseRevision === undefined
+            ? { objective: options.text, operation: "create_initial" }
+            : { baseRevision, goalId: options.goalId, objective: options.text, operation: "revise" },
+          runtime,
+          sessionId: options.sessionId,
+        })).envelope.result;
+    if (goal === null) return 2;
     io.stderr.write(
       "Goal revision changes invalidate Plan authority for the prior revision; workspace bytes are not rolled back.\n",
     );
@@ -160,24 +168,19 @@ export async function executeGoalNew(
         "--abandon-current, --current-goal-id, and --current-revision must be provided together",
       );
     }
-    const manager = new GoalManager(taskWriterFactory(runtime));
-    const goal = await manager.startNewGoal({
-      context: taskMutationContext(runtime, options.sessionId),
-      objective: options.text,
-      parentGoalId: options.parentGoal ?? null,
-      replaceActive:
-        options.currentGoalId === undefined ||
-        options.currentRevision === undefined
-          ? null
-          : {
-              confirmedAbandon: true,
-              goalId: options.currentGoalId,
-              revision: positiveRevision(
-                options.currentRevision,
-                "current revision",
-              ),
-            },
-    });
+    const replaceActive = options.currentGoalId === undefined || options.currentRevision === undefined
+      ? null
+      : { confirmedAbandon: true as const, goalId: options.currentGoalId, revision: positiveRevision(options.currentRevision, "current revision") };
+    const payload = { objective: options.text, operation: "start_new" as const, parentGoalId: options.parentGoal ?? null, replaceActive };
+    const goal = runtime.controlPlaneStateRoot === undefined
+      ? await new GoalManager(taskWriterFactory(runtime)).startNewGoal({
+          context: taskMutationContext(runtime, options.sessionId),
+          objective: payload.objective,
+          parentGoalId: payload.parentGoalId,
+          replaceActive: payload.replaceActive,
+        })
+      : (await executeTaskActionThroughApplicationService({ actionKind: "goal.propose", io, payload, runtime, sessionId: options.sessionId })).envelope.result;
+    if (goal === null) return 2;
     io.stderr.write(
       "Starting a new Goal invalidates prior Plan authority; prior change records remain history and workspace bytes are not rolled back.\n",
     );
@@ -197,12 +200,17 @@ export async function executeGoalAbandon(
 ): Promise<0 | 1 | 2> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const goal = await new GoalManager(taskWriterFactory(runtime)).abandonActiveGoal({
-      context: taskMutationContext(runtime, options.sessionId),
-      goalId: options.goalId,
-      reason: options.reason,
-      revision: positiveRevision(options.revision, "revision"),
-    });
+    const revision = positiveRevision(options.revision, "revision");
+    const goal = runtime.controlPlaneStateRoot === undefined
+      ? await new GoalManager(taskWriterFactory(runtime)).abandonActiveGoal({ context: taskMutationContext(runtime, options.sessionId), goalId: options.goalId, reason: options.reason, revision })
+      : (await executeTaskActionThroughApplicationService({
+          actionKind: "goal.decide",
+          io,
+          payload: { decision: "abandon", goalId: options.goalId, reason: options.reason, revision },
+          runtime,
+          sessionId: options.sessionId,
+        })).envelope.result;
+    if (goal === null) return 2;
     io.stdout.write(`Goal ${goal.content.goalId} was abandoned.\n`);
     return 0;
   } catch (error) {

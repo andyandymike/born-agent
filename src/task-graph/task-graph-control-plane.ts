@@ -1,7 +1,7 @@
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { ArtifactError } from "../artifacts/artifact-types.js";
 import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
-import { taskMutationBlocker } from "../coordination/task-control-plane.js";
+import { taskMutationBlocker, taskUserOrigin } from "../coordination/task-control-plane.js";
 import type { PlanRevisionProjection } from "../coordination/task-state-types.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
@@ -243,7 +243,7 @@ export class TaskGraphControlPlane {
         plan_revision: identity.content.binding.planRevision,
         plan_sha256: identity.content.binding.planSha256,
       } as const;
-      const origin = { input_surface: input.context.inputSurface, kind: "user" as const };
+      const origin = taskUserOrigin(input.context);
       if (baseRevision === null) {
         await append("task_graph.proposed", {
           artifact,
@@ -342,7 +342,7 @@ export class TaskGraphControlPlane {
         graph_id: existing.graphId,
         graph_revision: existing.revision,
         graph_sha256: existing.graphSha256,
-        origin: { input_surface: input.context.inputSurface, kind: "user" as const },
+        origin: taskUserOrigin(input.context),
         revision_event_id: existing.createdEventId,
       };
       if (input.decision === "approve") {

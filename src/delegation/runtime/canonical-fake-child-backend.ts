@@ -28,10 +28,10 @@ export const PHASE20_CANONICAL_CODING_FAKE_QUALIFICATION_SHA256 = sha256Canonica
 
 class CanonicalFakeContinuation extends BackendContinuation {}
 
-async function waitForDurableObservationWindow(signal: AbortSignal): Promise<void> {
+async function waitForDurableObservationWindow(signal: AbortSignal, milliseconds: number): Promise<void> {
   if (signal.aborted) return;
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(finish, 300);
+    const timer = setTimeout(finish, milliseconds);
     const onAbort = (): void => finish();
     function finish(): void {
       clearTimeout(timer);
@@ -55,11 +55,16 @@ export function isPhase20CanonicalFakeSelection(input: {
 
 export class Phase20CanonicalFakeChildBackend implements ModelBackend {
   #turn = 0;
+  private readonly observationWindowMs: number;
   private readonly taskProfile: "coding" | "read-only";
   readonly identity: BackendIdentity;
 
-  constructor(taskProfile: "coding" | "read-only" = "read-only") {
+  constructor(taskProfile: "coding" | "read-only" = "read-only", observationWindowMs = 300) {
+    if (!Number.isSafeInteger(observationWindowMs) || observationWindowMs < 1 || observationWindowMs > 120_000) {
+      throw new RangeError("canonical fake observation window must be an integer from 1 to 120000 milliseconds");
+    }
     this.taskProfile = taskProfile;
+    this.observationWindowMs = observationWindowMs;
     this.identity = Object.freeze({
       adapter: "bornagent-phase20-canonical-fake",
       adapterVersion: "phase20-v1",
@@ -174,7 +179,7 @@ export class Phase20CanonicalFakeChildBackend implements ModelBackend {
     // This package-owned backend keeps the real child in its running state for
     // one bounded watcher interval so CLI/TUI/pack gates can observe the
     // durable two-process overlap instead of relying only on terminal history.
-    await waitForDurableObservationWindow(signal);
+    await waitForDurableObservationWindow(signal, this.observationWindowMs);
     if (signal.aborted) return;
     yield {
       text: "Canonical Phase 20 child completed its bounded analysis contract.",

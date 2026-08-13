@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,13 +8,15 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
+import { planeForRuntime } from "../../src/control-plane/adapters/agent-cli-adapter.js";
 import { sha256Canonical } from "../../src/completion/canonical-json.js";
 import { taskMutationContext } from "../../src/commands/task-control-plane-command.js";
+import type { AuthenticatedTaskMutationBindingV1 } from "../../src/coordination/task-control-plane.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
 import { NodeGitWorktreePort } from "../../src/worktrees/git-worktree-port.js";
 import { ManagedWorktreeManager } from "../../src/worktrees/managed-worktree-manager.js";
 import { WorktreePromotionRuntime } from "../../src/worktrees/promotion-runtime.js";
-import { createMemoryIO, createRuntime } from "../helpers.js";
+import { createMemoryIO, createRuntime, withoutApplicationControlPlane } from "../helpers.js";
 import { SESSION_ID, writeLegacySession } from "../unit/phase16b-test-helpers.js";
 
 const execFile = promisify(nodeExecFile);
@@ -96,8 +98,12 @@ describe("Phase 19C managed worktree lifecycle", () => {
 
     const prompt = { request: async () => "approved" as const };
     const gitPort = new NodeGitWorktreePort({ environment: process.env });
-    const makeManager = (currentRuntime: typeof runtime) => new ManagedWorktreeManager({
-      context: taskMutationContext(currentRuntime, SESSION_ID),
+    const makeContext = (currentRuntime: typeof runtime, authenticatedMutation?: AuthenticatedTaskMutationBindingV1, inputSurface: "cli" | "tui" = "cli") => ({
+      ...taskMutationContext(currentRuntime, SESSION_ID, inputSurface),
+      ...(authenticatedMutation === undefined ? {} : { authenticatedApplication: authenticatedMutation }),
+    });
+    const makeManager = (currentRuntime: typeof runtime, authenticatedMutation?: AuthenticatedTaskMutationBindingV1, inputSurface?: "cli" | "tui") => new ManagedWorktreeManager({
+      context: makeContext(currentRuntime, authenticatedMutation, inputSurface),
       git: gitPort,
       managedRoot: state,
       prompt,
@@ -105,15 +111,22 @@ describe("Phase 19C managed worktree lifecycle", () => {
     });
     let manager = makeManager(runtime);
     runtime = createRuntime({
+      controlPlaneStateRoot: join(state, "phase21a-control"),
       cwd: workspace,
       randomUUID,
-      createManagedWorktreeManager: async () => manager,
-      createWorktreePromotionRuntime: async () => new WorktreePromotionRuntime({
-        context: taskMutationContext(runtime, SESSION_ID),
+      createManagedWorktreeManager: async ({ authenticatedMutation, inputSurface }) => {
+        manager = makeManager(runtime, authenticatedMutation, inputSurface);
+        return manager;
+      },
+      createWorktreePromotionRuntime: async ({ authenticatedMutation, inputSurface }) => {
+        manager = makeManager(runtime, authenticatedMutation, inputSurface);
+        return new WorktreePromotionRuntime({
+        context: makeContext(runtime, authenticatedMutation, inputSurface),
         manager,
         prompt,
         repositoryRulesSha256: sha256Canonical({ fixture: "rules" }),
-      }),
+      });
+      },
       createTaskAttemptExecutor: () => ({
         prepareWorkspace: async (input) => {
           const handle = await manager.locate({ graphId: input.graph.graphId, graphRevision: input.graph.revision, graphSha256: input.graph.graphSha256, nodeId: input.node.nodeId });
@@ -159,7 +172,7 @@ describe("Phase 19C managed worktree lifecycle", () => {
     expect(attempt?.workspaceBinding?.workspace_id).toBeTruthy();
     await writeFile(join(workspace, "message.txt"), "external edit\n", "utf8");
     const staleIo = createMemoryIO();
-    expect(await runCli(["graph", "promote", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256, "--node-id", "build", "--attempt-id", attempt!.attemptId], staleIo.io, runtime)).toBe(8);
+    expect(await runCli(["graph", "promote", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256, "--node-id", "build", "--attempt-id", attempt!.attemptId], staleIo.io, withoutApplicationControlPlane(runtime))).toBe(8);
     expect(staleIo.readStderr()).toContain("worktree_promotion_stale");
     expect(await readFile(join(workspace, "message.txt"), "utf8")).toBe("external edit\n");
     await writeFile(join(workspace, "message.txt"), "origin\n", "utf8");
@@ -171,5 +184,41 @@ describe("Phase 19C managed worktree lifecycle", () => {
     const cleaned = await new SessionCatalog(workspace).read(SESSION_ID);
     expect(cleaned.worktrees.workspaces[0]?.status).toBe("archived");
     expect(cleaned.worktrees.pendingOperationIds).toEqual([]);
+    for (const [type, actionKind] of [
+      ["task_worktree.allocation.prepared", "worktree.allocate"],
+      ["task_worktree.promotion.proposed", "promotion.apply"],
+      ["task_worktree.cleanup.requested", "worktree.cleanup"],
+    ] as const) {
+      const event = cleaned.events.find((candidate) => candidate.scope === "session" && candidate.type === type);
+      expect(event?.scope === "session" && "origin" in event.data ? event.data.origin : null).toMatchObject({
+        application_commit: { action_kind: actionKind },
+        kind: "authenticated_surface",
+      });
+    }
+    const operations = await (await planeForRuntime(runtime, createMemoryIO().io)).operations.list();
+    const composite = operations.filter((operation) =>
+      ["worktree.allocate", "promotion.apply", "worktree.cleanup"].includes(operation.actionKind)
+    );
+    expect(composite.map((operation) => operation.actionKind).sort()).toEqual([
+      "promotion.apply",
+      "worktree.allocate",
+      "worktree.cleanup",
+    ]);
+    expect(composite.every((operation) =>
+      operation.state === "completed" && operation.primaryDomainRecord !== null &&
+      operation.domainRecordRefs.length >= 1 && operation.underlyingOperationRefs.length >= 1
+    )).toBe(true);
+    const rawLines = (await readFile(join(workspace, ".bornagent", "sessions", `${SESSION_ID}.jsonl`), "utf8"))
+      .trimEnd()
+      .split("\n");
+    const rawHashes = new Map(rawLines.map((line) => {
+      const eventId = (JSON.parse(line) as { event_id: string }).event_id;
+      return [eventId, createHash("sha256").update(line, "utf8").digest("hex")] as const;
+    }));
+    for (const operation of composite) {
+      for (const reference of [...operation.domainRecordRefs, ...operation.underlyingOperationRefs]) {
+        expect(reference.recordSha256).toBe(rawHashes.get(reference.recordId));
+      }
+    }
   }, 30_000);
 });

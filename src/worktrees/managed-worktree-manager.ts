@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import type { ApprovalPrompt } from "../approvals/approval-types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import type { TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-projector.js";
@@ -153,6 +153,9 @@ export class ManagedWorktreeManager {
     try {
       await writer.appendTaskGraphEvent("task_worktree.allocation.prepared", {
         ...exactGraph(graph), allocation_plan: plan, allocation_plan_sha256: planSha256,
+        ...(this.options.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(this.options.context) }),
       });
     } finally {
       await writer.close();
@@ -189,6 +192,12 @@ export class ManagedWorktreeManager {
     try {
       const current = exactGraphRevision(reconstructMultiRunSession(writer.events), { revision: graph.revision, sha256: graph.graphSha256 });
       if (current.graphId !== graph.graphId) throw new WorktreeError("worktree_allocation_stale", "Graph identity changed after approval");
+      // Approval and baseline revalidation are observation-only until this
+      // point. Once allocation.approved/create.requested is appended, callers
+      // must reconcile the effect instead of treating cancellation as clean.
+      if (input.signal.aborted) {
+        throw new WorktreeError("worktree_approval_denied", "worktree allocation was cancelled before effect admission");
+      }
       await writer.appendTaskGraphEvent("task_worktree.allocation.approved", {
         ...exactGraph(graph), allocation_plan_sha256: planSha256, approval_identity_sha256: approvalIdentitySha256,
         approval_request_id: approvalRequestId, workspace_id: workspaceId,
@@ -437,11 +446,24 @@ export class ManagedWorktreeManager {
     const operationId = this.options.context.randomUuid();
     let writer = await this.writerFactory(this.options.context);
     try {
+      const currentGraph = exactGraphRevision(reconstructMultiRunSession(writer.events), {
+        revision: exact.revision,
+        sha256: exact.graphSha256,
+      });
+      if (currentGraph.graphId !== exact.graphId) {
+        throw new WorktreeError("worktree_identity_stale", "cleanup Graph identity changed before effect admission");
+      }
+      if (input.signal.aborted) {
+        throw new WorktreeError("worktree_approval_denied", "worktree cleanup was cancelled before effect admission");
+      }
       await writer.appendTaskGraphEvent("task_worktree.cleanup.requested", {
         ...exactGraph(exact),
         archive_sha256: archiveSha256,
         force: input.archiveAndRemove,
         operation_id: operationId,
+        ...(this.options.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(this.options.context) }),
         workspace_id: workspace.identity.workspaceId,
         workspace_snapshot_sha256: snapshot.manifest.snapshotSha256,
       });

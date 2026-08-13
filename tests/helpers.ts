@@ -215,3 +215,13 @@ export function createRuntime(
     },
   };
 }
+
+/**
+ * Pre-Phase21 core fixtures may intentionally exercise executeAgent with an
+ * in-memory writer. Keep that test-only embedding outside the Host application
+ * adapter; production Node runtimes and Phase21 integration fixtures retain it.
+ */
+export function withoutApplicationControlPlane(runtime: CliRuntime): CliRuntime {
+  const { controlPlaneStateRoot: omitted, ...legacy } = runtime;
+  return omitted === undefined ? runtime : legacy;
+}

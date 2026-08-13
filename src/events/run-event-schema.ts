@@ -4,6 +4,8 @@ import { persistedCompletionEvidenceSchema } from "../completion/completion-evid
 import { persistedDockerExecutionImageIdentitySchema } from "../execution/docker/acquisition/docker-image-identity.js";
 import { persistedRuntimePolicyEvidenceSchema } from "../policy/policy-evidence.js";
 import { persistedCapabilitySnapshotBindingSchema } from "../capabilities/capability-snapshot.js";
+import { persistedApplicationCommitBindingV1Schema } from "../control-plane/application-protocol.js";
+import { applicationCancelRequestBindingV1Schema } from "./phase21-run-control-event-schema.js";
 
 // PHASE2: RunEvent 是 BornAgent 自己的长期存储协议。
 // TypeScript 只能检查编译期代码，Zod 还会检查 SDK 数据、磁盘 JSONL 和未来读回的数据。
@@ -102,6 +104,9 @@ const workspaceResumeFingerprintSchema = z
   })
   .strict();
 const commonRunStartedData = {
+  // PHASE21: legacy runs omit this field; every ApplicationService-created
+  // run must persist the exact Host-built operation/prepared-action binding.
+  application_commit: persistedApplicationCommitBindingV1Schema.optional(),
   capability_snapshot: persistedCapabilitySnapshotBindingSchema.optional(),
   input: inputSchema,
   model: z.string().min(1),
@@ -529,18 +534,23 @@ const runFailedSchema = z
   })
   .strict();
 
+const runCancelledDataFields = {
+  duration_ms: nonnegativeInteger,
+  output_chars: nonnegativeInteger.optional(),
+  reason: z.literal("user"),
+  steps: nonnegativeInteger.optional(),
+  tool_calls: nonnegativeInteger.optional(),
+};
 const runCancelledSchema = z
   .object({
     ...commonEnvelope,
-    data: z
-      .object({
-        duration_ms: nonnegativeInteger,
-        output_chars: nonnegativeInteger.optional(),
-        reason: z.literal("user"),
-        steps: nonnegativeInteger.optional(),
-        tool_calls: nonnegativeInteger.optional(),
-      })
-      .strict(),
+    data: z.union([
+      z.object(runCancelledDataFields).strict(),
+      z.object({
+        ...runCancelledDataFields,
+        application_cancel_request: applicationCancelRequestBindingV1Schema,
+      }).strict(),
+    ]),
     type: z.literal("run.cancelled"),
   })
   .strict();

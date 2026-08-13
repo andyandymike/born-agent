@@ -4,6 +4,7 @@ import { canonicalTaskGraphIdentity, taskGraphApprovalIdentity } from "./task-gr
 import { taskGraphRevisionContentSchema } from "./task-graph-schema.js";
 import { phase19WorktreeSessionEventDataSchemas } from "../worktrees/worktree-event-schema.js";
 import { phase19BackgroundSessionEventDataSchemas } from "../background/background-event-schema.js";
+import { persistedUserActionOriginV2Schema } from "../control-plane/application-protocol.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -36,10 +37,7 @@ const artifactRefSchema = z.object({
     context.addIssue({ code: "custom", message: "artifact ID and SHA-256 must match" });
   }
 });
-const userOriginSchema = z.object({
-  kind: z.literal("user"),
-  input_surface: z.enum(["cli", "tui"]),
-}).strict();
+const userOriginSchema = persistedUserActionOriginV2Schema;
 const agentOriginSchema = z.object({
   kind: z.literal("agent"),
   run_id: uuid,
@@ -164,6 +162,38 @@ const rejected = z.object({
 });
 
 const graphExactTarget = z.object({ ...graphRefFields }).strict();
+const graphEnqueuedFields = {
+  ...graphRefFields,
+  enqueue_id: uuid,
+  binding: graphBindingEventSchema,
+  requested_execution: z.enum(["foreground", "background"]),
+  runtime_profile_id: bounded(128).min(1),
+} as const;
+const graphCancelRequestedFields = {
+  ...graphRefFields,
+  active_attempt_id: uuid.nullable(),
+  reason: bounded(2048).min(1),
+  request_id: uuid,
+} as const;
+const graphRetryRequestedFields = {
+  ...graphRefFields,
+  attempt_number: positive.max(3),
+  node_id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
+  requested_by: z.literal("user"),
+  terminal_event_id: uuid,
+} as const;
+const authenticatedGraphRetryRequested = z.object({
+  ...graphRetryRequestedFields,
+  origin: userOriginSchema,
+  previous_terminal: z.enum(["known_failed", "pre_effect_infrastructure_failure", "cancelled_clean"]),
+}).strict();
+
+function legacyOrAuthenticatedUserEvent<T extends z.ZodRawShape>(fields: T) {
+  return z.union([
+    z.object(fields).strict(),
+    z.object({ ...fields, origin: userOriginSchema }).strict(),
+  ]);
+}
 
 export const phase19TaskGraphSessionEventDataSchemas = {
   "task_graph.proposed": proposed,
@@ -176,30 +206,19 @@ export const phase19TaskGraphSessionEventDataSchemas = {
     observed_binding_sha256: sha256,
     previous_binding: graphBindingEventSchema,
   }).strict(),
-  "task_graph.enqueued": z.object({
-    ...graphRefFields,
-    enqueue_id: uuid,
-    binding: graphBindingEventSchema,
-    requested_execution: z.enum(["foreground", "background"]),
-    runtime_profile_id: bounded(128).min(1),
-  }).strict(),
-  "task_graph.started": z.object({
+  "task_graph.enqueued": legacyOrAuthenticatedUserEvent(graphEnqueuedFields),
+  "task_graph.started": legacyOrAuthenticatedUserEvent({
     ...graphRefFields,
     enqueue_id: uuid,
     scheduler_lease_nonce_sha256: sha256,
-  }).strict(),
+  }),
   "task_graph.waiting_for_user": z.object({
     ...graphRefFields,
     attempt_id: uuid.nullable(),
     reason: z.enum(["approval_required", "input_required", "promotion_required", "profile_required", "reconciliation_required"]),
     requested_action_ref: bounded(1024).optional(),
   }).strict(),
-  "task_graph.cancel.requested": z.object({
-    ...graphRefFields,
-    active_attempt_id: uuid.nullable(),
-    reason: bounded(2048).min(1),
-    request_id: uuid,
-  }).strict(),
+  "task_graph.cancel.requested": legacyOrAuthenticatedUserEvent(graphCancelRequestedFields),
   "task_graph.terminal": z.object({
     ...graphRefFields,
     blocker_code: bounded(128).optional(),
@@ -284,13 +303,10 @@ export const phase19TaskGraphSessionEventDataSchemas = {
       "pre_effect_infrastructure_failure",
     ]),
   }).strict(),
-  "task_node.retry.requested": z.object({
-    ...graphRefFields,
-    attempt_number: positive.max(3),
-    node_id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
-    requested_by: z.literal("user"),
-    terminal_event_id: uuid,
-  }).strict(),
+  "task_node.retry.requested": z.union([
+    z.object(graphRetryRequestedFields).strict(),
+    authenticatedGraphRetryRequested,
+  ]),
   "task_node.skipped": z.object({
     ...graphRefFields,
     node_id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),

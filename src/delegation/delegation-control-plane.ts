@@ -5,7 +5,7 @@ import type {
   TaskMutationContext,
   TaskMutationWriterFactory,
 } from "../coordination/task-control-plane.js";
-import { taskMutationBlocker } from "../coordination/task-control-plane.js";
+import { taskMutationBlocker, taskUserOrigin } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import type { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { DelegationError } from "./delegation-errors.js";
@@ -85,6 +85,27 @@ function exactRevision(
     throw new DelegationError("delegation_revision_conflict", "delegation revision selector is stale");
   }
   return found;
+}
+
+/** A Graph cancellation root closes every later delegation admission fence. */
+function assertGraphDelegationAdmissionOpen(
+  session: Session,
+  binding: DelegationParentBindingV1,
+): void {
+  if (binding.graphId === null) return;
+  const cancelled = session.events.some((event) => {
+    if (event.scope !== "session" || event.type !== "task_graph.cancel.requested") return false;
+    const value = event.data as Readonly<Record<string, unknown>>;
+    return value.graph_id === binding.graphId &&
+      value.graph_revision === binding.graphRevision &&
+      value.graph_sha256 === binding.graphSha256;
+  });
+  if (cancelled) {
+    throw new DelegationError(
+      "delegation_cancelled",
+      "Graph cancellation closed delegation admission for this exact parent binding",
+    );
+  }
 }
 
 function currentGoalAndPlan(session: Session): {
@@ -234,6 +255,7 @@ export class DelegationControlPlane {
   async #withLocked<T>(
     context: TaskMutationContext,
     operation: (locked: LockedDelegationSession) => Promise<T>,
+    options: { readonly allowUnresolvedEffectsForCancellation?: boolean } = {},
   ): Promise<T> {
     const writer = await this.writerFactory(context);
     try {
@@ -244,9 +266,11 @@ export class DelegationControlPlane {
       ) {
         throw new DelegationError("delegation_revision_conflict", "session changed since the optimistic delegation snapshot");
       }
-      const blocker = taskMutationBlocker(session);
-      if (blocker !== null) {
-        throw new DelegationError("delegation_effect_reconciliation_required", `session effect reconciliation is required (${blocker.details.join(", ")})`);
+      if (options.allowUnresolvedEffectsForCancellation !== true) {
+        const blocker = taskMutationBlocker(session);
+        if (blocker !== null) {
+          throw new DelegationError("delegation_effect_reconciliation_required", `session effect reconciliation is required (${blocker.details.join(", ")})`);
+        }
       }
       return await operation({
         append: async (type, value) => { await writer.appendDelegationEvent(type, value); },
@@ -266,6 +290,7 @@ export class DelegationControlPlane {
   }): Promise<DelegationMutationResultV1> {
     return this.#withLocked(input.context, async ({ append, session, writer }) => {
       const binding = resolveDelegationParentBinding(session, input.parentRunId);
+      assertGraphDelegationAdmissionOpen(session, binding);
       let delegationId: string;
       let revisionNumber: number;
       let base: DelegationRevisionProjectionV1 | null;
@@ -328,7 +353,7 @@ export class DelegationControlPlane {
         delegation_id: delegationId,
         delegation_revision: revisionNumber,
         delegation_sha256: identity.delegationSha256,
-        origin: { input_surface: input.context.inputSurface, kind: "user" as const },
+        origin: taskUserOrigin(input.context),
         parent_actor_id: binding.parentActorId,
         parent_run_id: binding.parentRunId,
       };
@@ -394,6 +419,7 @@ export class DelegationControlPlane {
       if (sha256Canonical(current) !== sha256Canonical(revision.binding)) {
         throw new DelegationError("delegation_binding_stale", "delegation parent binding is no longer current");
       }
+      if (input.decision === "approved") assertGraphDelegationAdmissionOpen(session, revision.binding);
       await verifyDelegationRevisionArtifact(input.context.workspace, input.context.sessionId, revision);
       const display = {
         authority_preview_sha256: revision.authorityPreviewSha256,
@@ -436,7 +462,7 @@ export class DelegationControlPlane {
         delegation_revision: revision.delegationRevision,
         delegation_sha256: revision.delegationSha256,
         display_artifact: displayArtifact,
-        origin: { input_surface: input.context.inputSurface, kind: "user" },
+        origin: taskUserOrigin(input.context),
         parent_actor_id: revision.parentActorId,
         parent_run_id: revision.parentRunId,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
@@ -447,7 +473,7 @@ export class DelegationControlPlane {
           delegation_id: revision.delegationId,
           delegation_revision: revision.delegationRevision,
           delegation_sha256: revision.delegationSha256,
-          origin: { input_surface: input.context.inputSurface, kind: "user" },
+          origin: taskUserOrigin(input.context),
           parent_actor_id: revision.parentActorId,
           parent_run_id: revision.parentRunId,
           queue_request_id: input.context.randomUuid(),
@@ -483,7 +509,7 @@ export class DelegationControlPlane {
         delegation_id: revision.delegationId,
         delegation_revision: revision.delegationRevision,
         delegation_sha256: revision.delegationSha256,
-        origin: { input_surface: input.context.inputSurface, kind: "user" },
+        origin: taskUserOrigin(input.context),
         parent_actor_id: revision.parentActorId,
         parent_run_id: revision.parentRunId,
         reason: input.reason,
@@ -495,6 +521,13 @@ export class DelegationControlPlane {
         delegation: exactRevision(next.delegations, revision.delegationId, revision.delegationRevision, revision.delegationSha256),
         projection: next.delegations,
       });
+    }, {
+      // PHASE21: delegation.cancel is a safety-reducing request, not a new
+      // effect or a terminal claim. It must remain admissible across the exact
+      // unresolved child effect that it is intended to stop; the active owner
+      // and reconciler still require durable cancellation/cleanup evidence
+      // before reporting a terminal outcome.
+      allowUnresolvedEffectsForCancellation: true,
     });
   }
 
@@ -514,11 +547,12 @@ export class DelegationControlPlane {
       if (revision.status !== "approved") {
         throw new DelegationError("delegation_revision_conflict", "only an approved delegation can be queued");
       }
+      assertGraphDelegationAdmissionOpen(session, revision.binding);
       await append("delegation.queued", {
         delegation_id: revision.delegationId,
         delegation_revision: revision.delegationRevision,
         delegation_sha256: revision.delegationSha256,
-        origin: { input_surface: input.context.inputSurface, kind: "user" },
+        origin: taskUserOrigin(input.context),
         parent_actor_id: revision.parentActorId,
         parent_run_id: revision.parentRunId,
         queue_request_id: input.context.randomUuid(),

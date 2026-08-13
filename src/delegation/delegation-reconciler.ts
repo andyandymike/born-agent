@@ -8,6 +8,7 @@ export type DelegationReconcileOutcomeV1 =
   | { readonly kind: "terminal_backfilled"; readonly receiptSha256: string }
   | { readonly kind: "retry_pre_effect_allowed" }
   | { readonly kind: "pre_effect_failure_terminal"; readonly attemptId: string }
+  | { readonly kind: "pre_effect_cancelled"; readonly attemptId: string; readonly cancelRequestEventId: string }
   | { readonly kind: "cancelled_clean"; readonly receiptSha256: string }
   | { readonly kind: "blocked_unknown_effect"; readonly evidenceRefs: readonly string[] }
   | { readonly kind: "corrupt"; readonly code: string };
@@ -68,6 +69,18 @@ export function classifyDelegationReconcileOutcome(input: {
     revision.attempts.length < revision.content.retry.maxAttempts;
   if (automaticRetryEligible) {
     return Object.freeze({ kind: "retry_pre_effect_allowed" });
+  }
+  if (
+    preEffectRecorded && operation.failure?.code === "delegation_cancelled" &&
+    operation.failure.cancelRequestEventId !== undefined &&
+    attempt?.terminal === "cancelled_clean" && attempt.budgetSettlementEventId !== null &&
+    revision?.status === "cancelled"
+  ) {
+    return Object.freeze({
+      attemptId: operation.childAttemptId,
+      cancelRequestEventId: operation.failure.cancelRequestEventId,
+      kind: "pre_effect_cancelled" as const,
+    });
   }
   if (preEffectRecorded && attempt?.terminal === "pre_effect_infrastructure_failure") {
     return Object.freeze({ kind: "pre_effect_failure_terminal", attemptId: operation.childAttemptId });

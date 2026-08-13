@@ -1,6 +1,7 @@
 import {
   allocateTaskUuid,
   TaskControlPlaneError,
+  taskUserOrigin,
   type TaskMutationContext,
   type TaskMutationWriterFactory,
   withTaskMutation,
@@ -207,20 +208,14 @@ export class PlanStore implements UserPlanStore {
           base === null
             ? await append("plan.proposed", {
                 content: eventContent,
-                origin: {
-                  input_surface: input.context.inputSurface,
-                  kind: "user",
-                },
+                origin: taskUserOrigin(input.context),
                 plan_sha256: identity.sha256,
               })
             : await append("plan.revised", {
                 base_revision: base.revision,
                 base_sha256: base.planSha256,
                 content: eventContent,
-                origin: {
-                  input_surface: input.context.inputSurface,
-                  kind: "user",
-                },
+                origin: taskUserOrigin(input.context),
                 plan_sha256: identity.sha256,
               });
         return findPlan(result.state, planId, revision);
@@ -245,10 +240,7 @@ export class PlanStore implements UserPlanStore {
         const result = await append("plan.approved", {
           goal_id: input.goalId,
           goal_revision: input.goalRevision,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           plan_id: input.planId,
           plan_sha256: input.sha256,
           revision: input.revision,
@@ -276,10 +268,7 @@ export class PlanStore implements UserPlanStore {
         const result = await append("plan.rejected", {
           goal_id: input.goalId,
           goal_revision: input.goalRevision,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           plan_id: input.planId,
           plan_sha256: input.sha256,
           reason: input.reason,

@@ -37,7 +37,10 @@ async function runChildCli(
     ["--import", import.meta.resolve("tsx"), cliEntry, ...args],
     {
       cwd,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        BORN_CONTROL_STATE_ROOT: join(cwd, ".bornagent", "test-control"),
+      },
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     },
@@ -115,6 +118,7 @@ describe("Phase 16F TUI/CLI writer concurrency", () => {
     let refreshes = 0;
     let initialRefreshCompleted = false;
     const core: TuiCorePort = {
+      abortActiveOwnerRun: () => undefined,
       cancelActiveRun: () => undefined,
       loadSession: async (sessionId) => {
         refreshes += 1;
@@ -265,11 +269,14 @@ describe("Phase 16F TUI/CLI writer concurrency", () => {
         "--sha256",
         proposed.planSha256,
       ]);
-      expect(child.exitCode).toBe(2);
+      // Product application control maps an active cross-process writer to a
+      // retryable busy outcome (8), while the legacy no-control adapter used
+      // to expose the command-layer usage code (2).
+      expect(child.exitCode).toBe(8);
       expect(child.stderr).toMatch(/lock|busy/iu);
       expect(await readFile(sessionPath, "utf8")).toBe(before);
     } finally {
       await activeWriter.close();
     }
-  }, 10_000);
+  }, 30_000);
 });

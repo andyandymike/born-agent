@@ -22,6 +22,7 @@ import {
 } from "../tools/tool-types.js";
 import type { AgentMode } from "./agent-mode.js";
 import type { TaskStateProjection } from "../coordination/task-state-types.js";
+import type { ApplicationCancelRequestBindingV1 } from "../events/phase21-run-control-event-schema.js";
 import type { TurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import type { RecoveredToolObservation } from "../resume/resume-types.js";
 import type {
@@ -88,6 +89,9 @@ export interface AgentLoopDeps {
   // PHASE4: Loop 只依赖 provider-neutral model、只读 Registry、Publisher、预算和时钟，
   // 因此测试无需真实网络、磁盘、timer 或子进程。
   readonly budget: BudgetTracker;
+  readonly applicationCancelRequest?: () => ApplicationCancelRequestBindingV1 | undefined;
+  /** A Host surface fatal is an internal failure, never run.cancelled. */
+  readonly hostEmergencyReason?: () => "tui_surface_fatal" | undefined;
   readonly beforeVerifiedRunCompleted?: (input: {
     readonly callId: string;
     readonly evidenceSha256: string;
@@ -376,10 +380,31 @@ export async function runAgentLoop(
   const publishCancelled = async (): Promise<AgentTerminal> => {
     await publishAggregateUsage();
     const snapshot = budget.snapshot();
+    if (deps.hostEmergencyReason?.() === "tui_surface_fatal") {
+      const terminal = { exitCode: 1, type: "failed" } as const;
+      await deps.beforeRunTerminal?.(terminal);
+      await publisher.publish({
+        data: {
+          category: "internal",
+          code: "tui_surface_fatal",
+          duration_ms: snapshot.elapsedMs,
+          message: "TUI surface failed while this exact Host owner was active",
+          output_chars: publisher.outputLength,
+          retryable: false,
+          steps: snapshot.steps,
+          tool_calls: publisher.completedToolCalls,
+        },
+        type: "run.failed",
+      });
+      return terminal;
+    }
     const terminal = { exitCode: 130, type: "cancelled" } as const;
     await deps.beforeRunTerminal?.(terminal);
     await publisher.publish({
       data: {
+        ...(deps.applicationCancelRequest?.() === undefined
+          ? {}
+          : { application_cancel_request: deps.applicationCancelRequest!()! }),
         duration_ms: snapshot.elapsedMs,
         output_chars: publisher.outputLength,
         reason: "user",

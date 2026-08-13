@@ -1,7 +1,7 @@
 import { Command, CommanderError } from "commander";
 
-import { executeAgent } from "../commands/agent.js";
-import { executeChat } from "../commands/chat.js";
+import { executeAgentThroughApplicationService } from "../control-plane/adapters/agent-cli-adapter.js";
+import { executeChatThroughApplicationService } from "../control-plane/adapters/chat-application-cli-adapter.js";
 import { executeDoctor } from "../commands/doctor.js";
 import { executeModels } from "../commands/models.js";
 import {
@@ -637,7 +637,7 @@ export async function runCli(
           verbose: boolean;
         },
       ) => {
-        commandExitCode = await executeAgent(
+        commandExitCode = await executeAgentThroughApplicationService(
           {
             artifactCaptureBytes: options.artifactCaptureBytes,
             commandApproval: options.commandApproval,
@@ -710,7 +710,7 @@ export async function runCli(
           verbose: boolean;
         },
       ) => {
-        commandExitCode = await executeChat(
+        commandExitCode = await executeChatThroughApplicationService(
           {
             model: options.model,
             policyConfig: options.policyConfig,

@@ -550,9 +550,8 @@ const exitCode = await runCli(
     : graphLifecycle
     ? [
         "tui",
-        "--resume",
+        "--inspect-session",
         SESSION_ID,
-        "--allow-degraded-resume",
         "--provider",
         "ollama",
         "--model",

@@ -230,8 +230,48 @@ export class BackgroundOperationStore {
     await exclusiveRecord(join(this.paths.controls, `${control.requestId}.json`), graphWorkerCancelControlSchema.parse(control));
   }
 
+  async createCancelIdempotent(control: GraphWorkerCancelControlV1): Promise<GraphWorkerCancelControlV1> {
+    const validated = graphWorkerCancelControlSchema.parse(control);
+    const existing = await this.readCancelEvidence(validated.requestId);
+    if (existing !== null) {
+      if (sha256Canonical(existing) !== sha256Canonical(validated)) {
+        throw new BackgroundError("worker_handoff_conflict", "background cancel request identity already has different durable content");
+      }
+      return Object.freeze(existing);
+    }
+    try {
+      await this.createCancel(validated);
+      return Object.freeze(validated);
+    } catch (error) {
+      if (!(error instanceof BackgroundError) || error.code !== "worker_handoff_conflict") throw error;
+      const raced = await this.readCancelEvidence(validated.requestId);
+      if (raced === null || sha256Canonical(raced) !== sha256Canonical(validated)) throw error;
+      return Object.freeze(raced);
+    }
+  }
+
   async readCancel(requestId: string): Promise<GraphWorkerCancelControlV1 | null> {
     return readRecord(join(this.paths.controls, `${requestId}.json`), graphWorkerCancelControlSchema);
+  }
+
+  async readCancelEvidence(requestId: string): Promise<GraphWorkerCancelControlV1 | null> {
+    if (!/^[0-9a-f-]{36}$/u.test(requestId)) {
+      throw new BackgroundError("worker_protocol_mismatch", "worker cancel request identity is invalid");
+    }
+    const active = await this.readCancel(requestId);
+    const receiptNames = (await readdir(this.paths.receipts))
+      .filter((name) => name.startsWith(`control-${requestId}-`) && name.endsWith(".json"))
+      .sort();
+    if (receiptNames.length > 1 || (active !== null && receiptNames.length > 0)) {
+      throw new BackgroundError("worker_reconciliation_required", "background cancel has ambiguous durable evidence");
+    }
+    if (active !== null) return Object.freeze(active);
+    if (receiptNames.length === 0) return null;
+    const consumed = await readRecord(join(this.paths.receipts, receiptNames[0]!), graphWorkerCancelControlSchema);
+    if (consumed === null || consumed.requestId !== requestId) {
+      throw new BackgroundError("worker_reconciliation_required", "consumed background cancel evidence is incomplete");
+    }
+    return Object.freeze(consumed);
   }
 
   async listCancelControls(): Promise<readonly GraphWorkerCancelControlV1[]> {

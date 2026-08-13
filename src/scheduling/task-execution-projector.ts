@@ -447,13 +447,16 @@ export class TaskExecutionProjector {
           const data = event.data as Phase19TaskGraphSessionEventData<"task_node.retry.requested">;
           const node = nodes.get(data.node_id);
           const previous = node?.attempts.at(data.attempt_number - 1);
+          const previousTerminal = "previous_terminal" in data ? data.previous_terminal : previous?.terminal;
+          const expectedNodeStatus = previousTerminal === "cancelled_clean" ? "cancelled" : "failed";
           if (
             active !== null || node === undefined || previous === undefined ||
             previous.attemptNumber !== data.attempt_number || previous.terminalEventId !== data.terminal_event_id ||
-            previous.status !== "terminal" || !["known_failed", "pre_effect_infrastructure_failure"].includes(previous.terminal ?? "") ||
-            node.status !== "failed" || node.attempts.length >= node.node.budget.maxAttempts
+            previous.status !== "terminal" || previous.terminal !== previousTerminal ||
+            !["known_failed", "pre_effect_infrastructure_failure", "cancelled_clean"].includes(previousTerminal ?? "") ||
+            node.status !== expectedNodeStatus || node.attempts.length >= node.node.budget.maxAttempts
           ) {
-            throw new TaskGraphError("task_graph_invalid", "manual retry does not exact-match one retryable failed attempt");
+            throw new TaskGraphError("task_graph_invalid", "manual retry does not exact-match one retryable failed or cancelled attempt");
           }
           node.status = "pending";
           node.nextAttemptOrigin = "user";

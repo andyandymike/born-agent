@@ -1,7 +1,7 @@
 import type { ApprovalPrompt } from "../approvals/approval-types.js";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import type { ExecutionPreparerLike, ExecutionResult, Executor } from "../execution/execution-types.js";
 import type { CommandActionIdentity, PermissionContext, PermissionEngineLike } from "../permissions/permission-types.js";
 import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
@@ -235,11 +235,38 @@ export class OriginVerificationRuntime {
     } as const;
     writer = await this.writerFactory(this.options.context);
     try {
+      const current = reconstructMultiRunSession(writer.events);
+      const currentPromotion = current.worktrees.promotions.find((candidate) =>
+        candidate.status === "applied" && candidate.operationId === input.promotionOperationId &&
+        candidate.bundle.bundleSha256 === promotion.bundle.bundleSha256 &&
+        candidate.originSourceSnapshotSha256 === promotion.originSourceSnapshotSha256
+      );
+      const currentExecution = current.taskExecution;
+      if (
+        currentPromotion === undefined || currentExecution === null ||
+        currentExecution.status !== "awaiting_integration" ||
+        currentExecution.graph.graphId !== promotion.bundle.graphId ||
+        currentExecution.graph.revision !== promotion.bundle.graphRevision ||
+        currentExecution.graph.graphSha256 !== promotion.bundle.graphSha256 ||
+        current.worktrees.originVerifications.some((candidate) =>
+          candidate.promotionOperationId === input.promotionOperationId &&
+          (candidate.status === "requested" || candidate.status === "reconciliation_required"))
+      ) {
+        throw new WorktreeError("worktree_promotion_stale", "origin verification authority changed before effect admission");
+      }
+      if (input.signal.aborted) {
+        throw new WorktreeError("worktree_approval_denied", "origin verification was cancelled before effect admission");
+      }
       await writer.appendTaskGraphEvent("task_origin_verification.approved", {
         ...common,
         approval_identity_sha256: approvalIdentitySha256,
       });
-      await writer.appendTaskGraphEvent("task_origin_verification.requested", common);
+      await writer.appendTaskGraphEvent("task_origin_verification.requested", {
+        ...common,
+        ...(this.options.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(this.options.context) }),
+      });
     } finally {
       await writer.close();
     }

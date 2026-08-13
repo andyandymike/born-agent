@@ -1,5 +1,5 @@
 import { sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { TaskGraphError } from "../task-graph/task-graph-errors.js";
@@ -183,6 +183,9 @@ export class DeterministicTaskScheduler {
       await writer.appendTaskGraphEvent("task_graph.started", {
         ...exactFields(execution.graph),
         enqueue_id: execution.enqueue.enqueueId,
+        ...(this.options.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(this.options.context) }),
         scheduler_lease_nonce_sha256: leaseSha256,
       });
       const next = reconstructMultiRunSession(writer.events).taskExecution;
@@ -238,9 +241,18 @@ export class DeterministicTaskScheduler {
     if ((selected.node.workspace.mode === "origin_read_only") !== (workspace.binding === null)) {
       throw new TaskGraphError("task_workspace_mode_unavailable", `node ${selected.nodeId} workspace preparation violated its Graph mode`);
     }
-    await this.#mutate(async (writer, current) => {
+    const admitted = await this.#mutate(async (writer, current) => {
+      if (signal.aborted && current.activeAttempt === null && current.status === "cancelled") {
+        return false;
+      }
       if (current.readyNodeIds[0] !== selected.nodeId || current.activeAttempt !== null) {
         throw new TaskGraphError("task_scheduler_busy", "ready queue changed before node admission");
+      }
+      // Final admission fence: workspace preparation may have blocked while a
+      // typed owner cancellation became durable. No lease or attempt request
+      // exists yet, so aborting here is still a proven pre-effect outcome.
+      if (signal.aborted) {
+        throw new TaskGraphError("task_waiting_for_user", "scheduler was cancelled before node admission");
       }
       if (workspace.binding !== null) {
         await writer.appendTaskGraphEvent("task_worktree.lease.acquired", {
@@ -262,7 +274,9 @@ export class DeterministicTaskScheduler {
         })(),
         ...(workspace.binding === null ? {} : { workspace_binding: workspace.binding }),
       });
+      return true;
     });
+    if (!admitted) return null;
     return { attemptId, attemptNumber, node: selected.node, runId, schedulerLeaseNonceSha256: lease, workspace };
   }
 

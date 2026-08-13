@@ -9,8 +9,23 @@ import {
   type ReconstructedMultiRunSession,
 } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
+import type {
+  ApplicationCommitBindingV1,
+  PersistedUserActionOriginV2,
+  SurfaceIdentityV1,
+} from "../control-plane/application-protocol.js";
+
+export interface AuthenticatedTaskMutationBindingV1 {
+  readonly actionIdentitySha256: string;
+  readonly applicationCommit: ApplicationCommitBindingV1;
+  readonly authenticationId: string;
+  readonly requestId: string;
+  readonly surface: SurfaceIdentityV1;
+}
 
 export interface TaskMutationContext {
+  /** PHASE21: Host-built application authority for new surface mutations. */
+  readonly authenticatedApplication?: AuthenticatedTaskMutationBindingV1;
   /** TUI-only optimistic binding, rechecked after the writer lock is held. */
   readonly expectedSessionSeq?: number;
   readonly inputSurface: "cli" | "tui";
@@ -18,6 +33,38 @@ export interface TaskMutationContext {
   readonly randomUuid: () => string;
   readonly sessionId: string;
   readonly workspace: string;
+}
+
+export function persistedTaskUserOrigin(
+  inputSurface: "cli" | "tui",
+  binding?: AuthenticatedTaskMutationBindingV1,
+): PersistedUserActionOriginV2 {
+  if (binding === undefined) {
+    return Object.freeze({ input_surface: inputSurface, kind: "user" });
+  }
+  if (binding.surface.surface !== inputSurface) {
+    throw new TaskControlPlaneError("stale_snapshot", "authenticated application surface does not match mutation context");
+  }
+  return Object.freeze({
+    action_identity_sha256: binding.actionIdentitySha256,
+    application_commit: Object.freeze({
+      action_kind: binding.applicationCommit.actionKind,
+      authorization_decision_sha256: binding.applicationCommit.authorizationDecisionSha256,
+      operation_id: binding.applicationCommit.operationId,
+      prepared_action_sha256: binding.applicationCommit.preparedActionSha256,
+      principal_id: binding.applicationCommit.principalId,
+      schema_version: 1,
+    }),
+    authentication_id: binding.authenticationId,
+    client_id: binding.surface.clientId,
+    kind: "authenticated_surface",
+    request_id: binding.requestId,
+    surface: binding.surface.surface,
+  });
+}
+
+export function taskUserOrigin(context: TaskMutationContext): PersistedUserActionOriginV2 {
+  return persistedTaskUserOrigin(context.inputSurface, context.authenticatedApplication);
 }
 
 export type TaskControlPlaneErrorCode =
@@ -77,9 +124,20 @@ export function taskMutationBlocker(
   const mcpCalls = new Set<string>();
   const mcpServers = new Set<string>();
   const hookCommands = new Set<string>();
+  let cancelBarrier = false;
 
   for (const event of session.lastRun.events) {
     switch (event.type) {
+      case "run.cancel.requested":
+        cancelBarrier = true;
+        break;
+      case "run.budget_exceeded":
+      case "run.cancelled":
+      case "run.completed":
+      case "run.failed":
+      case "run.incomplete":
+        cancelBarrier = false;
+        break;
       case "tool.call.requested":
       case "resume.pending_call.adopted":
         if (
@@ -165,6 +223,7 @@ export function taskMutationBlocker(
     ...(hookCommands.size === 0
       ? []
       : [`unknown_hook_commands=${String(hookCommands.size)}`]),
+    ...(cancelBarrier ? ["pending_run_cancel=1"] : []),
   ];
   return details.length === 0
     ? null
@@ -190,6 +249,34 @@ export interface LockedTaskMutationSession {
 export type TaskMutationWriterFactory = (
   context: TaskMutationContext,
 ) => Promise<V2SessionWriter>;
+
+/**
+ * PHASE21: an ApplicationService action may hold the one authoritative writer
+ * while invoking an existing domain owner that normally owns and closes the
+ * writer returned by its factory. This explicit borrowed lease preserves that
+ * ownership boundary: every operation is bound to the real writer, while the
+ * nested owner's close is a no-op and only the Host releases the lock.
+ */
+export function borrowedTaskMutationWriterFactory(
+  writer: V2SessionWriter,
+): TaskMutationWriterFactory {
+  const borrowed = new Proxy(writer, {
+    get: (target, property) => {
+      if (property === "close") return async () => undefined;
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return async (context) => {
+    if (writer.isClosed() || writer.readDurableTailIdentity().sessionId !== context.sessionId) {
+      throw new TaskControlPlaneError(
+        "session_effect_reconciliation_required",
+        "borrowed application writer is closed or belongs to another session",
+      );
+    }
+    return borrowed;
+  };
+}
 
 async function defaultWriterFactory(
   context: TaskMutationContext,

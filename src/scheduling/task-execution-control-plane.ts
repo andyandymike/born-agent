@@ -1,4 +1,4 @@
-import { taskMutationBlocker, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskMutationBlocker, taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { verifyTaskGraphRevisionArtifact } from "../task-graph/task-graph-control-plane.js";
@@ -86,6 +86,7 @@ export class TaskExecutionControlPlane {
         graph_sha256: graph.graphSha256,
         requested_execution: input.requestedExecution,
         runtime_profile_id: input.runtimeProfileId,
+        ...(input.context.authenticatedApplication === undefined ? {} : { origin: taskUserOrigin(input.context) }),
       });
       session = reconstructMultiRunSession(writer.events);
       if (session.taskExecution === null) throw new TaskGraphError("task_graph_invalid", "enqueue did not create an execution projection");
@@ -120,6 +121,7 @@ export class TaskExecutionControlPlane {
         graph_sha256: execution.graph.graphSha256,
         reason: input.reason,
         request_id: input.context.randomUuid(),
+        ...(input.context.authenticatedApplication === undefined ? {} : { origin: taskUserOrigin(input.context) }),
       });
       if (execution.activeAttempt === null) {
         await writer.appendTaskGraphEvent("task_graph.terminal", {
@@ -141,7 +143,10 @@ export class TaskExecutionControlPlane {
 
   async retry(input: {
     readonly attemptNumber: number;
+    readonly attemptTerminal: "cancelled_clean" | "known_failed" | "pre_effect_infrastructure_failure";
     readonly context: TaskMutationContext;
+    readonly graphRevision: number;
+    readonly graphSha256: string;
     readonly nodeId: string;
     readonly terminalEventId: string;
   }): Promise<TaskExecutionMutationResultV1> {
@@ -149,18 +154,22 @@ export class TaskExecutionControlPlane {
     try {
       let session = reconstructMultiRunSession(writer.events);
       const execution = session.taskExecution;
-      if (execution === null || execution.status !== "failed" || execution.activeAttempt !== null) {
-        throw new TaskGraphError("task_graph_revision_conflict", "manual retry requires one failed Graph with no active attempt");
+      if (
+        execution === null || !["failed", "cancelled"].includes(execution.status) || execution.activeAttempt !== null ||
+        execution.graph.revision !== input.graphRevision || execution.graph.graphSha256 !== input.graphSha256
+      ) {
+        throw new TaskGraphError("task_graph_revision_conflict", "manual retry requires one exact failed or cancelled Graph with no active attempt");
       }
       const node = execution.nodes.find((candidate) => candidate.nodeId === input.nodeId);
       const attempt = node?.attempts.at(input.attemptNumber - 1);
+      const expectedNodeStatus = input.attemptTerminal === "cancelled_clean" ? "cancelled" : "failed";
       if (
         node === undefined || attempt === undefined || attempt.attemptNumber !== input.attemptNumber ||
         attempt.terminalEventId !== input.terminalEventId || attempt.status !== "terminal" ||
-        !["known_failed", "pre_effect_infrastructure_failure"].includes(attempt.terminal ?? "") ||
+        attempt.terminal !== input.attemptTerminal || node.status !== expectedNodeStatus ||
         node.attempts.length >= node.node.budget.maxAttempts
       ) {
-        throw new TaskGraphError("task_graph_revision_conflict", "manual retry selector is stale, unsafe, or outside the approved attempt ceiling");
+        throw new TaskGraphError("task_graph_revision_conflict", "manual retry selector is stale, is not a known failed/cancelled attempt, or exceeds the approved ceiling");
       }
       await writer.appendTaskGraphEvent("task_node.retry.requested", {
         attempt_number: input.attemptNumber,
@@ -170,6 +179,9 @@ export class TaskExecutionControlPlane {
         node_id: input.nodeId,
         requested_by: "user",
         terminal_event_id: input.terminalEventId,
+        ...(input.context.authenticatedApplication === undefined
+          ? {}
+          : { origin: taskUserOrigin(input.context), previous_terminal: input.attemptTerminal }),
       });
       session = reconstructMultiRunSession(writer.events);
       if (session.taskExecution === null || session.taskExecution.status !== "waiting_for_user") {

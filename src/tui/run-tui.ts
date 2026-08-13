@@ -1,7 +1,28 @@
 import type { AgentCommandOptions } from "../agent/agent-types.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { executeAgent } from "../commands/agent.js";
-import { executeSessionsResume } from "../commands/sessions.js";
+import {
+  abortActiveOwnerCompositeForRuntime,
+  activeDelegationControlForRuntime,
+  executeAgentThroughApplicationService,
+  executeExistingSessionAgentThroughApplicationService,
+  hasActiveOwnerCompositeForRuntime,
+  requestTuiSurfaceFatalForRuntime,
+  requestActiveRunCancelThroughApplicationService,
+} from "../control-plane/adapters/agent-cli-adapter.js";
+import {
+  executeTaskActionThroughApplicationService,
+  registerTaskPreparedActionReviewer,
+  requestActiveGraphCancelThroughApplicationService,
+} from "../control-plane/adapters/task-cli-adapter.js";
+import {
+  createSessionsResumePhase9ExecutionPort,
+  executeSessionsResume,
+} from "../commands/sessions.js";
+import {
+  executeSessionResumeThroughRuntimeAdapter,
+  type SessionResumeRuntimeRequestV1,
+} from "../control-plane/adapters/session-resume-runtime-adapter.js";
 import {
   renderTaskCommandFailure,
   taskMutationContext,
@@ -20,14 +41,21 @@ import {
 import { ApprovalController } from "./approval-controller.js";
 import { PersistedEventSource } from "./persisted-event-source.js";
 import { TuiAbortBridge } from "./tui-abort-bridge.js";
+import { requestTuiHumanCancel } from "./tui-human-cancel-authority.js";
 import { TuiApprovalPrompt } from "./tui-approval-prompt.js";
 import { SessionFileWatcher } from "./session-file-watcher.js";
+import { createTuiSessionProjectionPort } from "./tui-session-projection-port.js";
+import type { TuiSessionProjectionPort } from "./tui-session-projection-port.js";
+import {
+  executeTuiDelegationApplicationAction,
+  executeTuiGraphApplicationAction,
+} from "./tui-application-action-port.js";
+import type { ProductSessionProjectionBodyV1 } from "../control-plane/session-projection-service.js";
 import {
   TuiController,
   type TuiCorePort,
   type TuiCoreRunResult,
-  type TuiDelegationIntent,
-  type TuiGraphIntent,
+  type TuiSessionSnapshot,
 } from "./tui-controller.js";
 import type { TuiPersistedEvent } from "./tui-event-reducer.js";
 import type {
@@ -36,23 +64,6 @@ import type {
 } from "./phase16-user-intent.js";
 import { RepositoryInvalidationWatcher } from "../repository-intelligence/repository-invalidation-watcher.js";
 import { RepositoryRefreshCoordinator } from "../repository-intelligence/repository-refresh-coordinator.js";
-import {
-  executeGraphApprove,
-  executeGraphCancel,
-  executeGraphEnqueue,
-  executeGraphPromote,
-  executeGraphOriginVerify,
-  executeGraphResume,
-  executeGraphRun,
-} from "../commands/graph.js";
-import {
-  executeDelegationsApprove,
-  executeDelegationsCancel,
-  executeDelegationsPrepare,
-  executeDelegationsReject,
-  executeDelegationsResume,
-  executeDelegationsStart,
-} from "../commands/delegations.js";
 
 export interface TuiCommandOptions
   extends Omit<AgentCommandOptions, "task" | "verbose"> {
@@ -84,66 +95,6 @@ async function captureCoreRun(
   const exitCode = await run(io);
   const normalized = diagnostic.replace(/\s+/gu, " ").trim();
   return { diagnostic: normalized.length === 0 ? null : normalized, exitCode };
-}
-
-async function executeTuiGraphCommand(intent: TuiGraphIntent, runtime: CliRuntime, io: CliIO): Promise<number> {
-  switch (intent.type) {
-    case "approve":
-      return executeGraphApprove({ json: false, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
-    case "enqueue":
-      return executeGraphEnqueue({ background: intent.background, json: false, revision: String(intent.revision), runtimeProfile: "local-free", sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
-    case "run":
-      return executeGraphRun({ background: intent.background, json: false, sessionId: intent.sessionId }, runtime, io);
-    case "cancel":
-      return executeGraphCancel({ json: false, reason: intent.reason, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
-    case "resume":
-      return executeGraphResume({ background: intent.background, foreground: !intent.background, json: false, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256, takeover: false }, runtime, io);
-    case "promote":
-      return executeGraphPromote({ attemptId: intent.attemptId, json: false, nodeId: intent.nodeId, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
-    case "verify_origin":
-      return executeGraphOriginVerify({ json: false, promotionOperation: intent.promotionOperation, revision: String(intent.revision), sessionId: intent.sessionId, sha256: intent.sha256 }, runtime, io);
-  }
-}
-
-async function executeTuiDelegationCommand(
-  intent: TuiDelegationIntent,
-  runtime: CliRuntime,
-  io: CliIO,
-): Promise<number> {
-  const common = {
-    delegationId: intent.delegationId,
-    expectedSessionSeq: intent.expectedSessionSeq,
-    inputSurface: "tui" as const,
-    json: false,
-    sessionId: intent.sessionId,
-  };
-  if (intent.action === "approve") {
-    return executeDelegationsApprove({ ...common, queue: true, revision: String(intent.revision), sha256: intent.sha256 }, runtime, io);
-  }
-  if (intent.action === "reject") {
-    return executeDelegationsReject({ ...common, reason: intent.reason ?? "Rejected from TUI", revision: String(intent.revision), sha256: intent.sha256 }, runtime, io);
-  }
-  if (intent.action === "cancel") {
-    return executeDelegationsCancel({ ...common, reason: intent.reason ?? "Cancelled from TUI" }, runtime, io);
-  }
-  let state = await new SessionCatalog(runtime.cwd).read(intent.sessionId);
-  let revision = [...state.delegations.revisions].reverse().find((candidate) => candidate.delegationId === intent.delegationId);
-  if (revision?.status === "approved") {
-    const queued = await executeDelegationsResume(common, runtime, io);
-    if (queued !== 0) return queued;
-    state = await new SessionCatalog(runtime.cwd).read(intent.sessionId);
-    revision = [...state.delegations.revisions].reverse().find((candidate) => candidate.delegationId === intent.delegationId);
-  }
-  if (revision?.status === "queued" && revision.envelope === null) {
-    const prepared = await executeDelegationsPrepare({ ...common, expectedSessionSeq: state.delegations.lastSessionSeq }, runtime, io);
-    if (prepared !== 0) return prepared;
-  }
-  return executeDelegationsStart({
-    delegationId: intent.delegationId,
-    inputSurface: "tui",
-    json: false,
-    sessionId: intent.sessionId,
-  }, runtime, io);
 }
 
 function usage(io: CliIO, message: string): 2 {
@@ -226,6 +177,85 @@ async function executeTuiMutation(
 ): Promise<number> {
   try {
     const binding = intentSession(intent);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const common = {
+        expectedSessionSeq: binding.expectedSessionSeq,
+        io,
+        runtime,
+        sessionId: binding.sessionId,
+        surface: "tui" as const,
+      };
+      switch (intent.type) {
+        case "revise_goal":
+          return (await executeTaskActionThroughApplicationService({
+            ...common,
+            actionKind: "goal.propose",
+            payload: {
+              baseRevision: intent.baseRevision,
+              goalId: intent.goalId,
+              objective: intent.objective,
+              operation: "revise",
+            },
+          })).exitCode;
+        case "abandon_goal":
+          return (await executeTaskActionThroughApplicationService({
+            ...common,
+            actionKind: "goal.decide",
+            payload: {
+              decision: "abandon",
+              goalId: intent.goalId,
+              reason: intent.reason,
+              revision: intent.revision,
+            },
+          })).exitCode;
+        case "approve_plan":
+          return (await executeTaskActionThroughApplicationService({
+            ...common,
+            actionKind: "plan.decide",
+            payload: {
+              decision: "approve",
+              goalId: intent.goalId,
+              goalRevision: intent.goalRevision,
+              planId: intent.planId,
+              revision: intent.revision,
+              sha256: intent.sha256,
+            },
+          })).exitCode;
+        case "reject_plan":
+          return (await executeTaskActionThroughApplicationService({
+            ...common,
+            actionKind: "plan.decide",
+            payload: {
+              decision: "reject",
+              goalId: intent.goalId,
+              goalRevision: intent.goalRevision,
+              planId: intent.planId,
+              reason: intent.reason,
+              revision: intent.revision,
+              sha256: intent.sha256,
+            },
+          })).exitCode;
+        case "replace_plan_from_file": {
+          const editablePlan = await new PlanFileLoader().load(runtime.cwd, intent.path);
+          return (await executeTaskActionThroughApplicationService({
+            ...common,
+            actionKind: "plan.propose",
+            payload: {
+              base: intent.base === null
+                ? null
+                : {
+                    planId: intent.base.planId,
+                    revision: intent.base.revision,
+                    sha256: intent.base.planSha256,
+                  },
+              editablePlan,
+              goalId: intent.goalId,
+              goalRevision: intent.goalRevision,
+            },
+          })).exitCode;
+        }
+      }
+    }
     const context = taskMutationContext(
       runtime,
       binding.sessionId,
@@ -322,6 +352,19 @@ async function executeFreshTaskRun(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
+  const runOptions = agentOptions(
+    input.options,
+    input.modelTask,
+    input.mode,
+    input.modeSource,
+  );
+  if (runtime.controlPlaneStateRoot !== undefined) {
+    return executeExistingSessionAgentThroughApplicationService({
+      expectedSessionSeq: input.expectedSessionSeq,
+      options: runOptions,
+      sessionId: input.sessionId,
+    }, runtime, io);
+  }
   const writer = await V2SessionWriter.openExisting(
     runtime.cwd,
     input.sessionId,
@@ -345,12 +388,7 @@ async function executeFreshTaskRun(
     return 2;
   }
   return executeAgent(
-    agentOptions(
-      input.options,
-      input.modelTask,
-      input.mode,
-      input.modeSource,
-    ),
+    runOptions,
     runtime,
     io,
     undefined,
@@ -364,12 +402,12 @@ async function executeFreshTaskRun(
 }
 
 function continuationFields(
-  session: Awaited<ReturnType<SessionCatalog["read"]>>,
+  taskState: NonNullable<ProductSessionProjectionBodyV1["taskState"]>,
 ): Pick<
-  Parameters<typeof executeSessionsResume>[0],
+  SessionResumeRuntimeRequestV1,
   "continueApprovedPlan" | "planRevision" | "planSha256"
 > {
-  const current = session.taskState.currentApprovedPlan;
+  const current = taskState.currentApprovedPlan;
   return current === null
     ? {}
     : {
@@ -379,22 +417,54 @@ function continuationFields(
       };
 }
 
+async function executeTuiSessionResume(
+  request: SessionResumeRuntimeRequestV1,
+  runtime: CliRuntime,
+  io: CliIO,
+): Promise<number> {
+  // Test-only/pre-Host embedders keep the deterministic Phase 9 owner. Every
+  // product TUI runtime has Host state and uses the typed adapter below.
+  if (runtime.controlPlaneStateRoot === undefined) {
+    return executeSessionsResume(request, runtime, io);
+  }
+  const result = await executeSessionResumeThroughRuntimeAdapter({
+    io,
+    phase9: createSessionsResumePhase9ExecutionPort(runtime, io),
+    request,
+    runtime,
+  });
+  if (result.diagnostic !== null && result.diagnostic.code !== "session_resume_owner_rejected") {
+    io.stderr.write(`${result.diagnostic.code}: ${result.diagnostic.message}\n`);
+  }
+  return result.exitCode;
+}
+
 function goalHasStartedRun(
-  session: Awaited<ReturnType<SessionCatalog["read"]>>,
+  session: Pick<ProductSessionProjectionBodyV1, "runs">,
   goalId: string,
   goalRevision: number,
 ): boolean {
-  return session.runs.some((run) => {
-    const binding = phase16RunBindingSchema.safeParse(
-      Object.fromEntries(
+  return session.runs.some((run) => run.goalId === goalId && run.goalRevision === goalRevision);
+}
+
+function legacyTuiStartProjection(
+  session: Awaited<ReturnType<SessionCatalog["read"]>>,
+): Pick<ProductSessionProjectionBodyV1, "runs" | "taskState"> {
+  return Object.freeze({
+    runs: Object.freeze(session.runs.map((run) => {
+      const binding = phase16RunBindingSchema.safeParse(Object.fromEntries(
         PHASE16_RUN_BINDING_KEYS.map((key) => [key, run.started.data[key]]),
-      ),
-    );
-    return (
-      binding.success &&
-      binding.data.goal_id === goalId &&
-      binding.data.goal_revision === goalRevision
-    );
+      ));
+      return Object.freeze({
+        endSessionSeq: run.endSessionSeq,
+        goalId: binding.success ? binding.data.goal_id : null,
+        goalRevision: binding.success ? binding.data.goal_revision : null,
+        runId: run.runId,
+        startSessionSeq: run.startSessionSeq,
+        status: run.status,
+      });
+    })),
+    taskState: session.taskState,
   });
 }
 
@@ -405,18 +475,19 @@ async function executeTuiStart(
   options: TuiCommandOptions,
   runtime: CliRuntime,
   io: CliIO,
+  typedSessionPort: TuiSessionProjectionPort | null,
 ): Promise<number> {
   try {
-    const catalog = new SessionCatalog(runtime.cwd);
+    const catalog = typedSessionPort === null ? new SessionCatalog(runtime.cwd) : null;
     if (intent.type === "submit_idle_message" && intent.sessionId === null) {
-      return executeAgent(
+      return executeAgentThroughApplicationService(
         agentOptions(options, intent.text, selectedMode, modeSource),
         runtime,
         io,
       );
     }
     if (intent.type === "start_new_goal" && intent.sessionId === null) {
-      return executeAgent(
+      return executeAgentThroughApplicationService(
         agentOptions(options, intent.text, selectedMode, modeSource),
         runtime,
         io,
@@ -431,27 +502,55 @@ async function executeTuiStart(
     let message: string | undefined;
     let mode = selectedMode;
     if (intent.type === "start_new_goal") {
-      const writerFactory = taskWriterFactory(runtime);
-      await new GoalManager(writerFactory).startNewGoal({
-        context: taskMutationContext(
-          runtime,
-          intent.sessionId,
-          "tui",
+      if (runtime.controlPlaneStateRoot === undefined) {
+        const writerFactory = taskWriterFactory(runtime);
+        await new GoalManager(writerFactory).startNewGoal({
+          context: taskMutationContext(
+            runtime,
+            intent.sessionId,
+            "tui",
+            expectedSessionSeq,
+          ),
+          objective: intent.text,
+          parentGoalId: null,
+          replaceActive:
+            intent.currentGoalId === null || intent.currentGoalRevision === null
+              ? null
+              : {
+                  confirmedAbandon: true,
+                  goalId: intent.currentGoalId,
+                  revision: intent.currentGoalRevision,
+                },
+        });
+        const afterGoal = await catalog!.read(intent.sessionId);
+        expectedSessionSeq = afterGoal.taskState.lastSessionSeq;
+      } else {
+        const application = await executeTaskActionThroughApplicationService({
+          actionKind: "goal.propose",
           expectedSessionSeq,
-        ),
-        objective: intent.text,
-        parentGoalId: null,
-        replaceActive:
-          intent.currentGoalId === null || intent.currentGoalRevision === null
-            ? null
-            : {
-                confirmedAbandon: true,
-                goalId: intent.currentGoalId,
-                revision: intent.currentGoalRevision,
-              },
-      });
-      const afterGoal = await catalog.read(intent.sessionId);
-      expectedSessionSeq = afterGoal.taskState.lastSessionSeq;
+          io,
+          payload: {
+            objective: intent.text,
+            operation: "start_new",
+            parentGoalId: null,
+            replaceActive:
+              intent.currentGoalId === null || intent.currentGoalRevision === null
+                ? null
+                : {
+                    confirmedAbandon: true,
+                    goalId: intent.currentGoalId,
+                    revision: intent.currentGoalRevision,
+                  },
+          },
+          runtime,
+          sessionId: intent.sessionId,
+          surface: "tui",
+        });
+        if (application.exitCode !== 0 || application.envelope.ledgerHead === null) {
+          return application.exitCode;
+        }
+        expectedSessionSeq = application.envelope.ledgerHead.sequence;
+      }
       message = intent.text;
     } else if (intent.type === "submit_idle_message") {
       message = intent.text;
@@ -459,9 +558,16 @@ async function executeTuiStart(
       mode = intent.mode;
     }
 
-    const session = await catalog.read(intent.sessionId);
-    const activeGoal = session.taskState.goals.find(
-      (goal) => goal.content.goalId === session.taskState.activeGoalId,
+    const session: Pick<ProductSessionProjectionBodyV1, "runs" | "taskState"> = typedSessionPort === null
+      ? legacyTuiStartProjection(await catalog!.read(intent.sessionId))
+      : (await typedSessionPort.load(intent.sessionId)).projection;
+    const taskState = session.taskState;
+    if (taskState === null) {
+      io.stderr.write("active_goal_required: this session has no task-state projection\n");
+      return 2;
+    }
+    const activeGoal = taskState.goals.find(
+      (goal) => goal.content.goalId === taskState.activeGoalId,
     );
     if (activeGoal?.status !== "active") {
       io.stderr.write("active_goal_required: an active Goal is required\n");
@@ -469,7 +575,7 @@ async function executeTuiStart(
     }
     if (
       mode === "build" &&
-      session.taskState.pendingDraft !== null
+      taskState.pendingDraft !== null
     ) {
       io.stderr.write(
         "plan_approval_required: reject or approve the pending Plan before Build\n",
@@ -493,8 +599,8 @@ async function executeTuiStart(
       if (
         intent.reason === "approved_plan_build" &&
         (mode !== "build" ||
-          session.taskState.currentApprovedPlan === null ||
-          session.taskState.pendingDraft !== null)
+          taskState.currentApprovedPlan === null ||
+          taskState.pendingDraft !== null)
       ) {
         io.stderr.write(
           "approved_plan_build_invalid: an exact approved Plan with no pending draft is required\n",
@@ -502,7 +608,7 @@ async function executeTuiStart(
         return 2;
       }
     }
-    if (session.lastRun === null) {
+    if (session.runs.length === 0) {
       return executeFreshTaskRun(
         {
           expectedSessionSeq,
@@ -518,10 +624,10 @@ async function executeTuiStart(
     }
 
     const continuePlan =
-      mode === "build" && session.taskState.currentApprovedPlan !== null
-        ? continuationFields(session)
+      mode === "build" && taskState.currentApprovedPlan !== null
+        ? continuationFields(taskState)
         : {};
-    return executeSessionsResume(
+    return executeTuiSessionResume(
       {
         allowDegradedResume: options.allowDegradedResume,
         ...continuePlan,
@@ -583,16 +689,22 @@ export async function executeTui(
     }
     return controllerRef.current.view;
   });
+  const typedSessionPort = runtime.controlPlaneStateRoot === undefined
+    ? null
+    : await createTuiSessionProjectionPort(runtime, io);
   const tuiRuntime: CliRuntime = {
     ...runtime,
     createApprovalPrompt: () => approvalPrompt,
     observeSessionWriter: (writer) => {
       runtime.observeSessionWriter?.(writer);
-      source.observe(writer);
+      // Product TUI refreshes through typed session queries. This legacy
+      // callback remains an invalidation hint only and never exposes writer
+      // events to the presentation source.
+      if (typedSessionPort === null) source.observe(writer);
     },
     onCancel: abortBridge.onCancel,
   };
-  const catalog = new SessionCatalog(runtime.cwd);
+  const catalog = typedSessionPort === null ? new SessionCatalog(runtime.cwd) : null;
   const sessionFileWatcher = new SessionFileWatcher(runtime.cwd);
   let repositoryRefresh:
     | {
@@ -632,13 +744,93 @@ export async function executeTui(
     return selected;
   };
   const core: TuiCorePort = {
-    cancelActiveRun: () => abortBridge.cancelActiveRun(),
+    activeDelegationOwner: () => {
+      const sessionId = controllerRef.current?.view.session.id;
+      return sessionId !== null && sessionId !== undefined &&
+        activeDelegationControlForRuntime(tuiRuntime, sessionId) !== null;
+    },
+    activeOwnerComposite: () => {
+      const sessionId = controllerRef.current?.view.session.id;
+      return sessionId !== null && sessionId !== undefined &&
+        hasActiveOwnerCompositeForRuntime(tuiRuntime, sessionId);
+    },
+    abortActiveOwnerRun: () => {
+      // Renderer/source fatal is Host-owned and must not masquerade as Ctrl-C.
+      // The selector is exact-session-bound and deliberately does nothing when
+      // the current ApplicationService owner cannot be proven.
+      requestTuiSurfaceFatalForRuntime(tuiRuntime, controllerRef.current?.view.session.id);
+    },
+    cancelActiveRun: () => {
+      const view = controllerRef.current?.view;
+      const graph = view?.taskExecution;
+      if (
+        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        view?.session.id !== undefined && graph !== null && graph !== undefined &&
+        graph.status === "running"
+      ) {
+        void captureCoreRun((coreIo) => requestActiveGraphCancelThroughApplicationService({
+          io: coreIo,
+          reason: "TUI interrupt requested foreground Graph cancellation",
+          revision: graph.graph.revision,
+          runtime: tuiRuntime,
+          sessionId: view.session.id!,
+          sha256: graph.graph.graphSha256,
+          surface: "tui",
+        }).then((result) => result.exitCode));
+        return;
+      }
+      const activeDelegationOwner = view?.session.id === null || view?.session.id === undefined
+        ? null
+        : activeDelegationControlForRuntime(tuiRuntime, view.session.id);
+      const delegation = [...(view?.delegations.revisions ?? [])].reverse().find((revision) =>
+        ["active", "waiting_approval", "cancelling", "reconciling"].includes(revision.status) ||
+        (activeDelegationOwner?.delegationId === revision.delegationId && revision.status === "queued")
+      );
+      if (
+        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        view?.session.id !== undefined && delegation !== undefined
+      ) {
+        void captureCoreRun((coreIo) => executeTuiDelegationApplicationAction({
+          action: "cancel",
+          delegationId: delegation.delegationId,
+          expectedSessionSeq: view.session.lastSessionSeq,
+          reason: "TUI interrupt requested delegated child cancellation",
+          revision: delegation.delegationRevision,
+          sessionId: view.session.id!,
+          sha256: delegation.delegationSha256,
+        }, tuiRuntime, coreIo).then((result) => result.exitCode));
+        return;
+      }
+      if (
+        runtime.controlPlaneStateRoot !== undefined && view?.session.id !== null &&
+        view?.session.id !== undefined &&
+        abortActiveOwnerCompositeForRuntime(tuiRuntime, view.session.id) !== null
+      ) {
+        // Owner-internal composite families have no public cancel action in
+        // Phase 21A. The process-local registry exact-binds this signal to the
+        // active ApplicationService operation; the effect runtime's final
+        // admission fence decides whether cancellation is still pre-effect.
+        return;
+      }
+      const exactTarget = view?.session.id !== null && view?.session.id !== undefined &&
+          view.run !== null && view.run.status === "running"
+        ? Object.freeze({ runId: view.run.id, sessionId: view.session.id })
+        : null;
+      requestTuiHumanCancel({
+        applicationControlEnabled: runtime.controlPlaneStateRoot !== undefined,
+        exactTarget,
+        legacyAbort: () => abortBridge.cancelActiveRun(),
+        report: (diagnostic) => io.stderr.write(`${diagnostic}\n`),
+        request: (target) => captureCoreRun((coreIo) =>
+          requestActiveRunCancelThroughApplicationService(target, tuiRuntime, coreIo)),
+      });
+    },
     cancelRepositoryRefresh: () => repositoryRefresh?.coordinator.cancel(),
-    loadSession: async (sessionId) =>
-      (await catalog.read(sessionId)).events as readonly TuiPersistedEvent[],
-    delegationCommand: (intent) => captureCoreRun((coreIo) =>
-      executeTuiDelegationCommand(intent, tuiRuntime, coreIo)),
-    graphCommand: (intent) => captureCoreRun((coreIo) => executeTuiGraphCommand(intent, tuiRuntime, coreIo)),
+    loadSession: async (sessionId) => typedSessionPort === null
+      ? (await catalog!.read(sessionId)).events as readonly TuiPersistedEvent[]
+      : typedSessionPort.load(sessionId),
+    delegationCommand: (intent) => executeTuiDelegationApplicationAction(intent, tuiRuntime, io),
+    graphCommand: (intent) => executeTuiGraphApplicationAction(intent, tuiRuntime, io),
     selectMcpPrompt: async (selector: string, argumentsJson: string | undefined) => {
       const { parseExplicitMcpPromptSelection } = await import("../mcp/mcp-prompt-selection.js");
       const selection = parseExplicitMcpPromptSelection({
@@ -651,6 +843,7 @@ export async function executeTui(
       nextMcpPromptArgumentsJson = argumentsJson;
       return selection.selector;
     },
+    ...(typedSessionPort === null ? {} : { typedSessionQueries: true }),
     ...(runtime.createPluginLifecycle === undefined
       ? {}
       : {
@@ -686,7 +879,7 @@ export async function executeTui(
       : {}),
     resumeSession: (sessionId, message) =>
       captureCoreRun((coreIo) =>
-        executeSessionsResume(
+        executeTuiSessionResume(
           {
             allowDegradedResume: options.allowDegradedResume,
             ...(options.mode === undefined ? {} : { mode: options.mode }),
@@ -702,7 +895,7 @@ export async function executeTui(
       ),
     startTask: (task) =>
       captureCoreRun((coreIo) =>
-        executeAgent(agentOptions(takeNextRunOptions(), task), tuiRuntime, coreIo),
+        executeAgentThroughApplicationService(agentOptions(takeNextRunOptions(), task), tuiRuntime, coreIo),
       ),
     ...(runtime.createRepositoryNavigationService === undefined
       ? {}
@@ -713,8 +906,23 @@ export async function executeTui(
             return refresh.service.status();
           },
         }),
-    watchSession: (sessionId, onChange, onError) =>
-      sessionFileWatcher.watch(sessionId, { onChange, onError }),
+    watchSession: async (sessionId, onChange, onError) => {
+      const stops: (() => void)[] = [];
+      if (typedSessionPort !== null) {
+        stops.push(typedSessionPort.subscribeInvalidations((invalidatedSessionId) => {
+          if (invalidatedSessionId === sessionId) onChange("session");
+        }));
+      }
+      try {
+        stops.push(await sessionFileWatcher.watch(sessionId, { onChange, onError }));
+      } catch (error) {
+        for (const stop of stops.splice(0).reverse()) stop();
+        throw error;
+      }
+      return () => {
+        for (const stop of stops.splice(0).reverse()) stop();
+      };
+    },
     ...(continuousPhase16
       ? {
           startIntent: (
@@ -730,12 +938,13 @@ export async function executeTui(
                 takeNextRunOptions(),
                 tuiRuntime,
                 coreIo,
+                typedSessionPort,
               ),
             ),
         }
       : {}),
   };
-  let initialSnapshot: readonly TuiPersistedEvent[] = [];
+  let initialSnapshot: TuiSessionSnapshot = [];
   const initialSessionId = options.inspectSessionId ?? options.resumeSessionId;
   if (initialSessionId !== undefined) {
     try {
@@ -763,6 +972,7 @@ export async function executeTui(
   );
   const controller = new TuiController({
     approvalController,
+    approvalViewChanged: () => approvalPrompt.notifyViewChanged(),
     core,
     createIntentId: runtime.randomUUID,
     initialMode:
@@ -777,6 +987,16 @@ export async function executeTui(
     source,
   });
   controllerRef.current = controller;
+  const stopTypedSessionInvalidations = typedSessionPort?.subscribeInvalidations((sessionId) => {
+    controller.acceptSessionInvalidation(sessionId);
+  });
+  // PHASE21: task actions now stop after Host preparation. The TUI renders the
+  // exact id/hash/display and only releases this promise after a fresh key
+  // decision; captureCoreRun no longer determines presentation ordering.
+  const unregisterPreparedActionReviewer = registerTaskPreparedActionReviewer(
+    tuiRuntime,
+    (review) => controller.reviewPreparedAction(review),
+  );
 
   let repositoryWatcher: RepositoryInvalidationWatcher | undefined;
 
@@ -811,9 +1031,14 @@ export async function executeTui(
     });
     exitCode = await controller.waitForExit();
   } catch {
-    abortBridge.cancelActiveRun();
+    // The outer Host lifecycle catch has the same safety contract as a
+    // renderer/source fatal: route only to an exact registered owner. Do not
+    // fall back to the raw bridge, which would fabricate a user cancellation.
+    requestTuiSurfaceFatalForRuntime(tuiRuntime, controllerRef.current?.view.session.id);
     exitCode = 1;
   } finally {
+    unregisterPreparedActionReviewer();
+    stopTypedSessionInvalidations?.();
     repositoryWatcher?.stop();
     await repositoryRefresh?.coordinator.stop();
     try {

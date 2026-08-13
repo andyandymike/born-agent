@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,6 +13,8 @@ import { createCanonicalPhase20CodingFixture } from "../../src/delegation/runtim
 import { readVerifiedChildReceipt } from "../../src/delegation/receipts/child-receipt-verifier.js";
 import { DelegationGroupLeaseStore } from "../../src/delegation/delegation-group-lease-store.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import { createMemoryIO, createRuntime } from "../helpers.js";
 import { SESSION_ID, writeLegacySession } from "../unit/phase16b-test-helpers.js";
 
@@ -181,6 +183,29 @@ describe("Phase 20C real coding child worktree", () => {
       "--delegation", coding.delegationId,
       "--json",
     ], startIo.io, runtime), startIo.readStderr()).toBe(0);
+
+    if (runtime.controlPlaneStateRoot === undefined) throw new Error("Phase 21A control root is unavailable");
+    const authority = await loadOrCreateHostControlAuthority({ root: runtime.controlPlaneStateRoot });
+    const startOperation = (await new ControlOperationJournal(authority.paths).list()).find((operation) =>
+      operation.actionKind === "delegation.start");
+    expect(startOperation).toMatchObject({ state: "completed" });
+    expect(startOperation?.domainRecordRefs.length).toBeGreaterThanOrEqual(1);
+    expect(startOperation?.underlyingOperationRefs.length).toBeGreaterThanOrEqual(10);
+    const primary = startOperation?.primaryDomainRecord;
+    if (primary === undefined || primary === null || primary.sequence === null) {
+      throw new Error("Delegation start primary evidence is unavailable");
+    }
+    const rawLines = (await readFile(
+      join(workspace, ".bornagent", "sessions", `${SESSION_ID}.jsonl`),
+      "utf8",
+    )).trimEnd().split("\n");
+    const primaryRaw = rawLines[primary.sequence - 1];
+    if (primaryRaw === undefined) throw new Error("Delegation start primary raw record is unavailable");
+    expect(createHash("sha256").update(primaryRaw, "utf8").digest("hex")).toBe(primary.recordSha256);
+    expect(JSON.parse(primaryRaw)).toMatchObject({
+      data: { origin: { application_commit: { operation_id: startOperation?.operationId } } },
+      type: "delegation.group.lease.acquired",
+    });
 
     session = await new SessionCatalog(workspace).read(SESSION_ID);
     const revision = session.delegations.revisions.find((candidate) =>

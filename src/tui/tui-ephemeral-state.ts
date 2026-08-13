@@ -1,4 +1,7 @@
 import type { UserIntent } from "./user-intent.js";
+import type { TaskPreparedActionReviewV1 } from "../control-plane/adapters/task-cli-adapter.js";
+
+export type TuiPreparedActionDialog = TaskPreparedActionReviewV1;
 
 export interface TuiPlanDecisionDialog {
   readonly action: "approve" | "approve_build" | "reject";
@@ -47,6 +50,8 @@ export interface TuiEphemeralState {
   readonly foldedItemIds: readonly string[];
   readonly planDecisionDialog: TuiPlanDecisionDialog | null;
   readonly planDecisionFocus: "cancel" | "confirm";
+  readonly preparedActionDialog: TuiPreparedActionDialog | null;
+  readonly preparedActionFocus: "cancel" | "confirm";
   readonly scrollOffset: number;
   readonly selectedAgentMode: "build" | "plan";
   readonly selectedAgentModeSource: "explicit_tui" | "tui_default";
@@ -70,12 +75,43 @@ export function createInitialTuiEphemeralState(): TuiEphemeralState {
     foldedItemIds: [],
     planDecisionDialog: null,
     planDecisionFocus: "cancel",
+    preparedActionDialog: null,
+    preparedActionFocus: "cancel",
     scrollOffset: 0,
     selectedAgentMode: "plan",
     selectedAgentModeSource: "tui_default",
     selectedDelegationId: null,
     sessionBusy: false,
   };
+}
+
+export function openPreparedActionDialog(
+  state: TuiEphemeralState,
+  dialog: TuiPreparedActionDialog,
+): TuiEphemeralState {
+  return {
+    ...state,
+    draftInput: "",
+    preparedActionDialog: dialog,
+    preparedActionFocus: "cancel",
+  };
+}
+
+export function closePreparedActionDialog(
+  state: TuiEphemeralState,
+): TuiEphemeralState {
+  return {
+    ...state,
+    preparedActionDialog: null,
+    preparedActionFocus: "cancel",
+  };
+}
+
+export function setPreparedActionFocus(
+  state: TuiEphemeralState,
+  focus: "cancel" | "confirm",
+): TuiEphemeralState {
+  return { ...state, preparedActionFocus: focus };
 }
 
 export function openDelegationDecisionDialog(

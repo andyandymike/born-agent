@@ -65,6 +65,7 @@ function fixture() {
     },
   );
   const core: TuiCorePort = {
+    abortActiveOwnerRun: vi.fn(),
     cancelActiveRun: vi.fn(),
     loadSession: async () => builder.decode() as readonly TuiPersistedEvent[],
     mutateIntent,

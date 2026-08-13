@@ -2,6 +2,7 @@ import type { GoalProjection } from "./goal-schema.js";
 import {
   allocateTaskUuid,
   TaskControlPlaneError,
+  taskUserOrigin,
   type TaskMutationContext,
   type TaskMutationWriterFactory,
   withTaskMutation,
@@ -50,10 +51,7 @@ export class GoalManager {
         const result = await append("goal.created", {
           goal_id: goalId,
           objective: input.objective,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           parent_goal_id: null,
           replaces_active_goal: null,
           revision: 1,
@@ -97,10 +95,7 @@ export class GoalManager {
           base_revision: goal.content.revision,
           goal_id: goal.content.goalId,
           objective: input.objective,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           revision,
         });
         return selectedGoal(result.state.goals, goal.content.goalId);
@@ -132,10 +127,7 @@ export class GoalManager {
         const result = await append("goal.status.changed", {
           from: "active",
           goal_id: input.goalId,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           reason: input.reason,
           revision: input.revision,
           to: "abandoned",
@@ -206,10 +198,7 @@ export class GoalManager {
         const result = await append("goal.created", {
           goal_id: goalId,
           objective: input.objective,
-          origin: {
-            input_surface: input.context.inputSurface,
-            kind: "user",
-          },
+          origin: taskUserOrigin(input.context),
           parent_goal_id: input.parentGoalId,
           replaces_active_goal:
             active === null

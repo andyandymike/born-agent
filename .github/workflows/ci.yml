@@ -57,6 +57,9 @@ jobs:
       - name: Verify repository
         run: pnpm check
 
+      - name: Verify Phase 21A focused gate
+        run: pnpm phase21a:gate
+
       - name: Verify built worker and Phase 20 child paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
@@ -126,11 +129,15 @@ jobs:
       - name: Verify repository
         run: pnpm check
 
+      - name: Verify Phase 21A focused gate
+        run: pnpm phase21a:gate
+
       - name: Verify Windows Phase 20 child and PTY paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
         run: >-
           pnpm test
+          tests/integration/phase19d-background-worker.test.ts
           tests/integration/phase20c-pre-effect-retry.test.ts
           tests/integration/phase20c-coding-worktree.test.ts
           tests/integration/phase20d-background-worker-delegation.test.ts

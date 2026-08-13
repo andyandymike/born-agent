@@ -21,6 +21,9 @@ import {
   taskMutationContext,
   taskWriterFactory,
 } from "./task-control-plane-command.js";
+import { executeTaskActionThroughApplicationService } from "../control-plane/adapters/task-cli-adapter.js";
+import { querySessionViewThroughApplicationService } from "../control-plane/adapters/task-cli-adapter.js";
+import { queryPlanReviewThroughApplicationService } from "../control-plane/adapters/task-surface-cli-query-adapter.js";
 
 export interface PlanShowOptions {
   readonly history: boolean;
@@ -121,11 +124,16 @@ export async function executePlanShow(
   options: PlanShowOptions,
   runtime: CliRuntime,
   io: CliIO,
-): Promise<0 | 1 | 2> {
+): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-    const state = session.taskState;
+    const applicationView = runtime.controlPlaneStateRoot === undefined
+      ? null
+      : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
+    if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
+    const session = applicationView === null ? await new SessionCatalog(runtime.cwd).read(options.sessionId) : null;
+    const state = applicationView?.value?.taskState ?? session?.taskState;
+    if (state === undefined || state === null) throw new Error("session has no materialized task projection");
     const visiblePlans = options.history
       ? state.plans
       : state.plans.filter((plan) =>
@@ -135,7 +143,7 @@ export async function executePlanShow(
               ref.revision === plan.content.revision,
           ),
         );
-    const blocker = taskMutationBlocker(session);
+    const blocker = applicationView?.value?.taskMutationBlocker ?? (session === null ? null : taskMutationBlocker(session));
     if (options.json) {
       io.stdout.write(
         `${canonicalJson({
@@ -146,7 +154,7 @@ export async function executePlanShow(
           plansTruncated: !options.history && visiblePlans.length !== state.plans.length,
           readyForCompletion: state.readyForCompletion,
           schemaVersion: 1,
-          sessionId: session.sessionId,
+          sessionId: options.sessionId,
           trackingMode: state.trackingMode,
         })}\n`,
       );
@@ -157,7 +165,7 @@ export async function executePlanShow(
     for (const plan of visiblePlans) renderPlan(io.stdout, plan);
     if (state.pendingDraft !== null) {
       io.stdout.write(
-        `Approve exactly: born plan approve ${session.sessionId} --goal-id ${state.pendingDraft.goalId} --goal-revision ${String(state.pendingDraft.goalRevision)} --plan-id ${state.pendingDraft.planId} --revision ${String(state.pendingDraft.revision)} --sha256 ${state.pendingDraft.planSha256}\n`,
+        `Approve exactly: born plan approve ${options.sessionId} --goal-id ${state.pendingDraft.goalId} --goal-revision ${String(state.pendingDraft.goalRevision)} --plan-id ${state.pendingDraft.planId} --revision ${String(state.pendingDraft.revision)} --sha256 ${state.pendingDraft.planSha256}\n`,
       );
     }
     if (blocker !== null) {
@@ -175,7 +183,7 @@ export async function executePlanReplace(
   options: PlanReplaceOptions,
   runtime: CliRuntime,
   io: CliIO,
-): Promise<0 | 1 | 2> {
+): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
     const baseFields = [
@@ -207,13 +215,17 @@ export async function executePlanReplace(
       runtime.cwd,
       options.file,
     );
-    const plan = await new PlanStore(taskWriterFactory(runtime)).replaceDraft({
-      base,
-      context: taskMutationContext(runtime, options.sessionId),
-      editablePlan,
-      goalId: options.goalId,
-      goalRevision: positiveRevision(options.goalRevision, "goal revision"),
-    });
+    const goalRevision = positiveRevision(options.goalRevision, "goal revision");
+    const plan = runtime.controlPlaneStateRoot === undefined
+      ? await new PlanStore(taskWriterFactory(runtime)).replaceDraft({ base, context: taskMutationContext(runtime, options.sessionId), editablePlan, goalId: options.goalId, goalRevision })
+      : (await executeTaskActionThroughApplicationService({
+          actionKind: "plan.propose",
+          io,
+          payload: { base, editablePlan, goalId: options.goalId, goalRevision },
+          runtime,
+          sessionId: options.sessionId,
+        })).envelope.result;
+    if (plan === null) return 2;
     io.stdout.write(
       `Plan ${plan.content.planId} revision ${String(plan.content.revision)} proposed as draft.\nSHA-256: ${plan.planSha256}\n`,
     );
@@ -231,16 +243,27 @@ async function previewDecision(
   readonly goalRevision: number;
   readonly revision: number;
   readonly sha256: string;
-}> {
+} | Readonly<{ readonly exitCode: 0 | 1 | 2 | 8 }>> {
   const goalRevision = positiveRevision(options.goalRevision, "goal revision");
   const revision = positiveRevision(options.revision, "plan revision");
   const sha256 = sha256Schema.parse(options.sha256);
-  const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-  const plan = findExactPlan(session.taskState.plans, {
-    planId: options.planId,
-    revision,
-    sha256,
-  });
+  const applicationReview = runtime.controlPlaneStateRoot === undefined
+    ? null
+    : await queryPlanReviewThroughApplicationService({
+        io,
+        planId: options.planId,
+        revision,
+        runtime,
+        sessionId: options.sessionId,
+        sha256,
+      });
+  if (applicationReview !== null && applicationReview.value === null) {
+    return Object.freeze({ exitCode: applicationReview.exitCode });
+  }
+  const session = applicationReview === null ? await new SessionCatalog(runtime.cwd).read(options.sessionId) : null;
+  const plan = applicationReview === null
+    ? findExactPlan(session!.taskState.plans, { planId: options.planId, revision, sha256 })
+    : applicationReview.value!.plan ?? undefined;
   if (plan !== undefined) renderPlan(io.stderr, plan);
   io.stderr.write(
     "Plan approval records review only; it does not authorize patches, commands, MCP calls, or any other side effect.\n",
@@ -252,18 +275,23 @@ export async function executePlanApprove(
   options: PlanApproveOptions,
   runtime: CliRuntime,
   io: CliIO,
-): Promise<0 | 1 | 2> {
+): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
     const identity = await previewDecision(options, runtime, io);
-    const plan = await new PlanStore(taskWriterFactory(runtime)).approveDraft({
-      context: taskMutationContext(runtime, options.sessionId),
-      goalId: options.goalId,
-      goalRevision: identity.goalRevision,
-      planId: options.planId,
-      revision: identity.revision,
-      sha256: identity.sha256,
-    });
+    if ("exitCode" in identity) return identity.exitCode;
+    const payload = { decision: "approve" as const, goalId: options.goalId, goalRevision: identity.goalRevision, planId: options.planId, revision: identity.revision, sha256: identity.sha256 };
+    const plan = runtime.controlPlaneStateRoot === undefined
+      ? await new PlanStore(taskWriterFactory(runtime)).approveDraft({
+          context: taskMutationContext(runtime, options.sessionId),
+          goalId: payload.goalId,
+          goalRevision: payload.goalRevision,
+          planId: payload.planId,
+          revision: payload.revision,
+          sha256: payload.sha256,
+        })
+      : (await executeTaskActionThroughApplicationService({ actionKind: "plan.decide", io, payload, runtime, sessionId: options.sessionId })).envelope.result;
+    if (plan === null) return 2;
     io.stdout.write(
       `Plan ${plan.content.planId} revision ${String(plan.content.revision)} approved exactly at ${plan.planSha256}.\n`,
     );
@@ -277,19 +305,24 @@ export async function executePlanReject(
   options: PlanRejectOptions,
   runtime: CliRuntime,
   io: CliIO,
-): Promise<0 | 1 | 2> {
+): Promise<0 | 1 | 2 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
     const identity = await previewDecision(options, runtime, io);
-    const plan = await new PlanStore(taskWriterFactory(runtime)).rejectDraft({
-      context: taskMutationContext(runtime, options.sessionId),
-      goalId: options.goalId,
-      goalRevision: identity.goalRevision,
-      planId: options.planId,
-      reason: options.reason,
-      revision: identity.revision,
-      sha256: identity.sha256,
-    });
+    if ("exitCode" in identity) return identity.exitCode;
+    const payload = { decision: "reject" as const, goalId: options.goalId, goalRevision: identity.goalRevision, planId: options.planId, reason: options.reason, revision: identity.revision, sha256: identity.sha256 };
+    const plan = runtime.controlPlaneStateRoot === undefined
+      ? await new PlanStore(taskWriterFactory(runtime)).rejectDraft({
+          context: taskMutationContext(runtime, options.sessionId),
+          goalId: payload.goalId,
+          goalRevision: payload.goalRevision,
+          planId: payload.planId,
+          reason: payload.reason,
+          revision: payload.revision,
+          sha256: payload.sha256,
+        })
+      : (await executeTaskActionThroughApplicationService({ actionKind: "plan.decide", io, payload, runtime, sessionId: options.sessionId })).envelope.result;
+    if (plan === null) return 2;
     io.stdout.write(
       `Plan ${plan.content.planId} revision ${String(plan.content.revision)} rejected.\n`,
     );

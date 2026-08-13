@@ -61,7 +61,7 @@ export interface DelegationChildExecutionPortV1 {
     readonly envelope: ExecutableChildEnvelopeV1;
     readonly io: CliIO;
     readonly operation: DelegationChildOperationV1;
-    readonly onCancel: (listener: () => void) => () => void;
+    readonly onCancel: (listener: (reason: "user_cancel" | "tui_surface_fatal") => void) => () => void;
     readonly prompt: DelegatedChildApprovalBridge;
     readonly writer: V2SessionWriter;
   }): Promise<{
@@ -88,7 +88,8 @@ async function readStableJson(path: string, maximumBytes: number, expectedSha256
   return parseStrictJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
 
-function waitForStart(input: {
+/** @internal Protocol seam used by deterministic start/cancel race tests. */
+export function waitForDelegationChildStart(input: {
   readonly channel: DelegationChildControlChannelV1;
   readonly envelope: ExecutableChildEnvelopeV1;
   readonly timeoutMs: number;
@@ -121,6 +122,47 @@ function waitForStart(input: {
     });
     const offClose = input.channel.onClose(() => finish(new DelegationError("delegation_handshake_failed", "parent channel closed before start barrier")));
     const timeout = setTimeout(() => finish(new DelegationError("delegation_handshake_failed", "child start barrier timed out")), input.timeoutMs);
+  });
+}
+
+/** @internal Persistent latch spanning handshake, start, and execution. */
+export function installDelegationChildCancellationLatch(input: {
+  readonly channel: DelegationChildControlChannelV1;
+  readonly childAttemptId: string;
+  readonly operationId: string;
+}) {
+  let cancelled = false;
+  let reason: "user_cancel" | "tui_surface_fatal" = "user_cancel";
+  const listeners = new Set<(reason: "user_cancel" | "tui_surface_fatal") => void>();
+  const cancel = (nextReason: "user_cancel" | "tui_surface_fatal") => {
+    if (cancelled) return;
+    cancelled = true;
+    reason = nextReason;
+    for (const listener of [...listeners]) listener(reason);
+  };
+  const offMessage = input.channel.onMessage((candidate) => {
+    const frame = delegationChildCancelFrameSchema.safeParse(candidate);
+    if (
+      frame.success &&
+      frame.data.operationId === input.operationId &&
+      frame.data.childAttemptId === input.childAttemptId
+    ) cancel(frame.data.kind);
+  });
+  const offClose = input.channel.onClose(() => cancel("user_cancel"));
+  return Object.freeze({
+    dispose: () => {
+      offMessage();
+      offClose();
+      listeners.clear();
+    },
+    onCancel: (listener: (reason: "user_cancel" | "tui_surface_fatal") => void) => {
+      if (cancelled) {
+        listener(reason);
+        return () => undefined;
+      }
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
   });
 }
 
@@ -216,13 +258,26 @@ export class DelegationChildRuntime {
     };
     assertBoundedProtocolFrame(handshake);
     this.input.channel.send(handshake);
+    // Install a separate persistent listener before accepting start. Unlike
+    // the one-shot start listener, this remains active through shard setup and
+    // execution, so there is no IPC handoff window in which cancel is lost.
+    const cancellation = installDelegationChildCancellationLatch({
+      channel: this.input.channel,
+      childAttemptId: actor.attemptId,
+      operationId: operation.operationId,
+    });
     // No provider, tool, credential, or session writer is touched before this
     // exact Host start barrier is accepted.
-    await waitForStart({
-      channel: this.input.channel,
-      envelope,
-      timeoutMs: this.input.startTimeoutMs ?? 30_000,
-    });
+    try {
+      await waitForDelegationChildStart({
+        channel: this.input.channel,
+        envelope,
+        timeoutMs: this.input.startTimeoutMs ?? 30_000,
+      });
+    } catch (error) {
+      cancellation.dispose();
+      throw error;
+    }
     const running = await store.read();
     if (running?.state !== "running" || running.operationSha256 === operation.operationSha256) {
       throw new DelegationError("delegation_handshake_failed", "operation journal did not durably enter running state before child start");
@@ -238,35 +293,17 @@ export class DelegationChildRuntime {
       randomUuid: this.input.randomUuid ?? randomUUID,
       writer,
     });
-    let cancelled = false;
-    const cancelListeners = new Set<() => void>();
-    const cancel = () => {
-      if (cancelled) return;
-      cancelled = true;
-      for (const listener of [...cancelListeners]) listener();
-    };
-    const offCancelMessage = this.input.channel.onMessage((candidate) => {
-      const frame = delegationChildCancelFrameSchema.safeParse(candidate);
-      if (!frame.success) return;
-      if (
-        frame.data.operationId === operation.operationId &&
-        frame.data.childAttemptId === actor.attemptId
-      ) cancel();
-    });
-    // PHASE20: control-channel loss revokes admission to any new provider/tool
-    // work. It is cancellation, not proof that an in-flight effect is absent.
-    const offControlClose = this.input.channel.onClose(cancel);
-    const onCancel = (listener: () => void) => {
-      if (cancelled) {
-        listener();
-        return () => undefined;
-      }
-      cancelListeners.add(listener);
-      return () => cancelListeners.delete(listener);
-    };
     let result;
     try {
-      result = await this.input.execute.execute({ capsule, envelope, io: this.input.io, onCancel, operation, prompt, writer });
+      result = await this.input.execute.execute({
+        capsule,
+        envelope,
+        io: this.input.io,
+        onCancel: cancellation.onCancel,
+        operation,
+        prompt,
+        writer,
+      });
     } catch (error) {
       await writer.close().catch(() => undefined);
       result = {
@@ -276,9 +313,7 @@ export class DelegationChildRuntime {
         diagnosticCode: boundedDiagnosticCode(error),
       };
     } finally {
-      offCancelMessage();
-      offControlClose();
-      cancelListeners.clear();
+      cancellation.dispose();
     }
     await writer.close().catch(() => undefined);
     const bounded = boundedResultSchema.parse({

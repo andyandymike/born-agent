@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createNodeRuntime } from "../../src/cli/node-runtime.js";
 import { runCli } from "../../src/cli/run-cli.js";
 import { ArtifactStore } from "../../src/artifacts/artifact-store.js";
 import { canonicalJson, sha256Canonical } from "../../src/completion/canonical-json.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import { preparedChildEnvelopeSchema } from "../../src/delegation/context/child-envelope-schema.js";
 import { storeDelegationArtifactExact } from "../../src/delegation/delegation-control-plane.js";
 import { DelegationOperationStore } from "../../src/delegation/delegation-operation-store.js";
@@ -135,6 +137,30 @@ async function waitForChildStart(
   throw new Error("real delegated child did not cross the durable start barrier");
 }
 
+async function waitForChildLaunchRequest(
+  workspace: string,
+  sessionId: string,
+  earlyExit: () => number | null,
+  stderr: () => string,
+): Promise<void> {
+  const sessionPath = join(workspace, ".bornagent", "sessions", `${sessionId}.jsonl`);
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const exited = earlyExit();
+    if (exited !== null) {
+      throw new Error(`delegated child command exited before launch request (${String(exited)}): ${stderr()}`);
+    }
+    try {
+      const bytes = await readFile(sessionPath, "utf8");
+      if (bytes.includes('"type":"delegation.child.launch_requested"')) return;
+    } catch {
+      // The request is only a scheduling observation. Exact assertions below
+      // use the locked catalog projection after both operations settle.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("delegated child never reached its durable launch request");
+}
+
 function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -172,6 +198,266 @@ async function waitForIgnoredCancelEvidence(path: string, key: "startObserved" |
 }
 
 describe("Phase 20C durable pre-effect automatic retry", () => {
+  it("observes a cross-process typed cancel at the final Delegation admission fence", async () => {
+    const { fixture, runtime, workspace } = await createRetryHarness();
+    const acquire = runtime.acquireDelegationGroupLease;
+    if (acquire === undefined || runtime.controlPlaneStateRoot === undefined) {
+      throw new Error("product Delegation control fixture is incomplete");
+    }
+    let releaseAdmission!: () => void;
+    const admissionGate = new Promise<void>((resolveGate) => { releaseAdmission = resolveGate; });
+    let observeAdmission!: () => void;
+    const admissionObserved = new Promise<void>((resolveObserved) => { observeAdmission = resolveObserved; });
+    const startRuntime = Object.freeze({
+      ...runtime,
+      acquireDelegationGroupLease: async (input: Parameters<typeof acquire>[0]) => {
+        observeAdmission();
+        await admissionGate;
+        return acquire(input);
+      },
+    });
+    const startIo = createMemoryIO();
+    const running = runCli([
+      "delegations",
+      "start",
+      "--session",
+      fixture.sessionId,
+      "--delegation",
+      fixture.delegationIds[0]!,
+      "--json",
+    ], startIo.io, startRuntime);
+    await admissionObserved;
+
+    const cancelIo = createMemoryIO();
+    expect(await runCli([
+      "delegations",
+      "cancel",
+      "--session",
+      fixture.sessionId,
+      "--delegation",
+      fixture.delegationIds[0]!,
+      "--reason",
+      "cross-process pre-admission fixture",
+      "--json",
+    ], cancelIo.io, runtime), cancelIo.readStderr()).toBe(0);
+    releaseAdmission();
+    expect(await running, startIo.readStderr()).toBe(130);
+
+    const session = await new SessionCatalog(workspace).read(fixture.sessionId);
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.cancel.requested")).toHaveLength(1);
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.owner.pre_effect.terminal")).toHaveLength(1);
+    expect(session.events.some((event) =>
+      event.scope === "session" && event.type === "delegation.group.lease.acquired")).toBe(false);
+    expect(session.events.some((event) =>
+      event.scope === "session" && event.type === "delegation.child.launch_requested")).toBe(false);
+    expect(session.delegations.revisions[0]).toMatchObject({ status: "cancelled" });
+
+    const authority = await loadOrCreateHostControlAuthority({ root: runtime.controlPlaneStateRoot });
+    const operations = await new ControlOperationJournal(authority.paths).list();
+    expect(operations.some((operation) =>
+      operation.actionKind === "delegation.start" && operation.state === "completed")).toBe(true);
+    expect(operations.some((operation) =>
+      operation.actionKind === "delegation.cancel" && operation.state === "completed")).toBe(true);
+  }, 30_000);
+
+  it("closes an admitted pre-start cancellation without inventing a child run or receipt", async () => {
+    const { fixture, runtime, workspace } = await createRetryHarness(
+      "phase20-prestart-cancel-child.mjs",
+      20_000,
+    );
+    const startIo = createMemoryIO();
+    let startExit: number | null = null;
+    const running = runCli([
+      "delegations",
+      "start",
+      "--session",
+      fixture.sessionId,
+      "--delegation",
+      fixture.delegationIds[0]!,
+      "--json",
+    ], startIo.io, runtime).then((value) => {
+      startExit = value;
+      return value;
+    });
+    await waitForChildLaunchRequest(workspace, fixture.sessionId, () => startExit, startIo.readStderr);
+
+    const cancelIo = createMemoryIO();
+    expect(await runCli([
+      "delegations",
+      "cancel",
+      "--session",
+      fixture.sessionId,
+      "--delegation",
+      fixture.delegationIds[0]!,
+      "--reason",
+      "admitted pre-start cancellation fixture",
+      "--json",
+    ], cancelIo.io, runtime), cancelIo.readStderr()).toBe(0);
+    expect(await running, startIo.readStderr()).toBe(130);
+
+    const session = await new SessionCatalog(workspace).read(fixture.sessionId);
+    const revision = session.delegations.revisions[0]!;
+    expect(revision).toMatchObject({
+      receipt: null,
+      status: "cancelled",
+    });
+    expect(revision.attempts).toHaveLength(1);
+    expect(revision.attempts[0]).toMatchObject({
+      budgetSettlementEventId: expect.any(String),
+      childRunId: null,
+      startedEventId: null,
+      terminal: "cancelled_clean",
+      terminalEventId: expect.any(String),
+    });
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.child.launch_requested")).toHaveLength(1);
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.child.started")).toHaveLength(0);
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.receipt.ready")).toHaveLength(0);
+    expect(session.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.owner.pre_effect.terminal")).toHaveLength(1);
+    expect(session.delegations.activeActorSlots).toEqual([]);
+    expect(session.delegations.activeConflictClaims).toEqual([]);
+    expect(session.delegations.barriers).toEqual([
+      expect.objectContaining({ receiptSha256s: [], status: "released", terminalStatus: "cancelled" }),
+    ]);
+
+    if (runtime.controlPlaneStateRoot === undefined) throw new Error("control state root is unavailable");
+    const authority = await loadOrCreateHostControlAuthority({ root: runtime.controlPlaneStateRoot });
+    const operations = await new ControlOperationJournal(authority.paths).list();
+    const startOperation = operations.find((operation) => operation.actionKind === "delegation.start");
+    expect(startOperation).toMatchObject({ state: "completed", resultArtifact: expect.any(Object) });
+    expect(startOperation?.domainRecordRefs.some((reference) =>
+      reference.recordId === revision.attempts[0]!.terminalEventId)).toBe(true);
+    expect(operations.find((operation) => operation.actionKind === "delegation.cancel")).toMatchObject({
+      state: "completed",
+    });
+  }, 30_000);
+
+  it("replays every durable pre-start cancellation prefix after terminal response loss", async () => {
+    const { fixture, runtime, stateRoot, workspace } = await createRetryHarness(
+      "phase20-prestart-cancel-child.mjs",
+      20_000,
+    );
+    const originalAppend = V2SessionWriter.prototype.appendDelegationEvent;
+    let injected = false;
+    const append = vi.spyOn(V2SessionWriter.prototype, "appendDelegationEvent").mockImplementation(async function (
+      this: V2SessionWriter,
+      type,
+      value,
+    ) {
+      const event = await originalAppend.call(this, type, value);
+      if (!injected && type === "delegation.owner.pre_effect.terminal") {
+        injected = true;
+        throw new Error("injected response loss after durable pre-effect cancellation terminal");
+      }
+      return event;
+    });
+    try {
+      const startIo = createMemoryIO();
+      let startExit: number | null = null;
+      const running = runCli([
+        "delegations",
+        "start",
+        "--session",
+        fixture.sessionId,
+        "--delegation",
+        fixture.delegationIds[0]!,
+        "--json",
+      ], startIo.io, runtime).then((value) => {
+        startExit = value;
+        return value;
+      });
+      await waitForChildLaunchRequest(workspace, fixture.sessionId, () => startExit, startIo.readStderr);
+      const cancelIo = createMemoryIO();
+      const cancelExit = await runCli([
+        "delegations",
+        "cancel",
+        "--session",
+        fixture.sessionId,
+        "--delegation",
+        fixture.delegationIds[0]!,
+        "--reason",
+        "response-loss cancellation fixture",
+        "--json",
+      ], cancelIo.io, runtime);
+      const runningExit = await running;
+      expect(cancelExit, cancelIo.readStderr()).toBe(0);
+      expect(runningExit, startIo.readStderr()).toBe(8);
+      expect(injected).toBe(true);
+    } finally {
+      append.mockRestore();
+    }
+
+    const stores = await DelegationOperationStore.listExisting(stateRoot);
+    expect(stores).toHaveLength(1);
+    const store = stores[0]!;
+    expect(await store.read()).toMatchObject({
+      failure: { code: "delegation_cancelled" },
+      state: "pre_effect_terminal",
+    });
+    if (runtime.reconcileDelegationPreEffectOperation === undefined) {
+      throw new Error("runtime pre-effect reconciler is unavailable");
+    }
+    const originalSettlementAppend = V2SessionWriter.prototype.appendDelegationEvent;
+    let settlementInjected = false;
+    const settlementAppend = vi.spyOn(V2SessionWriter.prototype, "appendDelegationEvent").mockImplementation(async function (
+      this: V2SessionWriter,
+      type,
+      value,
+    ) {
+      const event = await originalSettlementAppend.call(this, type, value);
+      if (!settlementInjected && type === "delegation.budget.settled") {
+        settlementInjected = true;
+        throw new Error("injected response loss after durable cancellation settlement");
+      }
+      return event;
+    });
+    try {
+      await expect(runtime.reconcileDelegationPreEffectOperation({
+        inputSurface: "cli",
+        operationId: (await store.read())!.operationId,
+        sessionId: fixture.sessionId,
+      })).rejects.toThrow("injected response loss after durable cancellation settlement");
+      expect(settlementInjected).toBe(true);
+      expect(await store.read()).toMatchObject({ state: "pre_effect_terminal" });
+    } finally {
+      settlementAppend.mockRestore();
+    }
+    const first = await runtime.reconcileDelegationPreEffectOperation({
+      inputSurface: "cli",
+      operationId: (await store.read())!.operationId,
+      sessionId: fixture.sessionId,
+    });
+    expect(first).toMatchObject({ changed: true, retryEligible: false });
+    expect(first.operation.state).toBe("reconciled");
+    const replay = await runtime.reconcileDelegationPreEffectOperation({
+      inputSurface: "cli",
+      operationId: first.operation.operationId,
+      sessionId: fixture.sessionId,
+    });
+    expect(replay.changed).toBe(false);
+    expect(replay.operation.operationSha256).toBe(first.operation.operationSha256);
+
+    const recovered = await new SessionCatalog(workspace).read(fixture.sessionId);
+    expect(recovered.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.owner.pre_effect.terminal")).toHaveLength(1);
+    expect(recovered.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.budget.settled")).toHaveLength(1);
+    expect(recovered.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.conflict_claim.released")).toHaveLength(1);
+    expect(recovered.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.actor_slot.released")).toHaveLength(1);
+    expect(recovered.events.filter((event) =>
+      event.scope === "session" && event.type === "delegation.parent.barrier.released")).toHaveLength(1);
+    expect(recovered.delegations.revisions[0]).toMatchObject({ status: "cancelled" });
+    expect(recovered.delegations.activeActorSlots).toEqual([]);
+    expect(recovered.delegations.activeConflictClaims).toEqual([]);
+  }, 45_000);
+
   it("launches a real child twice only after cleanup, settlement, and fresh retry artifacts", async () => {
     const { fixture, runtime, stateRoot, workspace } = await createRetryHarness();
     const io = createMemoryIO();
@@ -590,7 +876,10 @@ describe("Phase 20C durable pre-effect automatic retry", () => {
 
     cancelForeground();
     await waitForIgnoredCancelEvidence(evidencePath, "cancelObserved");
-    expect(await running, io.readStderr()).toBe(130);
+    // The child ignored the durable cancel after its start barrier. The Host
+    // proves process-tree cleanup but must report the original Application
+    // action as blocked/unknown rather than claim a clean cancellation.
+    expect(await running, io.readStderr()).toBe(8);
     expect(Date.now() - startedAt).toBeLessThan(10_000);
     const blocked = await new SessionCatalog(workspace).read(fixture.sessionId);
     expect(blocked.events.filter((event) =>

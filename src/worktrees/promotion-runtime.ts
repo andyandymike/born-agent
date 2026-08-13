@@ -8,7 +8,7 @@ import { TaskOrchestrationCompletionComposer } from "../coordination/task-orches
 import { PatchPlanner } from "../changes/patch-planner.js";
 import { PatchOperationError } from "../changes/patch-types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { RepositorySourceSnapshotter } from "../repository-intelligence/source-snapshotter.js";
@@ -237,6 +237,9 @@ export class WorktreePromotionRuntime {
       try {
         return (await writer.appendTaskGraphEvent("task_worktree.promotion.proposed", {
           ...exactGraph(graph), bundle, bundle_sha256: bundle.bundleSha256, proposal_id: proposalId,
+          ...(this.options.context.authenticatedApplication === undefined
+            ? {}
+            : { origin: taskUserOrigin(this.options.context) }),
         })).eventId;
       } finally {
         await writer.close();
@@ -279,6 +282,12 @@ export class WorktreePromotionRuntime {
         const current = session.taskGraph.revisions.find((candidate) => candidate.graphId === graph.graphId && candidate.revision === graph.revision && candidate.graphSha256 === graph.graphSha256);
         if (current === undefined || current.status !== "awaiting_integration") {
           throw new WorktreeError("worktree_promotion_stale", "Graph authority changed after promotion approval");
+        }
+        // This is the final pre-effect fence. After promotion.requested the
+        // atomic patch must reach a known terminal or remain reconciliation-
+        // required; a late abort can no longer erase the admitted effect.
+        if (input.signal.aborted) {
+          throw new WorktreeError("worktree_approval_denied", "promotion was cancelled before effect admission");
         }
         const approved = await writer.appendTaskGraphEvent("task_worktree.promotion.approved", {
           ...exactGraph(graph), approval_identity_sha256: approvalIdentitySha256, approval_request_id: approvalRequestId,

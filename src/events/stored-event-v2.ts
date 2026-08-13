@@ -12,6 +12,8 @@ import { phase18SkillRunEventDataSchemas } from "../skills/skill-event-schema.js
 import { phase18HookRunEventDataSchemas } from "../hooks/hook-event-schema.js";
 import { phase19TaskGraphSessionEventDataSchemas } from "../task-graph/task-graph-event-schema.js";
 import { phase20DelegationSessionEventDataSchemas } from "../delegation/delegation-event-schema.js";
+import { phase21RunControlEventDataSchemas } from "./phase21-run-control-event-schema.js";
+import { persistedApplicationCommitBindingV1Schema } from "../control-plane/application-protocol.js";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z
@@ -101,11 +103,36 @@ export const sessionTailRecoveredDataSchema = z
 
 export const sessionResumeRequestedDataSchema = z
   .object({
+    application_commit: persistedApplicationCommitBindingV1Schema.optional(),
+    approval_request_ids: z.array(uuidSchema).max(128).optional(),
     message: boundedTextSchema(64 * 1024).min(1).optional(),
+    new_run_id: uuidSchema.optional(),
     requested_mode: z.enum(["exact", "canonical_degraded"]),
     source_run_id: uuidSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const applicationFields = [
+      value.application_commit,
+      value.approval_request_ids,
+      value.new_run_id,
+    ];
+    if (
+      applicationFields.some((field) => field !== undefined) &&
+      !applicationFields.every((field) => field !== undefined)
+    ) {
+      context.addIssue({ code: "custom", message: "application resume binding is incomplete" });
+    }
+    if (value.application_commit !== undefined && value.application_commit.action_kind !== "session.resume") {
+      context.addIssue({ code: "custom", message: "application resume binding has the wrong action kind" });
+    }
+    if (
+      value.approval_request_ids !== undefined &&
+      new Set(value.approval_request_ids).size !== value.approval_request_ids.length
+    ) {
+      context.addIssue({ code: "custom", message: "application resume approval identities are duplicated" });
+    }
+  });
 
 export const approvalExpiredDataSchema = z
   .object({
@@ -238,6 +265,7 @@ export const v2SessionEventDataSchemas = {
 export const v2RunEventDataSchemas = {
   ...phase9RunEventDataSchemas,
   ...phase16GoalChangeRunEventDataSchemas,
+  ...phase21RunControlEventDataSchemas,
 } as const;
 
 export type Phase9SessionEventType = keyof typeof phase9SessionEventDataSchemas;

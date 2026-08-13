@@ -207,6 +207,7 @@ interface RoutingFields {
 }
 
 interface MutableRunInvariantState {
+  cancelRequest: Extract<DecodedV2RunEvent, { readonly type: "run.cancel.requested" }> | null;
   nextRunSeq: number;
   terminal: boolean;
 }
@@ -448,6 +449,7 @@ export function assertDecodedStoredEventInvariants(
         );
       }
       runs.set(event.runId, {
+        cancelRequest: null,
         nextRunSeq: 2,
         terminal: isTerminalType(event.type),
       });
@@ -474,6 +476,38 @@ export function assertDecodedStoredEventInvariants(
         eventNumber,
         `expected run_seq ${state.nextRunSeq}, received ${event.runSeq}`,
       );
+    }
+    if (event.type === "run.cancel.requested") {
+      if (
+        event.data.target_run_id !== event.runId ||
+        event.data.application_commit.operation_id !== event.eventId ||
+        state.cancelRequest !== null
+      ) {
+        throw new StoredEventDecodeError(
+          "invalid_event",
+          eventNumber,
+          "run cancel request does not bind one exact run/operation",
+        );
+      }
+      state.cancelRequest = event;
+    }
+    if (event.type === "run.cancelled") {
+      const binding = "application_cancel_request" in event.data
+        ? event.data.application_cancel_request
+        : null;
+      if (
+        (binding === null) !== (state.cancelRequest === null) ||
+        (binding !== null && state.cancelRequest !== null && (
+          binding.request_event_id !== state.cancelRequest.eventId ||
+          binding.target_owner_generation_sha256 !== state.cancelRequest.data.target_owner_generation_sha256
+        ))
+      ) {
+        throw new StoredEventDecodeError(
+          "invalid_event",
+          eventNumber,
+          "run.cancelled does not reference its exact application cancel request",
+        );
+      }
     }
     state.nextRunSeq += 1;
     state.terminal = isTerminalType(event.type);

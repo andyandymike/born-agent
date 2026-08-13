@@ -159,6 +159,7 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "repository.index.selected",
   "resume.pending_call.adopted",
   "run.budget_exceeded",
+  "run.cancel.requested",
   "run.cancelled",
   "run.completed",
   "run.failed",
@@ -184,6 +185,7 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   "skill.activation.requested",
   "skill.resource.read",
   "task_budget.exhausted",
+  "task_effect.admission.terminal",
   "task_graph.approved",
   "task_graph.cancel.requested",
   "task_graph.enqueued",
@@ -1422,6 +1424,7 @@ function reduceKnownEvent(
     case "task_node.retry.requested":
     case "task_node.skipped":
     case "task_budget.exhausted":
+    case "task_effect.admission.terminal":
     case "task_worktree.allocation.prepared":
     case "task_worktree.allocation.approved":
     case "task_worktree.create.requested":
@@ -1443,14 +1446,17 @@ function reduceKnownEvent(
     case "task_worker.spawn.requested":
     case "task_worker.started":
     case "task_worker.control.accepted":
+    case "run.cancel.requested":
     case "task_worker.terminal":
     case "task_worker.reconciled":
     case "delegation.revision.proposed":
     case "delegation.revision.replaced":
     case "delegation.decision.recorded":
+    case "delegation.resume.requested":
     case "delegation.queued":
     case "delegation.cancel.requested":
     case "delegation.cancelled":
+    case "delegation.owner.pre_effect.terminal":
     case "delegation.stale":
     case "delegation.envelope.prepared":
     case "delegation.parent.barrier.requested":

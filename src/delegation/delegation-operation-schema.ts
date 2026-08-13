@@ -51,9 +51,25 @@ export const delegationChildOperationContentSchema = z.object({
     verified: z.boolean(),
   }).strict().nullable().optional(),
   failure: z.object({
+    cancelRequestEventId: uuid.optional(),
+    cancelRequestId: uuid.optional(),
     code: z.string().regex(/^[a-z0-9_]{1,128}$/u),
     phase: z.enum(["before_spawn", "before_handshake", "before_start_barrier", "after_start_barrier"]),
-  }).strict().nullable().optional(),
+  }).strict().superRefine((value, context) => {
+    const cancellationIdentity = [value.cancelRequestEventId, value.cancelRequestId];
+    if (cancellationIdentity.some((item) => item !== undefined) &&
+        !cancellationIdentity.every((item) => item !== undefined)) {
+      context.addIssue({ code: "custom", message: "cancellation request identity must be complete" });
+    }
+    if (value.code === "delegation_cancelled" &&
+        !cancellationIdentity.every((item) => item !== undefined)) {
+      context.addIssue({ code: "custom", message: "delegation cancellation requires its exact durable request" });
+    }
+    if (value.code !== "delegation_cancelled" &&
+        cancellationIdentity.some((item) => item !== undefined)) {
+      context.addIssue({ code: "custom", message: "non-cancellation failure cannot carry cancellation authority" });
+    }
+  }).nullable().optional(),
   boundedResultRef: z.string().min(1).max(1024).nullable(),
   boundedResultSha256: sha256.nullable(),
 }).strict().superRefine((value, context) => {

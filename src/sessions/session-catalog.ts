@@ -37,6 +37,8 @@ export interface SessionCatalogEntry {
   readonly taskSummary: string;
 }
 
+export type PublicSessionCatalogEntry = Omit<SessionCatalogEntry, "path">;
+
 export interface SessionCatalogResult {
   readonly diagnostics: {
     readonly bytes: number;
@@ -128,10 +130,9 @@ function changedCount(session: ReconstructedMultiRunSession): number {
   return paths.size;
 }
 
-function entryFromProjection(
-  path: string,
+export function projectPublicSessionCatalogEntry(
   session: ReconstructedMultiRunSession,
-): SessionCatalogEntry {
+): PublicSessionCatalogEntry {
   const last = session.events.at(-1);
   const activeGoal = session.taskState.goals.find(
     (goal) => goal.content.goalId === session.taskState.activeGoalId,
@@ -140,7 +141,6 @@ function entryFromProjection(
     changedCount: changedCount(session),
     lastTimestamp: last?.timestamp ?? null,
     model: session.lastRun?.started.data.model ?? null,
-    path,
     provider: session.lastRun?.started.data.provider ?? null,
     resumeStatus: resumeStatus(session),
     sessionId: session.sessionId,
@@ -148,6 +148,16 @@ function entryFromProjection(
     taskSummary: safeSummary(
       session.lastRun?.started.data.input.text ?? activeGoal?.content.objective ?? "",
     ),
+  };
+}
+
+function entryFromProjection(
+  path: string,
+  session: ReconstructedMultiRunSession,
+): SessionCatalogEntry {
+  return {
+    ...projectPublicSessionCatalogEntry(session),
+    path,
   };
 }
 

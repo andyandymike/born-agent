@@ -1,6 +1,6 @@
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
-import type { TaskMutationContext, TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
+import { taskUserOrigin, type TaskMutationContext, type TaskMutationWriterFactory } from "../coordination/task-control-plane.js";
 import { reconstructMultiRunSession } from "../sessions/reconstruct-multi-run-session.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import type { TaskGraphBudgetV1 } from "../task-graph/task-graph-schema.js";
@@ -192,6 +192,7 @@ export class DelegationPreparationRuntime {
         envelope_artifact: envelopeArtifact,
         envelope_sha256: envelope.envelopeSha256,
         executable: false,
+        ...(input.context.authenticatedApplication === undefined ? {} : { origin: taskUserOrigin(input.context) }),
         parent_actor_id: delegation.parentActorId,
         parent_run_id: delegation.parentRunId,
       });

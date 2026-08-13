@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { resolveAgentConfig } from "../agent/agent-config.js";
-import type { AgentCommandOptions } from "../agent/agent-types.js";
+import type { AgentCommandOptions, AgentExitCode } from "../agent/agent-types.js";
 import { CheckpointStore } from "../checkpoints/checkpoint-store.js";
 import type { CliIO, CliRuntime } from "../cli/types.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
@@ -62,6 +62,19 @@ import { GoalChangeRecordReconciler } from "../coordination/goal-change-record-r
 import { OutcomeReportBuilder } from "../coordination/outcome-report.js";
 import { renderOutcomeReport } from "../coordination/outcome-report-renderer.js";
 import { HookError } from "../hooks/hook-errors.js";
+import type { AuthenticatedTaskMutationBindingV1 } from "../coordination/task-control-plane.js";
+import type { ApplicationCommitBindingV1 } from "../control-plane/application-protocol.js";
+import type { SessionResumeRunLifecyclePortV1 } from "../control-plane/use-cases/session-resume-action.js";
+import {
+  executeSessionResumeThroughRuntimeAdapter,
+  type SessionResumePhase9ExecutionPortV1,
+} from "../control-plane/adapters/session-resume-runtime-adapter.js";
+import {
+  querySessionsListThroughApplicationService,
+  querySessionShowThroughApplicationService,
+  type SessionCliCatalogEntryV1,
+  type SessionCliShowResultV1,
+} from "../control-plane/adapters/session-cli-query-adapter.js";
 
 const MAX_SHOW_ITEMS = 200;
 const MAX_SHOW_TEXT_BYTES = 128 * 1024;
@@ -94,6 +107,12 @@ export interface SessionsResumeOptions {
   readonly policyConfig?: string | undefined;
   readonly policyProfile?: string | undefined;
   readonly sessionId: string;
+}
+
+interface SessionsResumeApplicationAuthorityV1 {
+  readonly applicationCommit: ApplicationCommitBindingV1;
+  readonly authenticatedMutation: AuthenticatedTaskMutationBindingV1;
+  readonly runLifecycle: SessionResumeRunLifecyclePortV1;
 }
 
 function redact(_runtime: CliRuntime, value: string): string {
@@ -162,6 +181,36 @@ export async function executeSessionsList(
   const limit = resolveLimit(options.limit);
   if (limit === undefined) {
     return usageError(io, "session list limit must be an integer from 1 to 200");
+  }
+  if (runtime.controlPlaneStateRoot !== undefined) {
+    const startedAt = runtime.now();
+    const application = await querySessionsListThroughApplicationService({ io, limit, runtime });
+    if (application.value === null) return application.exitCode;
+    const entries: readonly SessionCliCatalogEntryV1[] = application.value.entries;
+    const diagnostics = Object.freeze({
+      ...application.value.diagnostics,
+      durationMs: Math.max(0, runtime.now() - startedAt),
+    });
+    if (options.json) {
+      writeJson(io, runtime, { diagnostics, entries, schemaVersion: 1 });
+    } else if (entries.length === 0) {
+      io.stdout.write("No sessions found.\n");
+    } else {
+      io.stdout.write("SESSION\tSTATUS\tPROVIDER/MODEL\tCHANGED\tRESUME\tTASK\n");
+      for (const entry of entries) {
+        const backend = entry.provider === null || entry.model === null
+          ? "-"
+          : `${entry.provider}/${entry.model}`;
+        const summary = entry.error ?? entry.taskSummary;
+        io.stdout.write(
+          `${entry.sessionId}\t${entry.status}\t${backend}\t${String(entry.changedCount)}\t${entry.resumeStatus}\t${summary}\n`,
+        );
+      }
+    }
+    if (diagnostics.truncated) {
+      io.stderr.write(`session catalog truncated after ${String(diagnostics.filesScanned)} files\n`);
+    }
+    return 0;
   }
   let result;
   try {
@@ -349,6 +398,102 @@ function publicContextFacts(
   };
 }
 
+function renderApplicationSessionShow(
+  options: SessionsShowOptions,
+  runtime: CliRuntime,
+  io: CliIO,
+  shown: SessionCliShowResultV1,
+): number {
+  const projection = shown.projection;
+  const display = projection.display;
+  const lastRun = projection.runs.at(-1) ?? null;
+  if (options.json) {
+    writeJson(io, runtime, {
+      artifacts: display.artifacts,
+      ...(options.context === true
+        ? { context: display.context }
+        : options.events
+          ? { events: shown.events ?? [] }
+          : {
+              transcript: display.transcript,
+              transcriptTruncated: display.transcriptTruncated,
+            }),
+      background: projection.background,
+      lastRunId: lastRun?.runId ?? null,
+      model: display.catalog.model,
+      outcomeReport: display.outcomeReport,
+      provider: display.catalog.provider,
+      runs: projection.runs.length,
+      runtimePolicy: display.runtimePolicy,
+      schemaVersion: 1,
+      sessionId: projection.sessionId,
+      status: display.catalog.status,
+      taskExecution: projection.taskExecution,
+      taskGraph: projection.taskGraph,
+      worktrees: projection.worktrees,
+    });
+    return 0;
+  }
+  io.stdout.write(`Session: ${projection.sessionId}\n`);
+  io.stdout.write(`Last run: ${lastRun?.runId ?? "none"}\n`);
+  io.stdout.write(`Status: ${display.catalog.status}\n`);
+  if (display.catalog.provider === null || display.catalog.model === null) {
+    io.stdout.write("Backend: none\n");
+  } else {
+    io.stdout.write(`Backend: ${display.catalog.provider}/${display.catalog.model}\n`);
+  }
+  if (display.runtimePolicy === null) {
+    io.stdout.write("Runtime policy: none\n");
+  } else if (display.runtimePolicy === "legacy_unrecorded") {
+    io.stdout.write("Runtime policy: legacy_unrecorded\n");
+  } else {
+    io.stdout.write(
+      `Runtime policy: ${display.runtimePolicy.profile_id}/${display.runtimePolicy.profile_mode} (${display.runtimePolicy.profile_sha256})\n`,
+    );
+  }
+  io.stdout.write(
+    `Artifacts: ${String(display.artifacts.storedReferences)} references, ${String(display.artifacts.uniqueObjects)} objects, ${String(display.artifacts.capturedBytes)} captured bytes, ${String(display.artifacts.truncatedCaptures)} truncated\n`,
+  );
+  if (display.taskExecutionSummary !== null) {
+    io.stdout.write(
+      `Task Graph: ${display.taskExecutionSummary.graphId} rev ${String(display.taskExecutionSummary.graphRevision)} status=${display.taskExecutionSummary.status}\n`,
+    );
+    io.stdout.write(
+      `Task nodes: ${String(display.taskExecutionSummary.succeededNodes)}/${String(display.taskExecutionSummary.totalNodes)} succeeded\n`,
+    );
+  }
+  if (display.backgroundSummary.workerHistoryCount > 0) {
+    io.stdout.write(
+      `Background workers: ${String(display.backgroundSummary.workerHistoryCount)} historical, current=${display.backgroundSummary.currentStatus ?? "none"}\n`,
+    );
+  }
+  if (display.outcomeReport !== null) io.stdout.write(renderOutcomeReport(display.outcomeReport, "text"));
+  if (options.context === true) {
+    io.stdout.write(`Context plans: ${String(display.context.plans.length)}\n`);
+    for (const plan of display.context.plans) {
+      io.stdout.write(
+        `run=${plan.runId} step=${String(plan.step)} epoch=${String(plan.epoch)} estimated_input_tokens=${String(plan.estimatedInputTokens)} context_window_tokens=${String(plan.contextWindowTokens)} protected_estimated_tokens=${String(plan.protectedEstimatedTokens)} protected_categories=${plan.protectedCategories.join(",") || "none"} archived_items=${String(plan.archivedItemCount)} compacted=${String(plan.compacted)} canonical_context_sha256=${plan.canonicalContextSha256} encoded_request_sha256=${plan.encodedRequestSha256 ?? "unavailable"}\n`,
+      );
+    }
+    if (display.context.plansTruncated) io.stdout.write("[context plans truncated]\n");
+    return 0;
+  }
+  if (options.events) {
+    for (const event of shown.events ?? []) {
+      io.stdout.write(
+        `${String(event.sessionSeq)}\t${event.scope}\t${event.type}\t${redact(runtime, JSON.stringify(event.data))}\n`,
+      );
+    }
+    if (shown.eventsTruncated) io.stdout.write("[events truncated]\n");
+    return 0;
+  }
+  const rendered = boundedTranscriptText(display.transcript, runtime);
+  io.stdout.write("\n");
+  io.stdout.write(rendered.text);
+  if (rendered.truncated || display.transcriptTruncated) io.stdout.write("[transcript truncated]\n");
+  return 0;
+}
+
 export async function executeSessionsShow(
   options: SessionsShowOptions,
   runtime: CliRuntime,
@@ -361,6 +506,17 @@ export async function executeSessionsShow(
     assertCanonicalSessionId(options.sessionId);
   } catch (error) {
     return usageError(io, error instanceof Error ? error.message : "invalid session id");
+  }
+  if (runtime.controlPlaneStateRoot !== undefined) {
+    const application = await querySessionShowThroughApplicationService({
+      includeEvents: options.events,
+      io,
+      runtime,
+      sessionId: options.sessionId,
+    });
+    return application.value === null
+      ? application.exitCode
+      : renderApplicationSessionShow(options, runtime, io, application.value);
   }
   try {
     // PHASE9: show is a deterministic read-only snapshot. A lock means bytes
@@ -543,6 +699,7 @@ const NON_LEGACY_RUN_EVENTS = new Set([
   "repository.index.invalidated",
   "repository.index.selected",
   "resume.pending_call.adopted",
+  "run.cancel.requested",
   "tool.call.recovered",
 ]);
 
@@ -874,6 +1031,66 @@ export async function executeSessionsResume(
   runtime: CliRuntime,
   io: CliIO,
 ): Promise<number> {
+  // Test embedders without Host state preserve the deterministic Phase 9
+  // owner directly. Every product CLI/TUI runtime has controlPlaneStateRoot
+  // and therefore uses the typed prepare/commit adapter below.
+  if (runtime.controlPlaneStateRoot === undefined) {
+    return executeSessionsResumeOwner(options, runtime, io);
+  }
+  const result = await executeSessionResumeThroughRuntimeAdapter({
+    io,
+    phase9: createSessionsResumePhase9ExecutionPort(runtime, io),
+    request: {
+      allowDegradedResume: options.allowDegradedResume,
+      ...(options.continueApprovedPlan === undefined ? {} : { continueApprovedPlan: options.continueApprovedPlan }),
+      ...(options.expectedSessionSeq === undefined ? {} : { expectedSessionSeq: options.expectedSessionSeq }),
+      inputSurface: options.inputSurface ?? "cli",
+      message: options.message,
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+      ...(options.modeSource === undefined || options.modeSource === "legacy_default"
+        ? {}
+        : { modeSource: options.modeSource }),
+      ...(options.planRevision === undefined ? {} : { planRevision: options.planRevision }),
+      ...(options.planSha256 === undefined ? {} : { planSha256: options.planSha256 }),
+      ...(options.policyConfig === undefined ? {} : { policyConfig: options.policyConfig }),
+      ...(options.policyProfile === undefined ? {} : { policyProfile: options.policyProfile }),
+      sessionId: options.sessionId,
+    },
+    runtime,
+  });
+  if (result.diagnostic !== null && result.diagnostic.code !== "session_resume_owner_rejected") {
+    io.stderr.write(`${result.diagnostic.code}: ${result.diagnostic.message}\n`);
+  }
+  return result.exitCode;
+}
+
+/** Product composition bridge; carries no CLI parsing or prepared rendering. */
+export function createSessionsResumePhase9ExecutionPort(
+  runtime: CliRuntime,
+  io: CliIO,
+): SessionResumePhase9ExecutionPortV1 {
+  return Object.freeze({
+    execute: async (input: Parameters<SessionResumePhase9ExecutionPortV1["execute"]>[0]) => {
+      const exitCode = await executeSessionsResumeOwner(
+        input.options,
+        runtime,
+        io,
+        input.applicationAuthority,
+      );
+      if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 130].includes(exitCode)) {
+        throw new TypeError("Phase 9 resume owner returned an invalid exit code");
+      }
+      return exitCode as AgentExitCode;
+    },
+  });
+}
+
+async function executeSessionsResumeOwner(
+  options: SessionsResumeOptions,
+  runtime: CliRuntime,
+  io: CliIO,
+  applicationAuthority?: SessionsResumeApplicationAuthorityV1,
+): Promise<number> {
   try {
     assertCanonicalSessionId(options.sessionId);
   } catch (error) {
@@ -926,6 +1143,15 @@ export async function executeSessionsResume(
       return usageError(
         io,
         "idle Phase 16 task has no historical run to resume; start an explicit run instead",
+      );
+    }
+    if (
+      lastRun.terminal === undefined &&
+      lastRun.events.some((event) => event.type === "run.cancel.requested")
+    ) {
+      return usageError(
+        io,
+        "run_cancel_pending: the durable cancel barrier must reach a canonical terminal or explicit reconciliation before resume",
       );
     }
     const reconcileActiveGoalChanges = async (): Promise<number> => {
@@ -1205,13 +1431,6 @@ export async function executeSessionsResume(
       return usageError(io, "canonical transcript exceeds the safe resume prompt bound");
     }
 
-    await writer.appendSessionEvent("session.resume.requested", {
-      ...(options.message?.trim()
-        ? { message: redact(runtime, options.message.trim()) }
-        : {}),
-      requested_mode: plan.mode,
-      source_run_id: lastRun.runId,
-    });
     const expiries = new Map(
       approvalExpiries(session).map((expiry) => [
         expiry.approvalRequestId,
@@ -1224,7 +1443,37 @@ export async function executeSessionsResume(
         sourceRunId: expiry.sourceRunId,
       });
     }
-    for (const expiry of expiries.values()) {
+    const orderedExpiries = [...expiries.values()];
+    const resumeMessage = options.message?.trim()
+      ? redact(runtime, options.message.trim())
+      : undefined;
+    if (applicationAuthority === undefined) {
+      await writer.appendSessionEvent("session.resume.requested", {
+        ...(resumeMessage === undefined ? {} : { message: resumeMessage }),
+        requested_mode: plan.mode,
+        source_run_id: lastRun.runId,
+      });
+    } else {
+      await writer.appendPhase21SessionResumeRequested(
+        applicationAuthority.applicationCommit.operationId,
+        {
+          application_commit: {
+            action_kind: applicationAuthority.applicationCommit.actionKind,
+            authorization_decision_sha256: applicationAuthority.applicationCommit.authorizationDecisionSha256,
+            operation_id: applicationAuthority.applicationCommit.operationId,
+            prepared_action_sha256: applicationAuthority.applicationCommit.preparedActionSha256,
+            principal_id: applicationAuthority.applicationCommit.principalId,
+            schema_version: 1,
+          },
+          approval_request_ids: orderedExpiries.map((expiry) => expiry.approvalRequestId),
+          ...(resumeMessage === undefined ? {} : { message: resumeMessage }),
+          new_run_id: plan.newRunId,
+          requested_mode: plan.mode,
+          source_run_id: lastRun.runId,
+        },
+      );
+    }
+    for (const expiry of orderedExpiries) {
       await writer.appendSessionEvent("approval.expired", {
         approval_request_id: expiry.approvalRequestId,
         reason: "new_run_requires_new_authority",
@@ -1235,6 +1484,12 @@ export async function executeSessionsResume(
     // PHASE9: the planner/persistence steps above invoke no provider or tool.
     // Only after the request and approval expiries are durable do we hand the
     // existing locked writer to a fresh run with reset run-local budgets.
+    const activeRun = applicationAuthority === undefined
+      ? undefined
+      : await applicationAuthority.runLifecycle.activate({
+          runId: plan.newRunId,
+          writer,
+        });
     const handedWriter = writer;
     writer = undefined;
     io.stdout.write(`Session: ${session.sessionId}\n`);
@@ -1244,7 +1499,7 @@ export async function executeSessionsResume(
     io.stdout.write(
       `Pending effects: ${plan.inheritedPendingCall === null ? "none" : "adopted"}\n`,
     );
-    return await executeAgent(selected.options, runtime, io, {
+    const resumedExecution = {
       backend: selected.backend,
       ...(currentCapabilitySnapshot === undefined
         ? {}
@@ -1275,7 +1530,34 @@ export async function executeSessionsResume(
       sessionId: session.sessionId,
       sourceRunId: lastRun.runId,
       writer: handedWriter,
-    });
+    };
+    try {
+      return await executeAgent(
+        selected.options,
+        runtime,
+        io,
+        resumedExecution,
+        applicationAuthority === undefined
+          ? undefined
+          : {
+              applicationCancellation: activeRun!.applicationCancellation,
+              applicationCommit: applicationAuthority.applicationCommit,
+              authenticatedMutation: applicationAuthority.authenticatedMutation,
+              ...(currentCapabilitySnapshot === undefined
+                ? {}
+                : { capabilitySnapshot: currentCapabilitySnapshot }),
+              modelTask: prompt,
+              onRunStarted: activeRun!.onRunStarted,
+              runId: plan.newRunId,
+              sessionId: session.sessionId,
+              sessionWorkspace: runtime.cwd,
+              sourceRunId: lastRun.runId,
+              writer: handedWriter,
+            },
+      );
+    } finally {
+      await activeRun?.finish();
+    }
   } catch (error) {
     if (isErrorCode(error, "ENOENT")) {
       return usageError(io, "session was not found");

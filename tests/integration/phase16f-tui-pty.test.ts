@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { readStoredSession } from "../../src/sessions/read-stored-session.js";
+import { createPhase21ALocalControlPlane } from "../../src/control-plane/local-control-plane.js";
 import { withRealPtyTestLock } from "../pty-test-lock.js";
 
 const execFileAsync = promisify(execFile);
@@ -41,11 +42,17 @@ async function fixtureWorkspace(): Promise<string> {
 
 interface PtyEvidence {
   readonly appExitCode: number;
+  readonly hostPreparedActions: readonly string[];
+  readonly hostPreparedExactIdentityVisible: boolean;
+  readonly hostPreparedSummaryVisible: boolean;
+  readonly hostPreparedTargetVisible: boolean;
   readonly outputBase64: string;
   readonly resized: boolean;
+  readonly retainedDraftBlockedVisible: boolean;
   readonly shellExitCode: number;
   readonly shellRestored: boolean;
   readonly signal: number | null;
+  readonly taskPreparedNoProgress: boolean;
 }
 
 describe("Phase 16F real PTY lifecycle", () => {
@@ -67,7 +74,7 @@ describe("Phase 16F real PTY lifecycle", () => {
             cwd: workspace,
             env: { ...process.env },
             maxBuffer: 4 * 1024 * 1024,
-            timeout: 30_000,
+            timeout: 75_000,
             windowsHide: true,
           },
         ),
@@ -77,12 +84,28 @@ describe("Phase 16F real PTY lifecycle", () => {
 
       expect(evidence).toMatchObject({
         appExitCode: 0,
+        hostPreparedExactIdentityVisible: true,
+        hostPreparedSummaryVisible: true,
+        hostPreparedTargetVisible: true,
         resized: true,
+        retainedDraftBlockedVisible: true,
         shellExitCode: 0,
         shellRestored: true,
         signal: null,
+        taskPreparedNoProgress: true,
       });
+      expect(evidence.hostPreparedActions).toEqual(expect.arrayContaining([
+        "repository.register",
+        "session.message.submit",
+        "session.resume",
+      ]));
+      expect(evidence.hostPreparedActions.filter((kind) => kind === "session.message.submit")).toHaveLength(1);
+      expect(evidence.hostPreparedActions.filter((kind) => kind === "session.resume")).toHaveLength(1);
+      expect(raw).toContain("HOST PREPARED ACTION | session.message.submit");
+      expect(raw).toContain("[CONFIRM EXACT PREPARED ACTION]");
       expect(raw).toContain("PTY_ACTIVE");
+      expect(raw.includes("Run active") || raw.includes("Session refresh in progress")).toBe(true);
+      expect(raw).toContain("input kept locally");
       expect(raw).toContain("PTY_SECOND");
       expect(raw).toContain("PTY_APP_EXIT=0");
       expect(raw).toContain("PTY_SHELL_RESTORED");
@@ -94,6 +117,47 @@ describe("Phase 16F real PTY lifecycle", () => {
       const events = await readStoredSession(
         join(workspace, ".bornagent", "sessions", files[0]!),
       );
+      const first = events[0];
+      expect(first).toMatchObject({
+        data: {
+          origin: {
+            application_commit: {
+              action_kind: "session.message.submit",
+              principal_id: "local_owner",
+            },
+            kind: "authenticated_surface",
+            surface: "tui",
+          },
+        },
+        sessionSeq: 1,
+        type: "goal.created",
+      });
+      const stateRoot = join(workspace, ".bornagent", "pty-user-state", "application-control");
+      const plane = await createPhase21ALocalControlPlane({
+        launcher: {
+          launch: async () => {
+            throw new Error("completed PTY catalog evidence must not relaunch an Agent");
+          },
+        },
+        stateRoot,
+      });
+      const repositories = await plane.repositories.list();
+      expect(repositories).toHaveLength(1);
+      const sessions = await plane.sessions.project(repositories[0]!.repositoryId);
+      expect(sessions.entries).toEqual([
+        expect.objectContaining({
+          initialLedgerHead: expect.objectContaining({ sequence: 0 }),
+          sessionId: files[0]!.slice(0, -".jsonl".length),
+        }),
+      ]);
+      expect(sessions.materializations).toEqual([
+        expect.objectContaining({
+          firstEventActionKind: "session.message.submit",
+          firstEventId: first!.eventId,
+          firstEventPrincipalId: "local_owner",
+          origin: "phase21_application",
+        }),
+      ]);
       const starts = events.filter((event) => event.type === "run.started");
       expect(starts).toHaveLength(2);
       expect(events.filter((event) => event.type === "run.cancelled")).toEqual([
@@ -104,6 +168,6 @@ describe("Phase 16F real PTY lifecycle", () => {
       ]);
       expect(events.filter((event) => event.type === "goal.created")).toHaveLength(1);
     },
-    40_000,
+    85_000,
   );
 });

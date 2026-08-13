@@ -13,6 +13,7 @@ import {
   type RunEventRenderer,
 } from "../events/event-publisher.js";
 import type { RunEventDraft } from "../events/run-event.js";
+import type { RunEvent } from "../events/run-event.js";
 import type {
   BackendContinuation,
   ModelBackend,
@@ -51,6 +52,8 @@ import {
   prepareCapabilityRunSnapshot,
   type PreparedCapabilityRunSnapshot,
 } from "../capabilities/capability-run-snapshot.js";
+import type { ApplicationCommitBindingV1 } from "../control-plane/application-protocol.js";
+import type { ApplicationCancelRequestBindingV1 } from "../events/phase21-run-control-event-schema.js";
 
 type CancellationReason = "cancelled" | "timeout";
 export type StreamingChatExitCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 130;
@@ -83,6 +86,37 @@ export interface StreamingChatRuntime {
   setTimer(listener: () => void, delayMs: number): unknown;
   timestamp(): string;
 }
+
+/**
+ * PHASE21: the product Host supplies the exact session/run owner instead of
+ * allowing the chat core to mint a second, unauthenticated session. Legacy
+ * embedders omit this binding and retain the Phase 0-20 lifecycle unchanged.
+ */
+export interface StreamingChatApplicationRunBindingV1 {
+  readonly applicationCancellation: Readonly<{
+    readonly hostEmergencyReason?: () => "tui_surface_fatal" | undefined;
+    readonly signal: AbortSignal;
+    readonly terminalBinding: () => ApplicationCancelRequestBindingV1 | undefined;
+  }>;
+  readonly applicationCommit: ApplicationCommitBindingV1;
+  readonly onRunStarted: (
+    event: Extract<RunEvent, { readonly type: "run.started" }>,
+  ) => Promise<void> | void;
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly writer: SessionWriter;
+}
+
+export interface PreparedStreamingChatRunV1 {
+  readonly backend: ModelBackend;
+  readonly config: ResolvedChatConfig;
+  readonly effectivePolicy: EffectiveRuntimePolicy;
+  readonly secrets: readonly (string | undefined)[];
+}
+
+export type StreamingChatPreparationV1 =
+  | Readonly<{ readonly exitCode: StreamingChatExitCode; readonly ok: false }>
+  | Readonly<{ readonly ok: true; readonly value: PreparedStreamingChatRunV1 }>;
 
 interface CompletedTurn {
   // PHASE3: consumeModelTurn 只汇总一个回合；是否结束整个 run 由外层固定状态机决定。
@@ -148,13 +182,35 @@ async function publishCancellation(
   publisher: EventPublisher,
   runtime: StreamingChatRuntime,
   startedAt: number,
+  applicationCancelRequest?: () => ApplicationCancelRequestBindingV1 | undefined,
+  hostEmergencyReason?: () => "tui_surface_fatal" | undefined,
 ): Promise<StreamingChatExitCode> {
   // PHASE2: timeout 和 Ctrl+C 都会 abort 同一个请求，但它们是不同的业务事实：
   // 用户取消写 run.cancelled/130；超时写 run.failed/6。
   const duration = durationMs(runtime, startedAt);
-  if (reason === "cancelled") {
+  if (hostEmergencyReason?.() === "tui_surface_fatal") {
     await publisher.publish({
-      data: { duration_ms: duration, reason: "user" },
+      data: {
+        category: "internal",
+        code: "tui_surface_fatal",
+        duration_ms: duration,
+        message: "TUI surface failed while this exact Host owner was active",
+        retryable: false,
+      },
+      type: "run.failed",
+    });
+    return 1;
+  }
+  if (reason === "cancelled") {
+    const applicationBinding = applicationCancelRequest?.();
+    await publisher.publish({
+      data: {
+        ...(applicationBinding === undefined
+          ? {}
+          : { application_cancel_request: applicationBinding }),
+        duration_ms: duration,
+        reason: "user",
+      },
       type: "run.cancelled",
     });
     return 130;
@@ -435,6 +491,8 @@ async function runFixedToolRoundTrip(
   cancellationReason: () => CancellationReason | undefined,
   secrets: readonly (string | undefined)[],
   persistTurnBoundary?: TurnBoundaryRecorder,
+  applicationCancelRequest?: () => ApplicationCancelRequestBindingV1 | undefined,
+  hostEmergencyReason?: () => "tui_surface_fatal" | undefined,
 ): Promise<StreamingChatExitCode> {
   // PHASE3 状态机：first turn -> (直接回答 | 一个工具) -> second turn -> terminal。
   // 这里刻意没有 while；通用 AgentLoop、step budget 和重复调用检测属于 Phase 4。
@@ -462,7 +520,15 @@ async function runFixedToolRoundTrip(
         startedAt,
       );
     }
-    return publishCancellation(reason, config, publisher, runtime, startedAt);
+    return publishCancellation(
+      reason,
+      config,
+      publisher,
+      runtime,
+      startedAt,
+      applicationCancelRequest,
+      hostEmergencyReason,
+    );
   }
   if (first.kind === "failed") {
     return publishProviderFailure(first.error, publisher, runtime, startedAt);
@@ -543,6 +609,8 @@ async function runFixedToolRoundTrip(
       publisher,
       runtime,
       startedAt,
+      applicationCancelRequest,
+      hostEmergencyReason,
     );
   }
 
@@ -597,7 +665,15 @@ async function runFixedToolRoundTrip(
           runtime,
           startedAt,
         )
-      : publishCancellation(reason, config, publisher, runtime, startedAt);
+      : publishCancellation(
+          reason,
+          config,
+          publisher,
+          runtime,
+          startedAt,
+        applicationCancelRequest,
+        hostEmergencyReason,
+        );
   }
   if (second.kind === "failed") {
     return publishProviderFailure(second.error, publisher, runtime, startedAt);
@@ -639,13 +715,11 @@ async function runFixedToolRoundTrip(
   );
 }
 
-export async function runStreamingChat(
+export async function prepareStreamingChat(
   options: ChatCommandOptions,
   runtime: StreamingChatRuntime,
   renderer: StreamingRunRenderer,
-): Promise<StreamingChatExitCode> {
-  // PHASE2/3 orchestration root：配置 -> session -> event publisher ->
-  // model turn -> 可选一次工具 -> model turn -> 唯一 terminal -> 清理关闭。
+): Promise<StreamingChatPreparationV1> {
   let effectivePolicy: EffectiveRuntimePolicy;
   let policyRequest: ResolvedProviderPolicyRequest;
   try {
@@ -668,10 +742,10 @@ export async function runStreamingChat(
   } catch (error) {
     if (error instanceof RuntimePolicyError) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      return error.exitCode;
+      return Object.freeze({ exitCode: error.exitCode, ok: false });
     }
     renderer.renderDiagnostic("runtime policy internal error");
-    return 1;
+    return Object.freeze({ exitCode: 1, ok: false });
   }
   const configResult = resolveChatConfig(
     {
@@ -688,7 +762,7 @@ export async function runStreamingChat(
   );
   if (!configResult.ok) {
     renderer.renderDiagnostic(`usage/config error: ${configResult.error}`);
-    return 2;
+    return Object.freeze({ exitCode: 2, ok: false });
   }
   const config = configResult.value;
   let backend: ModelBackend;
@@ -711,7 +785,7 @@ export async function runStreamingChat(
   } catch (error) {
     if (error instanceof BackendPreflightError) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      return error.exitCode;
+      return Object.freeze({ exitCode: error.exitCode, ok: false });
     }
     if (
       error instanceof Error &&
@@ -719,26 +793,62 @@ export async function runStreamingChat(
       (error.exitCode === 2 || error.exitCode === 4)
     ) {
       renderer.renderDiagnostic(`usage/config error: ${error.message}`);
-      return error.exitCode;
+      return Object.freeze({ exitCode: error.exitCode, ok: false });
     }
     renderer.renderDiagnostic("internal protocol error");
-    return 1;
+    return Object.freeze({ exitCode: 1, ok: false });
   }
   const secrets = credentialSecretsForPolicy(
     effectivePolicy,
     config.provider,
     runtime.env,
   );
+  return Object.freeze({
+    ok: true,
+    value: Object.freeze({ backend, config, effectivePolicy, secrets }),
+  });
+}
 
-  const sessionId = runtime.randomUUID();
-  const runId = runtime.randomUUID();
+export async function runStreamingChat(
+  options: ChatCommandOptions,
+  runtime: StreamingChatRuntime,
+  renderer: StreamingRunRenderer,
+  applicationRun?: StreamingChatApplicationRunBindingV1,
+  preparedRun?: PreparedStreamingChatRunV1,
+): Promise<StreamingChatExitCode> {
+  // PHASE2/3 orchestration root：配置 -> session -> event publisher ->
+  // model turn -> 可选一次工具 -> model turn -> 唯一 terminal -> 清理关闭。
+  let prepared = preparedRun;
+  if (
+    applicationRun !== undefined &&
+    (
+      applicationRun.applicationCommit.actionKind !== "session.message.submit" ||
+      applicationRun.applicationCommit.operationId !== applicationRun.runId
+    )
+  ) {
+    throw new TypeError("application chat run is not bound to session.message.submit");
+  }
+  if (prepared === undefined) {
+    const result = await prepareStreamingChat(options, runtime, renderer);
+    if (!result.ok) return result.exitCode;
+    prepared = result.value;
+  }
+  const { backend, config, effectivePolicy, secrets } = prepared;
+
+  const sessionId = applicationRun?.sessionId ?? runtime.randomUUID();
+  const runId = applicationRun?.runId ?? runtime.randomUUID();
   // PHASE2: 目前一个 session 只有一个 run，但 ID 仍分开，为未来多轮 session 保留语义。
   let writer: SessionWriter;
-  try {
-    writer = await runtime.createSessionWriter(runtime.cwd, sessionId);
-  } catch {
-    renderer.renderStorageError();
-    return 1;
+  const ownsWriter = applicationRun === undefined;
+  if (applicationRun !== undefined) {
+    writer = applicationRun.writer;
+  } else {
+    try {
+      writer = await runtime.createSessionWriter(runtime.cwd, sessionId);
+    } catch {
+      renderer.renderStorageError();
+      return 1;
+    }
   }
 
   let preparedCapabilitySnapshot: PreparedCapabilityRunSnapshot | undefined;
@@ -769,13 +879,26 @@ export async function runStreamingChat(
           ? `${error.code}: ${error.message}`
           : "capability snapshot preflight failed",
       );
-      await writer.close().catch(() => undefined);
+      if (ownsWriter) await writer.close().catch(() => undefined);
       return error instanceof CapabilityError ? error.exitCode : 1;
     }
   }
 
   const publisher = new EventPublisher({
-    randomUUID: runtime.randomUUID,
+    // PHASE21: the application operation owns both the run and its first
+    // durable fact, making the dispatch boundary exactly discoverable.
+    randomUUID: applicationRun === undefined
+      ? runtime.randomUUID
+      : (() => {
+          let first = true;
+          return () => {
+            if (first) {
+              first = false;
+              return applicationRun.runId;
+            }
+            return runtime.randomUUID();
+          };
+        })(),
     renderer,
     runId,
     sessionId,
@@ -798,12 +921,44 @@ export async function runStreamingChat(
       controller.abort();
     }
   });
+  const forwardApplicationCancellation = (): void => {
+    if (cancellationReason === undefined) {
+      // The terminal kind is decided by hostEmergencyReason below. Keeping the
+      // local transport reason as cancelled preserves legacy cancellation flow
+      // without ever publishing a user cancellation for a Host fatal.
+      cancellationReason = "cancelled";
+      controller.abort();
+    }
+  };
+  if (applicationRun?.applicationCancellation.signal.aborted === true) {
+    forwardApplicationCancellation();
+  } else {
+    applicationRun?.applicationCancellation.signal.addEventListener(
+      "abort",
+      forwardApplicationCancellation,
+      { once: true },
+    );
+  }
   let exitCode: StreamingChatExitCode;
 
   try {
     // PHASE2/3: run.started 是 session 第一条事实；无效配置不会创建 session。
     const runStarted = await publisher.publish({
       data: {
+        ...(applicationRun === undefined
+          ? {}
+          : {
+              application_commit: {
+                action_kind: applicationRun.applicationCommit.actionKind,
+                authorization_decision_sha256:
+                  applicationRun.applicationCommit.authorizationDecisionSha256,
+                operation_id: applicationRun.applicationCommit.operationId,
+                prepared_action_sha256:
+                  applicationRun.applicationCommit.preparedActionSha256,
+                principal_id: applicationRun.applicationCommit.principalId,
+                schema_version: 1 as const,
+              },
+            }),
         ...(preparedCapabilitySnapshot === undefined
           ? {}
           : { capability_snapshot: preparedCapabilitySnapshot.binding }),
@@ -821,6 +976,10 @@ export async function runStreamingChat(
       },
       type: "run.started",
     });
+    if (runStarted.type !== "run.started") {
+      throw new TypeError("Chat publisher returned a non-start event");
+    }
+    if (applicationRun !== undefined) await applicationRun.onRunStarted(runStarted);
     await publisher.publish({
       data: {
         adapter: backend.identity.adapter,
@@ -866,6 +1025,8 @@ export async function runStreamingChat(
       () => cancellationReason,
       secrets,
       turnBoundaryRecorder,
+      applicationRun?.applicationCancellation.terminalBinding,
+      applicationRun?.applicationCancellation.hostEmergencyReason,
     );
   } catch (error) {
     // PHASE2: 存储失败后 writer 不可信，不能再尝试补 terminal event。
@@ -881,6 +1042,8 @@ export async function runStreamingChat(
           publisher,
           runtime,
           startedAt,
+          applicationRun?.applicationCancellation.terminalBinding,
+          applicationRun?.applicationCancellation.hostEmergencyReason,
         );
       } catch (publishError) {
         if (publishError instanceof EventPersistenceError) {
@@ -915,8 +1078,13 @@ export async function runStreamingChat(
     // PHASE2: 无论成功、失败还是取消，都撤销计时器和 SIGINT listener。
     runtime.clearTimer(timer);
     stopListening();
+    applicationRun?.applicationCancellation.signal.removeEventListener(
+      "abort",
+      forwardApplicationCancellation,
+    );
   }
 
+  if (!ownsWriter) return exitCode;
   try {
     // PHASE2: close 失败会把命令结果降级为内部错误。
     await writer.close();

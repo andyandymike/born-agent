@@ -15,7 +15,7 @@ import {
 } from "./rename-durability.js";
 
 export interface StoredLineDecoder<T> {
-  decode(value: unknown, physicalLine: number): T;
+  decode(value: unknown, physicalLine: number, rawLineBytes?: Uint8Array): T;
 }
 
 export type TailRecoveryKind = "none" | "newline_added" | "tail_removed";
@@ -100,7 +100,7 @@ function decodeCompleteLine<T>(
     );
   }
   try {
-    return decoder.decode(value, physicalLine);
+    return decoder.decode(value, physicalLine, bytes);
   } catch (error) {
     throw new SessionTailError(
       "stored_event_rejected",
@@ -237,7 +237,7 @@ export async function recoverSessionTail<T>(
 
   if (parsedFinal !== undefined) {
     try {
-      decoded.push(options.decoder.decode(parsedFinal, physicalLine));
+      decoded.push(options.decoder.decode(parsedFinal, physicalLine, finalFragment));
     } catch (error) {
       // A syntactically complete future schema or sequence violation is not a
       // torn write. Truncating it would erase a fact we merely do not understand.

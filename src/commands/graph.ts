@@ -16,7 +16,7 @@ import {
 import { TaskGraphError } from "../task-graph/task-graph-errors.js";
 import { TaskGraphFileLoader } from "../task-graph/task-graph-file-loader.js";
 import { observeTaskGraphBinding, type TaskGraphRevisionProjectionV1 } from "../task-graph/task-graph-projector.js";
-import { TaskExecutionControlPlane } from "../scheduling/task-execution-control-plane.js";
+import { TaskExecutionControlPlane, type TaskExecutionMutationResultV1 } from "../scheduling/task-execution-control-plane.js";
 import { DeterministicTaskScheduler } from "../scheduling/deterministic-task-scheduler.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import type { TaskExecutionProjectionV1 } from "../scheduling/task-execution-projector.js";
@@ -29,6 +29,22 @@ import {
   originVerificationReceiptMatchesCompletedEvent,
   originVerificationReceiptSchema,
 } from "../worktrees/origin-verification-receipt.js";
+import {
+  executeTaskActionThroughApplicationService,
+  querySessionViewThroughApplicationService,
+  requestActiveGraphCancelThroughApplicationService,
+} from "../control-plane/adapters/task-cli-adapter.js";
+import type {
+  GraphCompositePreEffectTerminalResultV1,
+} from "../control-plane/use-cases/graph-composite-actions.js";
+import { isGraphCompositePreEffectTerminalResult } from "../control-plane/use-cases/graph-composite-actions.js";
+import {
+  queryGraphLogsThroughApplicationService,
+  queryGraphRevisionsThroughApplicationService,
+  queryGraphStatusThroughApplicationService,
+  queryGraphWorktreesThroughApplicationService,
+} from "../control-plane/adapters/task-surface-cli-query-adapter.js";
+import type { GraphSurfaceRevisionV1 } from "../control-plane/use-cases/task-surface-queries.js";
 
 export interface GraphValidateOptions { readonly file: string; readonly json: boolean }
 export interface GraphShowOptions { readonly json: boolean; readonly revision?: string; readonly sessionId: string }
@@ -37,9 +53,11 @@ export interface GraphReplaceOptions {
   readonly baseSha256?: string;
   readonly file: string;
   readonly json: boolean;
+  readonly inputSurface?: "cli" | "tui";
   readonly sessionId: string;
 }
 export interface GraphDecisionOptions {
+  readonly inputSurface?: "cli" | "tui";
   readonly json: boolean;
   readonly reason?: string;
   readonly revision: string;
@@ -47,6 +65,7 @@ export interface GraphDecisionOptions {
   readonly sha256: string;
 }
 export interface GraphExecutionTargetOptions {
+  readonly inputSurface?: "cli" | "tui";
   readonly json: boolean;
   readonly revision: string;
   readonly sessionId: string;
@@ -58,7 +77,12 @@ export interface GraphEnqueueOptions extends GraphExecutionTargetOptions {
 }
 export interface GraphCancelOptions extends GraphExecutionTargetOptions { readonly reason: string }
 export interface GraphStatusOptions { readonly json: boolean; readonly live: boolean; readonly sessionId: string }
-export interface GraphRunOptions { readonly background: boolean; readonly json: boolean; readonly sessionId: string }
+export interface GraphRunOptions {
+  readonly background: boolean;
+  readonly inputSurface?: "cli" | "tui";
+  readonly json: boolean;
+  readonly sessionId: string;
+}
 export interface GraphResumeOptions extends GraphExecutionTargetOptions {
   readonly background: boolean;
   readonly foreground: boolean;
@@ -125,7 +149,7 @@ function encodeGraphLogCursor(sessionSeq: number): string {
   return Buffer.from(JSON.stringify({ sessionSeq }), "utf8").toString("base64url");
 }
 
-function graphDocument(graph: TaskGraphRevisionProjectionV1) {
+function graphDocument(graph: TaskGraphRevisionProjectionV1 | GraphSurfaceRevisionV1) {
   return {
     approvedEventId: graph.approvedEventId,
     artifact: graph.artifact,
@@ -141,7 +165,12 @@ function graphDocument(graph: TaskGraphRevisionProjectionV1) {
   };
 }
 
-function envelope(command: string, sessionId: string | null, graph: TaskGraphRevisionProjectionV1 | null, result: unknown, warnings: readonly string[] = []) {
+function envelope(command: string, sessionId: string | null, graph: Readonly<{
+  readonly graphId: string;
+  readonly graphSha256: string;
+  readonly revision: number;
+  readonly status: string;
+}> | null, result: unknown, warnings: readonly string[] = []) {
   return {
     command,
     graph: graph === null ? null : {
@@ -181,6 +210,7 @@ function executionDocument(execution: TaskExecutionProjectionV1) {
     })),
     readyNodeIds: execution.readyNodeIds,
     schedulerLeaseNonceSha256: execution.schedulerLeaseNonceSha256,
+    status: execution.status,
   };
 }
 
@@ -213,6 +243,21 @@ function renderWorktreeFailure(error: unknown, io: CliIO): 1 | 2 | 3 | 7 | 8 {
   return renderFailure(error, io);
 }
 
+function renderPreEffectTerminal(
+  command: string,
+  sessionId: string,
+  result: GraphCompositePreEffectTerminalResultV1,
+  json: boolean,
+  io: CliIO,
+): 2 | 130 {
+  if (json) {
+    io.stdout.write(`${canonicalJson(envelope(command, sessionId, null, result))}\n`);
+  } else {
+    io.stderr.write(`${result.actionKind} ${result.outcome} before effect admission\n`);
+  }
+  return result.outcome === "cancelled" ? 130 : 2;
+}
+
 function renderBackgroundFailure(error: unknown, io: CliIO): 1 | 2 | 3 | 7 | 8 {
   if (error instanceof BackgroundError) {
     io.stderr.write(`${error.code}: ${error.message}\n`);
@@ -221,7 +266,7 @@ function renderBackgroundFailure(error: unknown, io: CliIO): 1 | 2 | 3 | 7 | 8 {
   return renderFailure(error, io);
 }
 
-function renderMutation(command: string, result: TaskGraphMutationResultV1, options: { readonly json: boolean }, io: CliIO): void {
+function renderMutation(command: string, result: Pick<TaskGraphMutationResultV1, "deduplicated" | "graph">, options: { readonly json: boolean }, io: CliIO): void {
   if (options.json) {
     io.stdout.write(`${canonicalJson(envelope(command, result.graph.binding.sessionId, result.graph, {
       deduplicated: result.deduplicated,
@@ -258,29 +303,65 @@ export async function executeGraphValidate(options: GraphValidateOptions, runtim
 export async function executeGraphShow(options: GraphShowOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
     const revisionNumber = options.revision === undefined ? undefined : positive(options.revision, "revision");
-    const candidates = revisionNumber === undefined
-      ? session.taskGraph.revisions
-      : session.taskGraph.revisions.filter((candidate) => candidate.revision === revisionNumber);
-    for (const graph of candidates) await verifyTaskGraphRevisionArtifact(runtime.cwd, options.sessionId, graph);
-    const current = candidates.find((candidate) =>
-      session.taskGraph.currentExecution?.graphSha256 === candidate.graphSha256 ||
-      session.taskGraph.currentApproved?.graphSha256 === candidate.graphSha256 ||
-      session.taskGraph.currentDraft?.graphSha256 === candidate.graphSha256
-    ) ?? candidates.at(-1) ?? null;
+    const application = runtime.controlPlaneStateRoot === undefined
+      ? null
+      : await queryGraphRevisionsThroughApplicationService({
+          io,
+          revision: revisionNumber ?? null,
+          runtime,
+          sessionId: options.sessionId,
+        });
+    if (application !== null && application.value === null) return application.exitCode;
+    let current: TaskGraphRevisionProjectionV1 | GraphSurfaceRevisionV1 | null;
+    let candidates: readonly (TaskGraphRevisionProjectionV1 | GraphSurfaceRevisionV1)[];
+    let currentApproved;
+    let currentDraft;
+    let currentExecution;
+    let observation: "current" | "stale" | "unavailable";
+    let revisionsTruncated = false;
+    let trackingMode: string;
+    if (application !== null) {
+      current = application.value!.current;
+      candidates = application.value!.revisions;
+      currentApproved = application.value!.currentApproved;
+      currentDraft = application.value!.currentDraft;
+      currentExecution = application.value!.currentExecution;
+      observation = application.value!.currentObservation;
+      revisionsTruncated = application.value!.revisionsTruncated;
+      trackingMode = application.value!.trackingMode;
+    } else {
+      const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
+      const taskGraph = session.taskGraph;
+      const taskState = session.taskState;
+      const legacyCandidates = revisionNumber === undefined
+        ? taskGraph.revisions
+        : taskGraph.revisions.filter((candidate) => candidate.revision === revisionNumber);
+      candidates = legacyCandidates;
+      for (const graph of legacyCandidates) await verifyTaskGraphRevisionArtifact(runtime.cwd, options.sessionId, graph);
+      current = candidates.find((candidate) =>
+        taskGraph.currentExecution?.graphSha256 === candidate.graphSha256 ||
+        taskGraph.currentApproved?.graphSha256 === candidate.graphSha256 ||
+        taskGraph.currentDraft?.graphSha256 === candidate.graphSha256
+      ) ?? candidates.at(-1) ?? null;
+      currentApproved = taskGraph.currentApproved;
+      currentDraft = taskGraph.currentDraft;
+      currentExecution = taskGraph.currentExecution;
+      observation = current === null ? "unavailable" : observeTaskGraphBinding(current, taskState);
+      trackingMode = taskGraph.trackingMode;
+    }
     if (revisionNumber !== undefined && current === null) {
       throw new TaskGraphError("task_graph_not_found", "requested Graph revision was not found");
     }
-    const observation = current === null ? "unavailable" : observeTaskGraphBinding(current, session.taskState);
     if (options.json) {
       io.stdout.write(`${canonicalJson(envelope("graph.show", options.sessionId, current, {
         currentObservation: { binding: observation, observedAt: runtime.timestamp() },
-        currentApproved: session.taskGraph.currentApproved,
-        currentDraft: session.taskGraph.currentDraft,
-        currentExecution: session.taskGraph.currentExecution,
+        currentApproved,
+        currentDraft,
+        currentExecution,
         revisions: candidates.map(graphDocument),
-        trackingMode: session.taskGraph.trackingMode,
+        revisionsTruncated,
+        trackingMode,
       }))}\n`);
     } else if (current === null) {
       io.stdout.write("Graph: none\n");
@@ -304,13 +385,27 @@ export async function executeGraphReplace(options: GraphReplaceOptions, runtime:
       throw new TaskGraphError("task_graph_schema_invalid", "--base-revision and --base-sha256 must be provided together");
     }
     const graph = await new TaskGraphFileLoader().load(runtime.cwd, options.file);
-    const result = await new TaskGraphControlPlane(taskWriterFactory(runtime)).replace({
-      base: options.baseRevision === undefined || options.baseSha256 === undefined
-        ? null
-        : { revision: positive(options.baseRevision, "base revision"), sha256: sha(options.baseSha256) },
-      context: taskMutationContext(runtime, options.sessionId),
-      graph,
-    });
+    const base = options.baseRevision === undefined || options.baseSha256 === undefined
+      ? null
+      : { revision: positive(options.baseRevision, "base revision"), sha256: sha(options.baseSha256) };
+    let applicationExitCode: 0 | 1 | 2 | 8 = 0;
+    const result = runtime.controlPlaneStateRoot === undefined
+      ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).replace({ base, context: taskMutationContext(runtime, options.sessionId), graph })
+      : await (async () => {
+          const application = await executeTaskActionThroughApplicationService({
+            actionKind: "graph.propose",
+            io,
+            payload: { base, graph: graph.content },
+            runtime,
+            sessionId: options.sessionId,
+            ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+          });
+          applicationExitCode = application.exitCode;
+          return application.envelope.result === null
+            ? null
+            : { deduplicated: false, graph: application.envelope.result };
+        })();
+    if (result === null) return applicationExitCode;
     renderMutation("graph.replace", result, options, io);
     return 0;
   } catch (error) {
@@ -321,11 +416,23 @@ export async function executeGraphReplace(options: GraphReplaceOptions, runtime:
 export async function executeGraphApprove(options: GraphDecisionOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const result = await new TaskGraphControlPlane(taskWriterFactory(runtime)).approve({
-      context: taskMutationContext(runtime, options.sessionId),
-      revision: positive(options.revision, "revision"),
-      sha256: sha(options.sha256),
-    });
+    const payload = { decision: "approve" as const, revision: positive(options.revision, "revision"), sha256: sha(options.sha256) };
+    let applicationExitCode: 0 | 1 | 2 | 8 = 0;
+    const result = runtime.controlPlaneStateRoot === undefined
+      ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).approve({ context: taskMutationContext(runtime, options.sessionId), revision: payload.revision, sha256: payload.sha256 })
+      : await (async () => {
+          const application = await executeTaskActionThroughApplicationService({
+            actionKind: "graph.decide",
+            io,
+            payload,
+            runtime,
+            sessionId: options.sessionId,
+            ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+          });
+          applicationExitCode = application.exitCode;
+          return application.envelope.result === null ? null : { deduplicated: false, graph: application.envelope.result };
+        })();
+    if (result === null) return applicationExitCode;
     renderMutation("graph.approve", result, options, io);
     return 0;
   } catch (error) {
@@ -336,12 +443,28 @@ export async function executeGraphApprove(options: GraphDecisionOptions, runtime
 export async function executeGraphReject(options: GraphDecisionOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const result = await new TaskGraphControlPlane(taskWriterFactory(runtime)).reject({
-      context: taskMutationContext(runtime, options.sessionId),
-      ...(options.reason === undefined ? {} : { reason: options.reason }),
+    const payload = {
+      decision: "reject" as const,
+      reason: options.reason ?? "rejected by local owner",
       revision: positive(options.revision, "revision"),
       sha256: sha(options.sha256),
-    });
+    };
+    let applicationExitCode: 0 | 1 | 2 | 8 = 0;
+    const result = runtime.controlPlaneStateRoot === undefined
+      ? await new TaskGraphControlPlane(taskWriterFactory(runtime)).reject({ context: taskMutationContext(runtime, options.sessionId), ...(options.reason === undefined ? {} : { reason: options.reason }), revision: payload.revision, sha256: payload.sha256 })
+      : await (async () => {
+          const application = await executeTaskActionThroughApplicationService({
+            actionKind: "graph.decide",
+            io,
+            payload,
+            runtime,
+            sessionId: options.sessionId,
+            ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+          });
+          applicationExitCode = application.exitCode;
+          return application.envelope.result === null ? null : { deduplicated: false, graph: application.envelope.result };
+        })();
+    if (result === null) return applicationExitCode;
     renderMutation("graph.reject", result, options, io);
     return 0;
   } catch (error) {
@@ -352,13 +475,30 @@ export async function executeGraphReject(options: GraphDecisionOptions, runtime:
 export async function executeGraphEnqueue(options: GraphEnqueueOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const result = await new TaskExecutionControlPlane(taskWriterFactory(runtime)).enqueue({
-      context: taskMutationContext(runtime, options.sessionId),
-      requestedExecution: options.background ? "background" : "foreground",
+    const payload = {
+      requestedExecution: options.background ? "background" as const : "foreground" as const,
       revision: positive(options.revision, "revision"),
       runtimeProfileId: options.runtimeProfile,
       sha256: sha(options.sha256),
-    });
+    };
+    let applicationExitCode: 0 | 1 | 2 | 8 = 0;
+    const result = runtime.controlPlaneStateRoot === undefined
+      ? await new TaskExecutionControlPlane(taskWriterFactory(runtime)).enqueue({ context: taskMutationContext(runtime, options.sessionId), ...payload })
+      : await (async () => {
+          const application = await executeTaskActionThroughApplicationService({
+            actionKind: "graph.enqueue",
+            io,
+            payload,
+            runtime,
+            sessionId: options.sessionId,
+            ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+          });
+          applicationExitCode = application.exitCode;
+          return application.envelope.result === null
+            ? null
+            : { deduplicated: false, execution: application.envelope.result, graph: application.envelope.result.graph };
+        })();
+    if (result === null) return applicationExitCode;
     const document = executionDocument(result.execution);
     if (options.json) {
       io.stdout.write(`${canonicalJson(envelope("graph.enqueue", options.sessionId, result.graph, {
@@ -377,20 +517,28 @@ export async function executeGraphEnqueue(options: GraphEnqueueOptions, runtime:
 export async function executeGraphStatus(options: GraphStatusOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
-    const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-    const execution = session.taskExecution;
-    const graph = execution?.graph ?? session.taskGraph.revisions.at(-1) ?? null;
-    const liveWorker = options.live
-      ? await (runtime.observeBackgroundWorkerLive?.({ sessionId: options.sessionId }) ??
-          Promise.reject(new BackgroundError("background_executable_unsealed", "runtime has no bounded worker observation capability")))
-      : null;
+    const application = runtime.controlPlaneStateRoot === undefined
+      ? null
+      : await queryGraphStatusThroughApplicationService({ io, live: options.live, runtime, sessionId: options.sessionId });
+    if (application !== null && application.value === null) return application.exitCode;
+    const session = application === null ? await new SessionCatalog(runtime.cwd).read(options.sessionId) : null;
+    const execution = application?.value?.status.execution ?? (session?.taskExecution === null ? null : session?.taskExecution === undefined ? null : executionDocument(session.taskExecution));
+    const graph = application?.value?.status.graph ?? session?.taskExecution?.graph ?? session?.taskGraph.revisions.at(-1) ?? null;
+    const background = application?.value?.status.background ?? session!.background;
+    const worktrees = application?.value?.status.worktrees ?? session!.worktrees;
+    const liveWorker = application === null
+      ? options.live
+        ? await (runtime.observeBackgroundWorkerLive?.({ sessionId: options.sessionId }) ??
+            Promise.reject(new BackgroundError("background_executable_unsealed", "runtime has no bounded worker observation capability")))
+        : null
+      : application.value?.liveObservation ?? null;
     if (options.json) {
       io.stdout.write(`${canonicalJson(envelope("graph.status", options.sessionId, graph, {
-        background: session.background,
-        execution: execution === null ? null : executionDocument(execution),
+        background,
+        execution,
         liveWorker,
         observedAt: runtime.timestamp(),
-        worktrees: session.worktrees,
+        worktrees,
       }))}\n`);
     } else if (execution === null) {
       io.stdout.write("Graph execution: none\n");
@@ -398,9 +546,18 @@ export async function executeGraphStatus(options: GraphStatusOptions, runtime: C
       io.stdout.write(`Graph ${execution.graph.graphId} status=${execution.status}\n`);
       io.stdout.write(`Ready: ${execution.readyNodeIds.join(",") || "none"}\n`);
       for (const node of execution.nodes) io.stdout.write(`- ${node.nodeId}: ${node.status} attempts=${String(node.attempts.length)}\n`);
-      for (const workspace of session.worktrees.workspaces) io.stdout.write(`- workspace ${workspace.identity.workspaceId}: ${workspace.status} source=${workspace.identity.sourceNodeId}\n`);
-      if (session.background.current !== null) io.stdout.write(`Worker ${session.background.current.workerId}: ${session.background.current.status}\n`);
-      if (liveWorker !== null) io.stdout.write(`Live worker: ${liveWorker.state} observed=${liveWorker.observedAt}\n`);
+      for (const workspace of worktrees.workspaces) {
+        const workspaceId = "workspaceId" in workspace ? workspace.workspaceId : workspace.identity.workspaceId;
+        const sourceNodeId = "sourceNodeId" in workspace ? workspace.sourceNodeId : workspace.identity.sourceNodeId;
+        io.stdout.write(`- workspace ${workspaceId}: ${workspace.status} source=${sourceNodeId}\n`);
+      }
+      if (background.current !== null) io.stdout.write(`Worker ${background.current.workerId}: ${background.current.status}\n`);
+      if (liveWorker !== null && liveWorker !== undefined) {
+        const liveState = "state" in liveWorker
+          ? liveWorker.state
+          : liveWorker.coordinator?.state ?? "unknown";
+        io.stdout.write(`Live worker: ${liveState} observed=${liveWorker.observedAt}\n`);
+      }
     }
     return 0;
   } catch (error) {
@@ -413,26 +570,37 @@ export async function executeGraphCancel(options: GraphCancelOptions, runtime: C
     assertCanonicalSessionId(options.sessionId);
     const revision = positive(options.revision, "revision");
     const graphSha256 = sha(options.sha256);
-    const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
-    if (session.background.current !== null) {
-      const queued = await (runtime.queueBackgroundWorkerCancel?.({
-        graphRevision: revision,
-        graphSha256,
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const applicationCancellation = await requestActiveGraphCancelThroughApplicationService({
+        io,
         reason: options.reason,
+        revision,
+        runtime,
         sessionId: options.sessionId,
-      }) ?? Promise.reject(new BackgroundError("worker_control_stale", "runtime has no exact background control capability")));
-      const graph = session.taskExecution?.graph ?? null;
-      if (options.json) {
-        io.stdout.write(`${canonicalJson(envelope("graph.cancel", options.sessionId, graph, {
-          accepted: true,
-          controlSha256: queued.controlSha256,
-          operationId: queued.operationId,
-          requestId: queued.requestId,
-          terminal: false,
-          workerId: queued.workerId,
+        sha256: graphSha256,
+        surface: options.inputSurface ?? "cli",
+      });
+      const result = applicationCancellation.envelope.result;
+      if (result === null) return applicationCancellation.exitCode;
+      if (result.delivery === "background_control_queued") {
+        if (options.json) {
+          io.stdout.write(`${canonicalJson(envelope("graph.cancel", options.sessionId, result.graph, {
+            accepted: result.accepted,
+            controlSha256: result.controlSha256,
+            operationId: result.operationId,
+            requestId: result.requestId,
+            terminal: result.terminal,
+            workerId: result.workerId,
+          }))}\n`);
+        } else {
+          io.stdout.write(`Background Graph cancel queued: request=${result.requestId} worker=${result.workerId}\n`);
+        }
+      } else if (options.json) {
+        io.stdout.write(`${canonicalJson(envelope("graph.cancel", options.sessionId, result.graph, {
+          execution: executionDocument(result.execution),
         }))}\n`);
       } else {
-        io.stdout.write(`Background Graph cancel queued: request=${queued.requestId} worker=${queued.workerId}\n`);
+        io.stdout.write(`Graph cancel requested: ${result.graph.graphId} status=${result.execution.status}\n`);
       }
       return 0;
     }
@@ -458,6 +626,59 @@ export async function executeGraphCancel(options: GraphCancelOptions, runtime: C
 export async function executeGraphRun(options: GraphRunOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
   try {
     assertCanonicalSessionId(options.sessionId);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const view = await querySessionViewThroughApplicationService({
+        io,
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (view.value === null) return view.exitCode;
+      const execution = view.value.taskExecution as TaskExecutionProjectionV1 | null;
+      if (execution === null) throw new TaskGraphError("task_graph_not_approved", "Graph must be enqueued before run");
+      const requested = options.background ? "background" as const : "foreground" as const;
+      if (execution.enqueue.requestedExecution !== requested) {
+        throw new TaskGraphError("task_background_unavailable", requested === "background"
+          ? "this Graph was not enqueued for background ownership"
+          : "this Graph was enqueued for background ownership");
+      }
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "graph.run",
+        io,
+        payload: {
+          execution: requested,
+          revision: execution.graph.revision,
+          sha256: execution.graph.graphSha256,
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (result.execution === "background") {
+        if (options.json) {
+          io.stdout.write(`${canonicalJson(envelope("graph.run", options.sessionId, result.graph, {
+            ...result.launch,
+            statusHint: `born graph status ${options.sessionId} --live --json`,
+          }))}\n`);
+        } else {
+          io.stdout.write(`Background Graph accepted: worker=${result.launch.workerId} operation=${result.launch.operationId}\n`);
+          io.stdout.write(`Started event: ${result.launch.startedEventId}\n`);
+        }
+        return 0;
+      }
+      if (options.json) {
+        io.stdout.write(`${canonicalJson(envelope("graph.run", options.sessionId, result.run.execution.graph, {
+          execution: executionDocument(result.run.execution),
+          startedAttempts: result.run.startedAttempts,
+          stopReason: result.run.stopReason,
+        }))}\n`);
+      } else {
+        io.stdout.write(`Graph stopped: ${result.run.stopReason}; attempts=${String(result.run.startedAttempts)}\n`);
+      }
+      return result.run.stopReason === "completed" ? 0 : result.run.stopReason === "cancelled" ? 130 : 8;
+    }
     const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
     if (session.taskExecution === null) throw new TaskGraphError("task_graph_not_approved", "Graph must be enqueued before run");
     if (options.background) {
@@ -526,6 +747,46 @@ export async function executeGraphResume(options: GraphResumeOptions, runtime: C
     }
     const revision = positive(options.revision, "revision");
     const graphSha256 = sha(options.sha256);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "graph.resume",
+        io,
+        payload: {
+          execution: options.background ? "background" as const : "foreground" as const,
+          revision,
+          sha256: graphSha256,
+          takeover: options.takeover,
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (result.execution === "background") {
+        if (options.json) {
+          io.stdout.write(`${canonicalJson(envelope("graph.resume", options.sessionId, result.graph, {
+            execution: "background",
+            ...result.launch,
+            statusHint: `born graph status ${options.sessionId} --live --json`,
+          }))}\n`);
+        } else {
+          io.stdout.write(`Background Graph resumed: worker=${result.launch.workerId} operation=${result.launch.operationId}\n`);
+        }
+        return 0;
+      }
+      if (options.json) {
+        io.stdout.write(`${canonicalJson(envelope("graph.resume", options.sessionId, result.run.execution.graph, {
+          execution: "foreground",
+          projection: executionDocument(result.run.execution),
+          startedAttempts: result.run.startedAttempts,
+          stopReason: result.run.stopReason,
+        }))}\n`);
+      } else {
+        io.stdout.write(`Graph resumed and stopped: ${result.run.stopReason}; attempts=${String(result.run.startedAttempts)}\n`);
+      }
+      return result.run.stopReason === "completed" ? 0 : result.run.stopReason === "cancelled" ? 130 : 8;
+    }
     if (options.takeover) {
       if (!options.background) {
         throw new BackgroundError("worker_control_stale", "v1 takeover may only launch a fresh background owner");
@@ -668,12 +929,52 @@ export async function executeGraphRetry(options: GraphRetryOptions, runtime: Cli
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.terminalEvent);
-    const result = await new TaskExecutionControlPlane(taskWriterFactory(runtime)).retry({
-      attemptNumber: positive(options.attempt, "attempt"),
-      context: taskMutationContext(runtime, options.sessionId),
+    const attemptNumber = positive(options.attempt, "attempt");
+    const applicationView = runtime.controlPlaneStateRoot === undefined
+      ? null
+      : await querySessionViewThroughApplicationService({ io, runtime, sessionId: options.sessionId });
+    if (applicationView !== null && applicationView.value === null) return applicationView.exitCode;
+    const directSession = applicationView === null ? await new SessionCatalog(runtime.cwd).read(options.sessionId) : null;
+    const execution = (applicationView?.value?.taskExecution ?? directSession?.taskExecution) as TaskExecutionProjectionV1 | null | undefined;
+    const attempt = execution?.nodes.find((candidate) => candidate.nodeId === options.node)?.attempts.at(attemptNumber - 1);
+    if (
+      execution === null || execution === undefined || attempt === undefined ||
+      attempt.attemptNumber !== attemptNumber || attempt.terminal === null ||
+      !["known_failed", "pre_effect_infrastructure_failure", "cancelled_clean"].includes(attempt.terminal)
+    ) {
+      throw new TaskGraphError("task_graph_revision_conflict", "retry selector does not identify one known failed or cancelled attempt");
+    }
+    const payload = {
+      attemptNumber,
+      attemptTerminal: attempt.terminal as "cancelled_clean" | "known_failed" | "pre_effect_infrastructure_failure",
       nodeId: options.node,
+      revision: execution.graph.revision,
+      sha256: execution.graph.graphSha256,
       terminalEventId: options.terminalEvent,
-    });
+    };
+    let applicationExitCode: 0 | 1 | 2 | 8 = 0;
+    const result: TaskExecutionMutationResultV1 | null = runtime.controlPlaneStateRoot === undefined
+      ? await new TaskExecutionControlPlane(taskWriterFactory(runtime)).retry({
+          attemptNumber: payload.attemptNumber,
+          attemptTerminal: payload.attemptTerminal,
+          context: taskMutationContext(runtime, options.sessionId),
+          graphRevision: payload.revision,
+          graphSha256: payload.sha256,
+          nodeId: payload.nodeId,
+          terminalEventId: payload.terminalEventId,
+        })
+      : await (async () => {
+          const application = await executeTaskActionThroughApplicationService({
+            actionKind: "graph.retry",
+            io,
+            payload,
+            runtime,
+            sessionId: options.sessionId,
+          });
+          applicationExitCode = application.exitCode;
+          return application.envelope.result;
+        })();
+    if (result === null) return applicationExitCode;
     if (options.json) {
       io.stdout.write(`${canonicalJson(envelope("graph.retry", options.sessionId, result.graph, {
         execution: executionDocument(result.execution),
@@ -693,6 +994,32 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
     assertCanonicalSessionId(options.sessionId);
     if (options.node !== undefined && !/^[a-z][a-z0-9-]{0,63}$/u.test(options.node)) {
       throw new TaskGraphError("task_graph_schema_invalid", "node selector is invalid");
+    }
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const queried = await queryGraphLogsThroughApplicationService({
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        io,
+        nodeId: options.node ?? null,
+        runtime,
+        sessionId: options.sessionId,
+      });
+      if (queried.value === null) return queried.exitCode;
+      const { graph, nextCursor, records } = queried.value;
+      if (options.json) {
+        io.stdout.write(`${canonicalJson(envelope("graph.logs", options.sessionId, graph, { nextCursor, records }))}\n`);
+      } else if (records.length === 0) {
+        io.stdout.write("Graph logs: no matching node receipts\n");
+      } else {
+        for (const record of records) {
+          if (record.kind === "origin_verification") {
+            io.stdout.write(`[${String(record.sessionSeq)}] ${record.nodeId}/origin:${record.verificationId}: ${record.status}\n`);
+          } else {
+            io.stdout.write(`[${String(record.sessionSeq)}] ${record.nodeId}/${record.attemptId}: ${record.receipt?.summary ?? record.terminal}\n`);
+          }
+        }
+        if (nextCursor !== null) io.stdout.write(`Next cursor: ${nextCursor}\n`);
+      }
+      return 0;
     }
     const after = graphLogCursor(options.cursor);
     const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
@@ -763,6 +1090,15 @@ export async function executeGraphLogs(options: GraphLogsOptions, runtime: CliRu
 export async function executeGraphWorktrees(options: GraphWorktreesOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 7 | 8> {
   try {
     assertCanonicalSessionId(options.sessionId);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const queried = await queryGraphWorktreesThroughApplicationService({ io, runtime, sessionId: options.sessionId });
+      if (queried.value === null) return queried.exitCode;
+      const { graph, ...result } = queried.value;
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.worktrees", options.sessionId, graph, result))}\n`);
+      else if (result.workspaces.length === 0) io.stdout.write("Managed worktrees: none\n");
+      else for (const workspace of result.workspaces) io.stdout.write(`${workspace.workspaceId}: ${workspace.status} source=${workspace.sourceNodeId} snapshot=${workspace.lastSnapshotSha256 ?? "none"}\n`);
+      return 0;
+    }
     const session = await new SessionCatalog(runtime.cwd).read(options.sessionId);
     const graph = session.taskExecution?.graph ?? session.taskGraph.revisions.at(-1) ?? null;
     const result = {
@@ -803,6 +1139,29 @@ export async function executeGraphWorktrees(options: GraphWorktreesOptions, runt
 export async function executeGraphWorktreeAllocate(options: GraphWorktreeAllocateOptions, runtime: CliRuntime, io: CliIO): Promise<0 | 1 | 2 | 3 | 7 | 8 | 130> {
   try {
     assertCanonicalSessionId(options.sessionId);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "worktree.allocate",
+        io,
+        payload: {
+          allowDirty: options.includeCurrentChanges,
+          revision: positive(options.revision, "revision"),
+          sha256: sha(options.sha256),
+          sourceNodeId: options.sourceNode,
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (isGraphCompositePreEffectTerminalResult(result)) {
+        return renderPreEffectTerminal("graph.worktree.allocate", options.sessionId, result, options.json, io);
+      }
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.worktree.allocate", options.sessionId, null, result))}\n`);
+      else io.stdout.write(`Managed worktree ready: ${result.identity.workspaceId}\nBaseline: ${result.baselineManifestSha256}\nNodes: ${result.nodeIds.join(", ")}\n`);
+      return 0;
+    }
     const manager = await runtime.createManagedWorktreeManager?.({ io, sessionId: options.sessionId });
     if (manager === undefined) throw new TaskGraphError("task_workspace_mode_unavailable", "runtime has no managed worktree authority");
     const controller = new AbortController();
@@ -835,6 +1194,29 @@ export async function executeGraphPromote(options: GraphPromoteOptions, runtime:
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.attemptId);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "promotion.apply",
+        io,
+        payload: {
+          attemptId: options.attemptId,
+          nodeId: options.nodeId,
+          revision: positive(options.revision, "revision"),
+          sha256: sha(options.sha256),
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (isGraphCompositePreEffectTerminalResult(result)) {
+        return renderPreEffectTerminal("graph.promote", options.sessionId, result, options.json, io);
+      }
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.promote", options.sessionId, null, result))}\n`);
+      else io.stdout.write(`Promotion applied: ${result.bundle.bundleSha256}\nPaths: ${result.changedPaths.join(", ")}\nOrigin snapshot: ${result.originSourceSnapshotSha256}\nOrigin verification: ${result.originVerification?.status ?? "not_required"}\n`);
+      return result.originVerification === null || result.originVerification.status === "passed" ? 0 : 8;
+    }
     const promotion = await runtime.createWorktreePromotionRuntime?.({ io, sessionId: options.sessionId });
     if (promotion === undefined) throw new TaskGraphError("task_workspace_mode_unavailable", "runtime has no worktree promotion authority");
     const controller = new AbortController();
@@ -862,6 +1244,28 @@ export async function executeGraphOriginVerify(options: GraphOriginVerifyOptions
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.promotionOperation);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "promotion.verify_origin",
+        io,
+        payload: {
+          promotionOperationId: options.promotionOperation,
+          revision: positive(options.revision, "revision"),
+          sha256: sha(options.sha256),
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (isGraphCompositePreEffectTerminalResult(result)) {
+        return renderPreEffectTerminal("graph.verify-origin", options.sessionId, result, options.json, io);
+      }
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.verify-origin", options.sessionId, null, result))}\n`);
+      else io.stdout.write(`Origin verification ${result.status}: ${result.verificationId}\nReceipt: ${result.receiptSha256}\n`);
+      return result.status === "passed" ? 0 : 8;
+    }
     const promotion = await runtime.createWorktreePromotionRuntime?.({ io, sessionId: options.sessionId });
     if (promotion === undefined) throw new TaskGraphError("task_workspace_mode_unavailable", "runtime has no origin verification authority");
     const controller = new AbortController();
@@ -888,6 +1292,30 @@ export async function executeGraphWorktreeCleanup(options: GraphWorktreeCleanupO
   try {
     assertCanonicalSessionId(options.sessionId);
     assertCanonicalSessionId(options.graphId);
+    if (runtime.controlPlaneStateRoot !== undefined) {
+      const application = await executeTaskActionThroughApplicationService({
+        actionKind: "worktree.cleanup",
+        io,
+        payload: {
+          archiveAndRemove: options.archiveAndRemove,
+          graphId: options.graphId,
+          nodeId: options.nodeId,
+          revision: positive(options.revision, "revision"),
+          sha256: sha(options.sha256),
+        },
+        runtime,
+        sessionId: options.sessionId,
+        ...(options.inputSurface === undefined ? {} : { surface: options.inputSurface }),
+      });
+      if (application.envelope.result === null) return application.exitCode;
+      const result = application.envelope.result;
+      if (isGraphCompositePreEffectTerminalResult(result)) {
+        return renderPreEffectTerminal("graph.worktree.cleanup", options.sessionId, result, options.json, io);
+      }
+      if (options.json) io.stdout.write(`${canonicalJson(envelope("graph.worktree.cleanup", options.sessionId, null, result))}\n`);
+      else io.stdout.write(`Managed worktree ${result.status}: ${result.workspaceId}${result.archiveSha256 === null ? "" : `\nArchive: ${result.archiveSha256}`}\n`);
+      return 0;
+    }
     const manager = await runtime.createManagedWorktreeManager?.({ io, sessionId: options.sessionId });
     if (manager === undefined) throw new TaskGraphError("task_workspace_mode_unavailable", "runtime has no managed worktree cleanup authority");
     const controller = new AbortController();

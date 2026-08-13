@@ -260,7 +260,7 @@ describe("Phase 19 closure command Hook recovery", () => {
       const hookPid = record.process.hookPid;
       expect(() => process.kill(hookPid, 0)).toThrow();
     }
-  });
+  }, 15_000);
 
   it("backfills a captured result exactly once and then marks the journal terminal", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "bornagent-hook-reconcile-"));

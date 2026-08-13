@@ -7,6 +7,7 @@ import {
   workspaceBaselineManifestSchema,
 } from "./worktree-schema.js";
 import { taskPromotionGoalChangeRecordedDataSchema } from "./task-promotion-goal-change.js";
+import { persistedUserActionOriginV2Schema } from "../control-plane/application-protocol.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -19,13 +20,32 @@ const graph = {
   graph_sha256: sha256,
 } as const;
 
+function legacyOrAuthenticatedUserEvent<T extends z.ZodRawShape>(fields: T) {
+  return z.union([
+    z.object(fields).strict(),
+    z.object({ ...fields, origin: persistedUserActionOriginV2Schema }).strict(),
+  ]);
+}
+
 export const phase19WorktreeSessionEventDataSchemas = {
+  "task_effect.admission.terminal": z.object({
+    ...graph,
+    action_kind: z.enum([
+      "promotion.apply",
+      "promotion.verify_origin",
+      "worktree.allocate",
+      "worktree.cleanup",
+    ]),
+    origin: persistedUserActionOriginV2Schema,
+    outcome: z.enum(["cancelled", "denied"]),
+    target_identity_sha256: sha256,
+  }).strict(),
   "goal.change.recorded": taskPromotionGoalChangeRecordedDataSchema,
-  "task_worktree.allocation.prepared": z.object({
+  "task_worktree.allocation.prepared": legacyOrAuthenticatedUserEvent({
     ...graph,
     allocation_plan: workspaceAllocationPlanSchema,
     allocation_plan_sha256: sha256,
-  }).strict(),
+  }),
   "task_worktree.allocation.approved": z.object({
     ...graph,
     allocation_plan_sha256: sha256,
@@ -72,12 +92,12 @@ export const phase19WorktreeSessionEventDataSchemas = {
     snapshot_sha256: sha256,
     workspace_id: uuid,
   }).strict(),
-  "task_worktree.promotion.proposed": z.object({
+  "task_worktree.promotion.proposed": legacyOrAuthenticatedUserEvent({
     ...graph,
     bundle: promotionBundleSchema,
     bundle_sha256: sha256,
     proposal_id: uuid,
-  }).strict(),
+  }),
   "task_worktree.promotion.approved": z.object({
     ...graph,
     approval_identity_sha256: sha256,
@@ -113,7 +133,7 @@ export const phase19WorktreeSessionEventDataSchemas = {
     verification_node_id: nodeId,
     workspace_id: uuid,
   }).strict(),
-  "task_origin_verification.requested": z.object({
+  "task_origin_verification.requested": legacyOrAuthenticatedUserEvent({
     ...graph,
     action_sha256: sha256,
     approval_request_id: uuid,
@@ -124,7 +144,7 @@ export const phase19WorktreeSessionEventDataSchemas = {
     verification_id: uuid,
     verification_node_id: nodeId,
     workspace_id: uuid,
-  }).strict(),
+  }),
   "task_origin_verification.completed": z.object({
     ...graph,
     action_sha256: sha256,
@@ -144,14 +164,14 @@ export const phase19WorktreeSessionEventDataSchemas = {
     verification_node_id: nodeId,
     workspace_id: uuid,
   }).strict(),
-  "task_worktree.cleanup.requested": z.object({
+  "task_worktree.cleanup.requested": legacyOrAuthenticatedUserEvent({
     ...graph,
     archive_sha256: sha256.nullable(),
     force: z.boolean(),
     operation_id: uuid,
     workspace_id: uuid,
     workspace_snapshot_sha256: sha256,
-  }).strict(),
+  }),
   "task_worktree.cleanup.completed": z.object({
     ...graph,
     operation_id: uuid,

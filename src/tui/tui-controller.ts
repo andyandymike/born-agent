@@ -22,10 +22,12 @@ import {
   createInitialTuiEphemeralState,
   closeDelegationDecisionDialog,
   closePlanDecisionDialog,
+  closePreparedActionDialog,
   enterApprovalDecision,
   openApprovalDialog,
   openDelegationDecisionDialog,
   openPlanDecisionDialog,
+  openPreparedActionDialog,
   setApprovalFocus,
   setCoreDiagnostic,
   selectDelegation,
@@ -34,6 +36,7 @@ import {
   setDelegationReceiptOpen,
   setDraftInput,
   setPlanDecisionFocus,
+  setPreparedActionFocus,
   setSessionBusy,
   type TuiEphemeralState,
   type TuiDelegationDecisionDialog,
@@ -58,20 +61,41 @@ import type {
 } from "./phase16-user-intent.js";
 import type { RepositoryInvalidation } from "../repository-intelligence/repository-invalidation-watcher.js";
 import type { RepositoryJobState } from "../repository-intelligence/repository-job-state.js";
+import type {
+  TaskPreparedActionReviewDecisionV1,
+  TaskPreparedActionReviewV1,
+} from "../control-plane/adapters/task-cli-adapter.js";
 import {
   applyRepositoryJobState,
   invalidateRepositoryStatus,
   type RepositoryStatusProjection,
   withRepositoryWatchState,
 } from "../repository-intelligence/repository-status-projection.js";
+import { preparedActionMatchesSessionView } from "./prepared-action-view-binding.js";
+import type { TuiSessionProjectionSnapshotV1 } from "./tui-session-projection-port.js";
+
+export type TuiSessionSnapshot = readonly TuiPersistedEvent[] | TuiSessionProjectionSnapshotV1;
+
+function isTypedSessionSnapshot(snapshot: TuiSessionSnapshot): snapshot is TuiSessionProjectionSnapshotV1 {
+  return !Array.isArray(snapshot) && "schemaVersion" in snapshot && snapshot.schemaVersion === 1;
+}
 
 export interface TuiCorePort {
+  /** Host-owner emergency/child-channel stop; never presented as a human application cancel. */
+  abortActiveOwnerRun(): void;
+  /** Human cancel request; product runtimes must durably bind it before signalling the run. */
   cancelActiveRun(): void;
+  /** Exact process-local owner-internal composite, if one is currently active. */
+  activeOwnerComposite?(): boolean;
+  /** Exact process-local Delegation owner, including its pre-admission phase. */
+  activeDelegationOwner?(): boolean;
   cancelRepositoryRefresh?(): void;
-  loadSession(sessionId: string): Promise<readonly TuiPersistedEvent[]>;
+  loadSession(sessionId: string): Promise<TuiSessionSnapshot>;
   listPlugins?(): Promise<string>;
   selectMcpPrompt?(selector: string, argumentsJson: string | undefined): Promise<string>;
   selectSkill?(selector: string, argumentsText: string): Promise<string>;
+  /** Named-query snapshots can safely refresh while their active owner runs. */
+  typedSessionQueries?: boolean;
   mutateIntent?(intent: Phase16MutationIntent): Promise<TuiCoreRunResult>;
   resumeSession(
     sessionId: string,
@@ -94,13 +118,13 @@ export interface TuiCorePort {
 }
 
 export type TuiGraphIntent =
-  | { readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "approve" }
-  | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "enqueue" }
-  | { readonly background: boolean; readonly sessionId: string; readonly type: "run" }
-  | { readonly reason: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "cancel" }
-  | { readonly background: boolean; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
-  | { readonly promotionOperation: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "verify_origin" }
-  | { readonly attemptId: string; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
+  | { readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "approve" }
+  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "enqueue" }
+  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "run" }
+  | { readonly expectedSessionSeq: number; readonly reason: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "cancel" }
+  | { readonly background: boolean; readonly expectedSessionSeq: number; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "resume" }
+  | { readonly expectedSessionSeq: number; readonly promotionOperation: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "verify_origin" }
+  | { readonly attemptId: string; readonly expectedSessionSeq: number; readonly nodeId: string; readonly revision: number; readonly sessionId: string; readonly sha256: string; readonly type: "promote" };
 
 export type TuiDelegationIntent = {
   readonly action: TuiDelegationDecisionDialog["action"];
@@ -119,10 +143,12 @@ export interface TuiCoreRunResult {
 
 export interface TuiControllerOptions {
   readonly approvalController: ApprovalController;
+  readonly approvalViewChanged?: () => void;
   readonly core: TuiCorePort;
   readonly createIntentId?: () => string;
   readonly initialMode?: "build" | "plan";
   readonly initialModeSource?: "explicit_tui" | "tui_default";
+  readonly now?: () => Date;
   readonly renderer: PiTuiRenderer;
   readonly source: PersistedEventSource;
 }
@@ -168,15 +194,22 @@ export class TuiController {
   private fatal = false;
   private exitWhenIdle = false;
   private activeCoreRun: Promise<TuiCoreRunResult> | null = null;
+  private acceptingTypedDisplaySnapshot = false;
   private coordinator: RunCoordinator | null = null;
   private externalRefreshInFlight = false;
   private externalRefreshPending = false;
   private externalRefreshDrainTimer: ReturnType<typeof setTimeout> | null = null;
+  private invalidatedSessionId: string | null = null;
   private idleOperationInFlight = false;
   private readonly eventSnapshot: TuiPersistedEvent[] = [];
   private pendingRunStarted:
     | ((started: RunCoordinatorRunStarted) => void)
     | null = null;
+  private pendingPreparedActionReview: {
+    readonly preparedActionId: string;
+    readonly preparedActionSha256: string;
+    readonly resolve: (decision: TaskPreparedActionReviewDecisionV1) => void;
+  } | null = null;
   private sessionWatchGeneration = 0;
   private sessionWatchStop: (() => void) | null = null;
   private watchedSessionId: string | null = null;
@@ -206,22 +239,56 @@ export class TuiController {
     return this.ephemeralState;
   }
 
-  public start(snapshot: readonly TuiPersistedEvent[] = []): void {
+  public start(snapshot: TuiSessionSnapshot = []): void {
     if (this.started) throw new Error("TUI controller can only be started once");
     this.started = true;
+    const events = this.eventsOf(snapshot);
     this.coordinator = this.createCoordinator({
-      sessionId: snapshot.at(-1)?.sessionId ?? null,
-      snapshotSeq: snapshot.at(-1)?.sessionSeq ?? null,
+      sessionId: this.sessionIdOf(snapshot),
+      snapshotSeq: this.sequenceOf(snapshot),
     });
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
-    this.options.source.resetWhileIdle({ snapshot });
+    this.acceptingTypedDisplaySnapshot = isTypedSessionSnapshot(snapshot);
+    try {
+      this.options.source.resetWhileIdle({ snapshot: events });
+    } finally {
+      this.acceptingTypedDisplaySnapshot = false;
+    }
+    if (isTypedSessionSnapshot(snapshot)) this.applyTypedProjection(snapshot);
+    this.syncApprovalDialog();
+    this.options.approvalViewChanged?.();
     this.options.renderer.start(this.viewState, this.ephemeralState);
     this.ensureSessionWatch(this.viewState.session.id);
   }
 
   public waitForExit(): Promise<AppExitCode> {
     return this.exitPromise;
+  }
+
+  /**
+   * Present the exact Host-built artifact and suspend the caller before commit.
+   * Only the resolver bound to this prepared id/hash can release the action.
+   */
+  public reviewPreparedAction(
+    review: TaskPreparedActionReviewV1,
+  ): Promise<TaskPreparedActionReviewDecisionV1> {
+    if (
+      !this.started ||
+      this.stopped ||
+      this.pendingPreparedActionReview !== null ||
+      this.ephemeralState.planDecisionDialog !== null ||
+      this.ephemeralState.delegationDecisionDialog !== null
+    ) return Promise.resolve("cancelled");
+    this.ephemeralState = openPreparedActionDialog(this.ephemeralState, review);
+    this.scheduleRender();
+    return new Promise((resolve) => {
+      this.pendingPreparedActionReview = Object.freeze({
+        preparedActionId: review.preparedActionId,
+        preparedActionSha256: review.preparedActionSha256,
+        resolve,
+      });
+    });
   }
 
   public async runInitial(input: {
@@ -269,6 +336,11 @@ export class TuiController {
     // Consuming releases here prevents duplicate submit/cancel/approval intents.
     if (isKeyRelease(data)) return { consume: true };
     if (matchesKey(data, Key.ctrl("c"))) {
+      if (this.ephemeralState.preparedActionDialog !== null) {
+        this.resolvePreparedActionReview("cancelled");
+        this.scheduleRender();
+        return { consume: true };
+      }
       if (this.ephemeralState.delegationDecisionDialog !== null) {
         this.ephemeralState = closeDelegationDecisionDialog(this.ephemeralState);
         this.scheduleRender();
@@ -285,11 +357,21 @@ export class TuiController {
           this.coordinator.state.kind === "running" ||
           this.coordinator.state.kind === "cancelling");
       const durableRunActive = isActiveRun(this.viewState.run);
+      const durableGraphActive = this.viewState.taskExecution?.status === "running";
+      const durableDelegationActive = this.viewState.delegations.revisions.some((revision) =>
+        ["active", "waiting_approval", "cancelling", "reconciling"].includes(revision.status)
+      );
+      const durableCompositeActive = durableGraphActive || durableDelegationActive;
+      const ownerCompositeActive = this.options.core.activeOwnerComposite?.() === true;
+      const delegationOwnerActive = this.options.core.activeDelegationOwner?.() === true;
       const approvalActive =
         this.viewState.approval?.expiresState.status === "active";
       const repositoryBuilding = this.viewState.repository.indexState === "building";
       if (
-        !durableRunActive &&
+         !durableRunActive &&
+         !durableCompositeActive &&
+        !ownerCompositeActive &&
+        !delegationOwnerActive &&
         !approvalActive &&
         (coordinatorActive || this.activeCoreRun !== null)
       ) {
@@ -297,7 +379,10 @@ export class TuiController {
       } else if (
         coordinatorActive ||
         this.activeCoreRun !== null ||
-        durableRunActive ||
+         durableRunActive ||
+         durableCompositeActive ||
+        ownerCompositeActive ||
+        delegationOwnerActive ||
         approvalActive
       ) {
         if (coordinatorActive) {
@@ -311,6 +396,26 @@ export class TuiController {
         this.ephemeralState = setDraftInput(this.ephemeralState, "");
       } else {
         this.finishApp(0);
+      }
+      this.scheduleRender();
+      return { consume: true };
+    }
+    if (this.ephemeralState.preparedActionDialog !== null) {
+      if (matchesKey(data, Key.left)) {
+        this.ephemeralState = setPreparedActionFocus(this.ephemeralState, "cancel");
+      } else if (matchesKey(data, Key.right)) {
+        this.ephemeralState = setPreparedActionFocus(this.ephemeralState, "confirm");
+      } else if (matchesKey(data, Key.tab)) {
+        this.ephemeralState = setPreparedActionFocus(
+          this.ephemeralState,
+          this.ephemeralState.preparedActionFocus === "cancel" ? "confirm" : "cancel",
+        );
+      } else if (matchesKey(data, Key.escape)) {
+        this.resolvePreparedActionReview("cancelled");
+      } else if (matchesKey(data, Key.enter)) {
+        this.decidePreparedActionReview();
+      } else {
+        return undefined;
       }
       this.scheduleRender();
       return { consume: true };
@@ -495,7 +600,14 @@ export class TuiController {
     this.viewState = reducePersistedEvent(this.viewState, event);
     if (this.viewState.session.fatalReason === null) {
       this.eventSnapshot.push(event);
-      const projection = this.phase16Projector.accept(event);
+      // PHASE21: named-query event pages are redacted presentation DTOs. They
+      // deliberately omit application authority, so they may drive the
+      // transcript reducer but must never be cast back into raw domain events
+      // for reconstruction. The immutable typed projection below owns task,
+      // graph, delegation, worktree, and outcome facts.
+      const projection = this.acceptingTypedDisplaySnapshot
+        ? null
+        : this.phase16Projector.accept(event);
       if (projection !== null) {
         this.viewState = {
           ...this.viewState,
@@ -517,27 +629,37 @@ export class TuiController {
         acknowledge({ runId: event.runId, sessionId: event.sessionId });
       }
     }
-    const approval = this.viewState.approval;
-    if (approval?.expiresState.status === "active") {
-      if (this.ephemeralState.approvalRequestId !== approval.requestId) {
-        this.ephemeralState = openApprovalDialog(
-          this.ephemeralState,
-          approval.requestId,
-        );
-      }
-    } else if (this.ephemeralState.approvalRequestId !== null) {
-      this.ephemeralState = {
-        ...this.ephemeralState,
-        approvalFocus: "deny",
-        approvalRequestId: null,
-      };
+    // A full typed snapshot is replayed event-by-event. Intermediate prefixes
+    // can legitimately omit the still-active approval, so synchronizing the
+    // modal during that replay would reset an exact request's Allow focus back
+    // to default-deny between the focus key and Enter. Synchronize once from
+    // the complete snapshot instead; a genuinely different request still
+    // reopens on deny.
+    if (!this.acceptingTypedDisplaySnapshot) {
+      this.syncApprovalDialog();
+      this.options.approvalViewChanged?.();
     }
     if (this.viewState.session.fatalReason !== null) {
+      this.ephemeralState = setCoreDiagnostic(
+        this.ephemeralState,
+        `Session projection failed closed: ${this.viewState.session.fatalReason}`,
+      );
+      this.scheduleRender();
       void this.failFatal();
     } else {
       this.ensureSessionWatch(this.viewState.session.id);
       this.scheduleRender();
     }
+  }
+
+  /** Accept only a routing invalidation; all facts come from core.loadSession. */
+  public acceptSessionInvalidation(sessionId: string): void {
+    if (this.stopped) return;
+    const selected = this.viewState.session.id;
+    if (selected !== null && selected !== sessionId) return;
+    this.invalidatedSessionId = sessionId;
+    this.externalRefreshPending = true;
+    this.scheduleExternalRefreshDrain();
   }
 
   public acceptRepositoryInvalidation(invalidation: RepositoryInvalidation): void {
@@ -599,6 +721,7 @@ export class TuiController {
 
   public stop(): void {
     if (this.stopped) return;
+    this.resolvePreparedActionReview("cancelled");
     this.stopped = true;
     this.sessionWatchGeneration += 1;
     if (this.externalRefreshDrainTimer !== null) {
@@ -610,6 +733,55 @@ export class TuiController {
     this.watchedSessionId = null;
     this.options.source.close();
     this.options.renderer.stop();
+  }
+
+  private decidePreparedActionReview(): void {
+    const dialog = this.ephemeralState.preparedActionDialog;
+    const pending = this.pendingPreparedActionReview;
+    if (dialog === null || pending === null) return;
+    if (this.ephemeralState.preparedActionFocus !== "confirm") {
+      this.resolvePreparedActionReview("cancelled");
+      return;
+    }
+    if (
+      dialog.preparedActionId !== pending.preparedActionId ||
+      dialog.preparedActionSha256 !== pending.preparedActionSha256
+    ) {
+      this.resolvePreparedActionReview("cancelled");
+      return;
+    }
+    const expiresAt = Date.parse(dialog.expiresAt);
+    const now = (this.options.now ?? (() => new Date()))().getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      this.ephemeralState = setCoreDiagnostic(
+        this.ephemeralState,
+        "Prepared action expired; no action was committed. Invoke the action again for a fresh review.",
+      );
+      this.resolvePreparedActionReview("expired");
+      return;
+    }
+    if (!preparedActionMatchesSessionView(dialog, {
+      sessionBusy: this.ephemeralState.sessionBusy,
+      sessionId: this.viewState.session.id,
+      sessionSeq: this.viewState.session.lastSessionSeq,
+    })) {
+      this.ephemeralState = setCoreDiagnostic(
+        this.ephemeralState,
+        "Prepared action became stale; no action was committed. Invoke the action again for a fresh review.",
+      );
+      this.resolvePreparedActionReview("stale");
+      return;
+    }
+    this.resolvePreparedActionReview("confirmed");
+  }
+
+  private resolvePreparedActionReview(
+    decision: TaskPreparedActionReviewDecisionV1,
+  ): void {
+    const pending = this.pendingPreparedActionReview;
+    this.pendingPreparedActionReview = null;
+    this.ephemeralState = closePreparedActionDialog(this.ephemeralState);
+    pending?.resolve(decision);
   }
 
   private currentDelegations() {
@@ -709,15 +881,27 @@ export class TuiController {
       this.activeCoreRun !== null &&
       ["active", "waiting_approval", "cancelling", "reconciling"].includes(selected.status)
     ) {
-      // PHASE20: the foreground start owns the nonce-bound child control
-      // channel. Cancelling that exact core operation lets the launcher append
-      // the durable cancel request before sending IPC; a second CLI mutation
-      // cannot safely impersonate the live channel owner.
       if (dialog.exitAfterCancel) this.exitWhenIdle = true;
-      this.options.core.cancelActiveRun();
+      if (this.options.core.delegationCommand === undefined) {
+        this.showCommandDiagnostic("Delegation control is unavailable in this TUI runtime.");
+        return;
+      }
+      const cancellation = await this.options.core.delegationCommand({
+        action: "cancel",
+        delegationId: dialog.delegationId,
+        expectedSessionSeq: dialog.expectedSessionSeq,
+        reason: dialog.reason,
+        revision: dialog.revision,
+        sessionId: dialog.sessionId,
+        sha256: dialog.sha256,
+      });
       this.showCommandDiagnostic(dialog.exitAfterCancel
-        ? "Exit confirmed: cancelling the exact foreground child and waiting for durable reconciliation before exit."
-        : "Delegated child cancellation requested; waiting for durable reconciliation.");
+        ? cancellation.exitCode === 0
+          ? "Exit confirmed: durable delegated child cancellation requested; waiting for reconciliation before exit."
+          : cancellation.diagnostic ?? "Delegated child cancellation was not accepted."
+        : cancellation.exitCode === 0
+          ? "Delegated child cancellation requested through the application control plane."
+          : cancellation.diagnostic ?? "Delegated child cancellation was not accepted.");
       return;
     }
     if (this.options.core.delegationCommand === undefined) {
@@ -1127,6 +1311,7 @@ export class TuiController {
       this.showCommandDiagnostic("Select a session before using /graph commands.");
       return;
     }
+    const expectedSessionSeq = this.viewState.session.lastSessionSeq;
     if (command === "worktrees") {
       const workspaces = this.viewState.worktrees.workspaces;
       const verifications = this.viewState.worktrees.originVerifications;
@@ -1154,25 +1339,27 @@ export class TuiController {
     let intent: TuiGraphIntent | null = null;
     if (command === "approve") {
       const graph = this.viewState.taskGraph.currentDraft;
-      if (graph !== null) intent = { revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "approve" };
+      if (graph !== null) intent = { expectedSessionSeq, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "approve" };
     } else {
       const modeMatch = /^(enqueue|run|resume)\s+(foreground|background)$/u.exec(command);
       if (modeMatch !== null) {
         const background = modeMatch[2] === "background";
         if (modeMatch[1] === "enqueue") {
           const graph = this.viewState.taskGraph.currentApproved;
-          if (graph !== null) intent = { background, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "enqueue" };
+          if (graph !== null) intent = { background, expectedSessionSeq, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "enqueue" };
         } else if (modeMatch[1] === "run") {
-          intent = { background, sessionId, type: "run" };
+          const graph = this.viewState.taskExecution?.graph;
+          if (graph !== undefined) intent = { background, expectedSessionSeq, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "run" };
         } else {
           const graph = this.viewState.taskExecution?.graph;
-          if (graph !== undefined) intent = { background, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "resume" };
+          if (graph !== undefined) intent = { background, expectedSessionSeq, revision: graph.revision, sessionId, sha256: graph.graphSha256, type: "resume" };
         }
       }
     }
     if (intent === null && command.startsWith("cancel")) {
       const graph = this.viewState.taskExecution?.graph;
       if (graph !== undefined) intent = {
+        expectedSessionSeq,
         reason: command.slice("cancel".length).trim() || "cancelled from the TUI",
         revision: graph.revision,
         sessionId,
@@ -1187,6 +1374,7 @@ export class TuiController {
       const attempt = [...(node?.attempts ?? [])].reverse().find((candidate) => candidate.terminal === "succeeded");
       if (execution !== null && execution !== undefined && attempt !== undefined) intent = {
         attemptId: attempt.attemptId,
+        expectedSessionSeq,
         nodeId: promotionNode,
         revision: execution.graph.revision,
         sessionId,
@@ -1201,6 +1389,7 @@ export class TuiController {
         candidate.status === "applied" && candidate.operationId === verificationOperation
       );
       if (execution !== null && execution !== undefined && promotion !== undefined) intent = {
+        expectedSessionSeq,
         promotionOperation: verificationOperation,
         revision: execution.graph.revision,
         sessionId,
@@ -1462,7 +1651,8 @@ export class TuiController {
     }
   }
 
-  private applySnapshot(snapshot: readonly TuiPersistedEvent[]): void {
+  private applySnapshot(snapshot: TuiSessionSnapshot): void {
+    if (this.stopped) return;
     const watchState = this.viewState.repository.watchState;
     const initial = createInitialTuiViewState();
     this.viewState = {
@@ -1471,8 +1661,72 @@ export class TuiController {
     };
     this.phase16Projector.reset();
     this.eventSnapshot.length = 0;
-    this.options.source.resetWhileIdle({ snapshot });
+    this.acceptingTypedDisplaySnapshot = isTypedSessionSnapshot(snapshot);
+    try {
+      this.options.source.resetWhileIdle({ snapshot: this.eventsOf(snapshot) });
+    } finally {
+      this.acceptingTypedDisplaySnapshot = false;
+    }
+    if (isTypedSessionSnapshot(snapshot)) this.applyTypedProjection(snapshot);
+    this.syncApprovalDialog();
+    this.options.approvalViewChanged?.();
     this.ensureSessionWatch(this.viewState.session.id);
+  }
+
+  private syncApprovalDialog(): void {
+    const approval = this.viewState.approval;
+    if (approval?.expiresState.status === "active") {
+      if (this.ephemeralState.approvalRequestId !== approval.requestId) {
+        this.ephemeralState = openApprovalDialog(
+          this.ephemeralState,
+          approval.requestId,
+        );
+      }
+      return;
+    }
+    if (this.ephemeralState.approvalRequestId !== null) {
+      this.ephemeralState = {
+        ...this.ephemeralState,
+        approvalFocus: "deny",
+        approvalRequestId: null,
+      };
+    }
+  }
+
+  private applyTypedProjection(snapshot: TuiSessionProjectionSnapshotV1): void {
+    this.viewState = {
+      ...this.viewState,
+      background: snapshot.projection.background as TuiViewState["background"],
+      delegations: snapshot.projection.delegations as TuiViewState["delegations"],
+      outcomeReport:
+        snapshot.projection.display?.outcomeReport ?? this.viewState.outcomeReport,
+      taskExecution: snapshot.projection.taskExecution as TuiViewState["taskExecution"],
+      taskGraph: (snapshot.projection.taskGraph ?? this.viewState.taskGraph) as TuiViewState["taskGraph"],
+      taskState: (snapshot.projection.taskState ?? this.viewState.taskState) as TuiViewState["taskState"],
+      worktrees: snapshot.projection.worktrees as TuiViewState["worktrees"],
+      session: {
+        ...this.viewState.session,
+        actionBlocked: snapshot.projection.taskMutationBlocker !== null,
+        id: snapshot.ledgerHead.sessionId,
+        lastSessionSeq: snapshot.ledgerHead.sequence,
+      },
+    };
+  }
+
+  private eventsOf(snapshot: TuiSessionSnapshot): readonly TuiPersistedEvent[] {
+    return isTypedSessionSnapshot(snapshot) ? snapshot.events : snapshot;
+  }
+
+  private sessionIdOf(snapshot: TuiSessionSnapshot): string | null {
+    return isTypedSessionSnapshot(snapshot)
+      ? snapshot.ledgerHead.sessionId
+      : snapshot.at(-1)?.sessionId ?? null;
+  }
+
+  private sequenceOf(snapshot: TuiSessionSnapshot): number | null {
+    return isTypedSessionSnapshot(snapshot)
+      ? snapshot.ledgerHead.sequence
+      : snapshot.at(-1)?.sessionSeq ?? null;
   }
 
   private createCoordinator(snapshot: RunCoordinatorSnapshot): RunCoordinator {
@@ -1501,10 +1755,18 @@ export class TuiController {
               this.currentSnapshot(),
             );
           }
+          // PHASE21: a successful application mutation is durable before this
+          // promise resolves, but a filesystem watcher is only an observation
+          // hint and may arrive later. Re-read the canonical session so the
+          // coordinator never reports success with its pre-mutation snapshot.
+          if (intent.sessionId !== null) {
+            const events = await this.options.core.loadSession(intent.sessionId);
+            this.applySnapshot(events);
+          }
           return this.currentSnapshot();
         },
         refresh: async (sessionId) => {
-          let events: readonly TuiPersistedEvent[];
+          let events: TuiSessionSnapshot;
           try {
             events =
               sessionId === null
@@ -1679,14 +1941,21 @@ export class TuiController {
   }
 
   private async drainExternalRefresh(): Promise<void> {
+    const refreshSessionId = this.viewState.session.id ?? this.invalidatedSessionId;
+    const activeTypedRefresh = this.options.core.typedSessionQueries === true &&
+      refreshSessionId !== null &&
+      (this.activeCoreRun !== null ||
+        this.coordinator?.state.kind === "starting" ||
+        this.coordinator?.state.kind === "running" ||
+        this.coordinator?.state.kind === "cancelling");
     if (
       this.stopped ||
       !this.externalRefreshPending ||
       this.externalRefreshInFlight ||
       this.idleOperationInFlight ||
-      this.coordinator?.state.kind !== "idle" ||
-      this.activeCoreRun !== null ||
-      this.viewState.session.id === null
+      refreshSessionId === null ||
+      (!activeTypedRefresh &&
+        (this.coordinator?.state.kind !== "idle" || this.activeCoreRun !== null))
     ) {
       return;
     }
@@ -1694,8 +1963,26 @@ export class TuiController {
     this.externalRefreshInFlight = true;
     this.idleOperationInFlight = true;
     try {
-      const result = await this.coordinator.dispatch({ type: "refresh_session" });
-      this.renderCoordinatorResult(result);
+      if (activeTypedRefresh) {
+        const snapshot = await this.options.core.loadSession(refreshSessionId);
+        this.applySnapshot(snapshot);
+        this.ephemeralState = setCoreDiagnostic(setSessionBusy(this.ephemeralState, false), null);
+        this.scheduleRender();
+      } else {
+        const result = await this.coordinator!.dispatch({ type: "refresh_session" });
+        this.renderCoordinatorResult(result);
+      }
+      this.invalidatedSessionId = null;
+    } catch (error) {
+      if (activeTypedRefresh) {
+        this.ephemeralState = setCoreDiagnostic(
+          this.ephemeralState,
+          error instanceof Error ? error.message : "Typed session refresh failed.",
+        );
+        this.scheduleRender();
+      } else {
+        throw error;
+      }
     } finally {
       this.externalRefreshInFlight = false;
       this.idleOperationInFlight = false;
@@ -1723,6 +2010,25 @@ export class TuiController {
     this.activeCoreRun = promise;
     try {
       const result = await promise;
+      if (result.exitCode === 0 && baselineSessionId !== null) {
+        try {
+          const events = await this.options.core.loadSession(baselineSessionId);
+          this.applySnapshot(events);
+        } catch (error) {
+          if (this.options.core.typedSessionQueries !== true) throw error;
+          // PHASE21: a completed mutation can publish its durable projection
+          // before the writer/delivery coordinator is available for the exact
+          // follow-up snapshot. Keep the last verified projection, freeze new
+          // mutations, and retry only through the typed full-snapshot path;
+          // transient read unavailability is not a renderer/source fatal.
+          this.invalidatedSessionId = baselineSessionId;
+          this.externalRefreshPending = true;
+          this.ephemeralState = setCoreDiagnostic(
+            setSessionBusy(this.ephemeralState, true),
+            error instanceof Error ? error.message : "Typed session refresh is temporarily unavailable.",
+          );
+        }
+      }
       const durableEventObserved =
         this.viewState.session.id !== baselineSessionId ||
         this.viewState.session.lastSessionSeq > baselineSessionSeq;
@@ -1750,6 +2056,7 @@ export class TuiController {
         this.finishApp(0);
       }
       this.scheduleRender();
+      if (this.externalRefreshPending) this.scheduleExternalRefreshDrain();
     }
   }
 
@@ -1772,9 +2079,16 @@ export class TuiController {
   private async failFatal(): Promise<void> {
     if (this.fatal) return;
     this.fatal = true;
-    this.options.core.cancelActiveRun();
+    // PHASE21: a renderer/source fatal is Host lifecycle failure, not a human
+    // cancellation decision. Request the narrow owner emergency stop, but do
+    // not wait for an application operation whose presentation/observation
+    // path has already failed: waiting can deadlock terminal restoration when
+    // an authenticated owner correctly ignores the legacy raw-abort channel.
+    // The still-running promise remains observed so a later rejection cannot
+    // become an unhandled process error.
+    this.options.core.abortActiveOwnerRun();
     const active = this.activeCoreRun;
-    if (active !== null) await active.catch(() => undefined);
+    if (active !== null) void active.catch(() => undefined);
     this.finishApp(1);
   }
 

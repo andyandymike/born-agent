@@ -184,6 +184,7 @@ const NON_LEGACY_RUN_EVENT_TYPES = new Set<string>([
   "repository.index.invalidated",
   "repository.index.selected",
   "resume.pending_call.adopted",
+  "run.cancel.requested",
   "tool.call.recovered",
 ]);
 

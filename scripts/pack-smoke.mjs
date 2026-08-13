@@ -508,12 +508,18 @@ try {
     XDG_STATE_HOME: m11StateRoot,
   };
   for (const key of [
+    "ANTHROPIC_API_KEY",
+    "AZURE_OPENAI_API_KEY",
     "BORN_BACKGROUND_WORKER",
     "BORN_DELEGATION_CHILD_STATE_ROOT",
     "BORN_MODEL",
     "BORN_OLLAMA_BASE_URL",
     "BORN_PROVIDER",
     "BORN_WORKER_STATE_ROOT",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OLLAMA_HOST",
+    "OPENAI_API_KEY",
   ]) {
     delete m11Environment[key];
   }
@@ -593,6 +599,96 @@ try {
         .filter(Boolean)
         .join("\n"),
     );
+  }
+  // PHASE21: prove that an installed CLI mutation closed through the Host-owned
+  // application journal. Everything below is imported from the extracted
+  // tarball; a source-checkout fallback cannot satisfy this evidence chain.
+  const [
+    { resolveControlStateRoot: resolvePackedControlStateRoot },
+    { ControlStatePaths: PackedControlStatePaths },
+    { ControlOperationJournal: PackedControlOperationJournal },
+    { loadOrCreateHostControlAuthority: loadPackedHostControlAuthority },
+    { SessionPathPolicy: PackedPhase21SessionPathPolicy },
+  ] = await Promise.all([
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "control-state-root.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "control-state-paths.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "control-operation-journal.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "host-control-identity.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "sessions", "session-path-policy.js")).href),
+  ]);
+  const packedControlStateRoot = resolvePackedControlStateRoot({
+    env: m11Environment,
+    platform: process.platform,
+  });
+  const packedControlPaths = await PackedControlStatePaths.create(packedControlStateRoot);
+  const packedControlJournal = new PackedControlOperationJournal(packedControlPaths);
+  const packedControlOperations = await packedControlJournal.list();
+  const packedDelegationOperations = packedControlOperations.filter((operation) =>
+    operation.actionKind === "delegation.start" &&
+    operation.target.kind === "existing_resource" &&
+    operation.target.resourceScope.kind === "session" &&
+    operation.target.resourceScope.sessionId === m11Prepared.sessionId
+  );
+  const packedDelegationOperation = packedDelegationOperations[0];
+  const packedAuthority = await loadPackedHostControlAuthority({ root: packedControlStateRoot });
+  const primary = packedDelegationOperation?.primaryDomainRecord;
+  const packedSessionPaths = await (await PackedPhase21SessionPathPolicy.create(m11RepositoryRoot))
+    .inspectExistingSession(m11Prepared.sessionId);
+  const packedSessionText = await readFile(packedSessionPaths.sessionFilePath, "utf8");
+  const packedSessionLines = packedSessionText.endsWith("\n")
+    ? packedSessionText.slice(0, -1).split("\n")
+    : [];
+  const primaryRawLine = primary?.sequence === null || primary?.sequence === undefined
+    ? undefined
+    : packedSessionLines[primary.sequence - 1];
+  let primaryRawEvent;
+  try {
+    primaryRawEvent = primaryRawLine === undefined ? null : JSON.parse(primaryRawLine);
+  } catch {
+    primaryRawEvent = null;
+  }
+  const authenticatedOrigin = primaryRawEvent?.data?.origin;
+  const applicationCommit = authenticatedOrigin?.application_commit;
+  if (
+    packedDelegationOperations.length !== 1 ||
+    packedDelegationOperation?.state !== "completed" ||
+    packedDelegationOperation.ownerClaim !== null ||
+    packedDelegationOperation.resultArtifact === null ||
+    packedDelegationOperation.resolvedResourceScope?.kind !== "session" ||
+    packedDelegationOperation.resolvedResourceScope.sessionId !== m11Prepared.sessionId ||
+    primary?.ownerKind !== "session" ||
+    primary.ledgerId !== `session:${m11Prepared.sessionId}` ||
+    primaryRawLine === undefined ||
+    sha256(primaryRawLine) !== primary.recordSha256 ||
+    primaryRawEvent?.event_id !== primary.recordId ||
+    primaryRawEvent?.session_id !== m11Prepared.sessionId ||
+    primaryRawEvent?.session_seq !== primary.sequence ||
+    !packedDelegationOperation.domainRecordRefs.some((reference) =>
+      reference.recordId === primary.recordId &&
+      reference.recordSha256 === primary.recordSha256
+    ) ||
+    packedAuthority.localOwner.kind !== "human" ||
+    packedAuthority.localOwner.principalId !== "local_owner" ||
+    !packedAuthority.localOwnerScopes.includes("session.mutate") ||
+    authenticatedOrigin?.kind !== "authenticated_surface" ||
+    authenticatedOrigin.authentication_id !== packedAuthority.localOwner.authenticationId ||
+    authenticatedOrigin.surface !== "cli" ||
+    applicationCommit?.schema_version !== 1 ||
+    applicationCommit.operation_id !== packedDelegationOperation.operationId ||
+    applicationCommit.action_kind !== "delegation.start" ||
+    applicationCommit.principal_id !== packedAuthority.localOwner.principalId ||
+    applicationCommit.prepared_action_sha256 !== packedDelegationOperation.preparedActionSha256
+  ) {
+    throw new Error(`packed Phase 21A application evidence is incomplete: ${JSON.stringify({
+      actionKind: packedDelegationOperation?.actionKind,
+      authenticatedOrigin,
+      operationCount: packedDelegationOperations.length,
+      operationId: packedDelegationOperation?.operationId,
+      primary,
+      primaryRawSha256: primaryRawLine === undefined ? null : sha256(primaryRawLine),
+      principalId: packedAuthority.localOwner.principalId,
+      state: packedDelegationOperation?.state,
+    })}`);
   }
   const { SessionCatalog: PackedSessionCatalog } = await import(pathToFileURL(
     join(packageRoot, "dist", "sessions", "session-catalog.js"),
@@ -1405,7 +1501,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, {
     force: true,

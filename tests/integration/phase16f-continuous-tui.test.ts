@@ -54,13 +54,28 @@ class TerminalExitRenderer implements PiTuiRenderer {
   readonly start = vi.fn();
   readonly stop = vi.fn();
   outcomeReportSha256: string | null = null;
+  readonly preparedActions: string[] = [];
   private exitQueued = false;
+  private readonly reviewedPreparedActionIds = new Set<string>();
 
   constructor(private readonly onInput: PiTuiRendererOptions["onInput"]) {}
 
-  update(view: TuiViewState): void {
+  update(view: TuiViewState, ephemeral: TuiEphemeralState): void {
     this.outcomeReportSha256 =
       view.outcomeReport?.reportSha256 ?? this.outcomeReportSha256;
+    const prepared = ephemeral.preparedActionDialog;
+    if (
+      prepared !== null &&
+      !this.reviewedPreparedActionIds.has(prepared.preparedActionId)
+    ) {
+      this.reviewedPreparedActionIds.add(prepared.preparedActionId);
+      this.preparedActions.push(prepared.actionKind);
+      queueMicrotask(() => {
+        this.onInput?.("\u001b[C");
+        this.onInput?.("\r");
+      });
+      return;
+    }
     if (
       this.exitQueued ||
       view.run === null ||
@@ -71,6 +86,7 @@ class TerminalExitRenderer implements PiTuiRenderer {
     this.exitQueued = true;
     queueMicrotask(() => this.onInput?.("\u0003"));
   }
+
 }
 
 class TwoRunRenderer implements PiTuiRenderer {
@@ -246,6 +262,11 @@ class InvalidRetryRenderer implements PiTuiRenderer {
 }
 
 describe("Phase 16F continuous TUI", () => {
+  // These are full application-control/TUI lifecycles with real durable
+  // catalog, operation-journal, projection, and renderer boundaries. The
+  // default 5s unit-test budget is too narrow under the full parallel suite.
+  const lifecycleTimeoutMs = 20_000;
+
   it("reopens a Goal-committed/run-not-started crash prefix without duplicating the Goal", async () => {
     const cwd = await workspace();
     const writer = await V2SessionWriter.createNew(cwd, CRASH_SESSION_ID);
@@ -316,10 +337,14 @@ describe("Phase 16F continuous TUI", () => {
       type: "run.incomplete",
     });
     expect(renderer?.stop).toHaveBeenCalledOnce();
-  });
+  }, lifecycleTimeoutMs);
 
   it("starts a default-Plan run with durable tui provenance and returns to idle", async () => {
     const cwd = await workspace();
+    const controlPlaneStateRoot = await mkdtemp(
+      join(tmpdir(), "bornagent-phase21a-tui-state-"),
+    );
+    workspaces.push(controlPlaneStateRoot);
     const backend = new FakeStreamingChatClient(
       fixedStream(["I need one bounded clarification."]),
       { model: "qwen3:1.7b", provider: "ollama" },
@@ -337,6 +362,7 @@ describe("Phase 16F continuous TUI", () => {
       ],
       memory.io,
       createRuntime({
+        controlPlaneStateRoot,
         createAgentToolRegistry: async (options) =>
           createPlanToolRegistry(
             options.workspace,
@@ -361,6 +387,10 @@ describe("Phase 16F continuous TUI", () => {
     );
 
     expect(exitCode, memory.readStderr()).toBe(0);
+    expect(renderer?.preparedActions).toEqual([
+      "repository.register",
+      "session.message.submit",
+    ]);
     expect(renderer?.start).toHaveBeenCalledOnce();
     expect(renderer?.stop).toHaveBeenCalledOnce();
     const file = (await readdir(join(cwd, ".bornagent", "sessions"))).find(
@@ -371,13 +401,26 @@ describe("Phase 16F continuous TUI", () => {
       join(cwd, ".bornagent", "sessions", file!),
     );
     expect(events[0]).toMatchObject({
-      data: { origin: { input_surface: "tui" } },
+      data: {
+        origin: {
+          application_commit: {
+            action_kind: "session.message.submit",
+            principal_id: "local_owner",
+          },
+          kind: "authenticated_surface",
+          surface: "tui",
+        },
+      },
       type: "goal.created",
     });
     expect(events[1]).toMatchObject({
       data: {
         agent_mode: "plan",
         agent_mode_source: "tui_default",
+        application_commit: {
+          action_kind: "session.message.submit",
+          principal_id: "local_owner",
+        },
       },
       type: "run.started",
     });
@@ -392,7 +435,7 @@ describe("Phase 16F continuous TUI", () => {
       await runCli(
         ["sessions", "show", events[0]!.sessionId, "--json"],
         show.io,
-        createRuntime({ cwd, env: {} }),
+        createRuntime({ controlPlaneStateRoot, cwd, env: {} }),
       ),
       show.readStderr(),
     ).toBe(0);
@@ -402,7 +445,7 @@ describe("Phase 16F continuous TUI", () => {
     expect(shown.outcomeReport.reportSha256).toBe(
       renderer?.outcomeReportSha256,
     );
-  });
+  }, lifecycleTimeoutMs);
 
   it("runs two explicit turns in one session without /resume or a hidden queue", async () => {
     const cwd = await workspace();
@@ -476,7 +519,7 @@ describe("Phase 16F continuous TUI", () => {
       events.filter((event) => event.type === "session.resume.requested"),
     ).toHaveLength(1);
     expect(backends.map((backend) => backend.calls.length)).toEqual([1, 1]);
-  });
+  }, lifecycleTimeoutMs);
 
   it("replaces an active Goal explicitly and starts its run in the same session", async () => {
     const cwd = await workspace();
@@ -554,7 +597,7 @@ describe("Phase 16F continuous TUI", () => {
     });
     expect(events.filter((event) => event.type === "run.started")).toHaveLength(2);
     expect(backends.map((backend) => backend.calls.length)).toEqual([1, 1]);
-  });
+  }, lifecycleTimeoutMs);
 
   it("rejects /retry after a Goal already has a durable run without creating another run", async () => {
     const cwd = await workspace();
@@ -605,5 +648,5 @@ describe("Phase 16F continuous TUI", () => {
       events.filter((event) => event.type === "session.resume.requested"),
     ).toHaveLength(0);
     expect(backend.calls).toHaveLength(1);
-  });
+  }, lifecycleTimeoutMs);
 });

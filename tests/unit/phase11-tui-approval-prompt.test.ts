@@ -46,6 +46,7 @@ describe("Phase 11 TUI approval prompt bridge", () => {
       },
       new AbortController().signal,
     );
+    await Promise.resolve();
     expect(prompt.hasPendingRequest).toBe(true);
 
     await prompt.decideApproval({
@@ -61,8 +62,8 @@ describe("Phase 11 TUI approval prompt bridge", () => {
 
   it("fails closed for missing/stale identities and aborts as cancelled", async () => {
     const missing = new TuiApprovalPrompt(createInitialTuiViewState);
-    await expect(
-      missing.request(
+    const abortMissing = new AbortController();
+    const missingDecision = missing.request(
         {
           actionKind: "apply_patch",
           addedLines: 1,
@@ -72,9 +73,10 @@ describe("Phase 11 TUI approval prompt bridge", () => {
           previewTruncated: false,
           removedLines: 1,
         },
-        new AbortController().signal,
-      ),
-    ).resolves.toBe("denied");
+        abortMissing.signal,
+      );
+    abortMissing.abort();
+    await expect(missingDecision).resolves.toBe("cancelled");
 
     const abort = new AbortController();
     const prompt = new TuiApprovalPrompt(approvalView);
@@ -132,4 +134,83 @@ describe("Phase 11 TUI approval prompt bridge", () => {
     ).resolves.toBe("approved");
     expect(prompt.hasPendingRequest).toBe(false);
   });
+
+  it("waits for the exact durable request to reach the typed TUI view", async () => {
+    let view = createInitialTuiViewState();
+    const prompt = new TuiApprovalPrompt(() => view);
+    const decision = prompt.request(
+      {
+        actionKind: "run_command",
+        actionSha256: HASH,
+        args: ["test"],
+        cwd: ".",
+        executable: "pnpm",
+        purpose: "verify",
+        reviewLines: [],
+        riskWarning: "fixture",
+      },
+      new AbortController().signal,
+    );
+    await Promise.resolve();
+    view = approvalView();
+    prompt.notifyViewChanged();
+    await prompt.decideApproval({
+      actionSha256: HASH,
+      decision: "approved",
+      requestId: REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+    });
+    await expect(decision).resolves.toBe("approved");
+  });
+
+  it("waits past a previously decided request but rejects another active request", async () => {
+    let view: TuiViewState = {
+      ...approvalView(),
+      approval: {
+        ...approvalView().approval!,
+        decision: "approved",
+        expiresState: { reason: "decided", status: "expired" },
+      },
+    };
+    const prompt = new TuiApprovalPrompt(() => view);
+    const preview = {
+      actionKind: "run_command" as const,
+      actionSha256: "b".repeat(64),
+      args: ["next"],
+      cwd: ".",
+      executable: "pnpm",
+      purpose: "verify" as const,
+      reviewLines: [],
+      riskWarning: "fixture",
+    };
+    const pending = prompt.request(preview, new AbortController().signal);
+    // A previously decided request must wait for a real projection change.
+    // Yield through a timer so a self-rescheduling microtask loop would make
+    // this regression test hang instead of silently starving query I/O.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(prompt.hasPendingRequest).toBe(false);
+
+    view = {
+      ...approvalView(),
+      approval: {
+        ...approvalView().approval!,
+        actionSha256: preview.actionSha256,
+        requestId: "33333333-3333-4333-8333-333333333336",
+      },
+    };
+    prompt.notifyViewChanged();
+    await prompt.decideApproval({
+      actionSha256: preview.actionSha256,
+      decision: "approved",
+      requestId: "33333333-3333-4333-8333-333333333336",
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+    });
+    await expect(pending).resolves.toBe("approved");
+
+    const conflict = new TuiApprovalPrompt(approvalView);
+    await expect(conflict.request(preview, new AbortController().signal)).resolves.toBe("denied");
+  });
+
 });

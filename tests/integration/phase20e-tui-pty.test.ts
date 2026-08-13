@@ -25,6 +25,11 @@ afterEach(async () => {
 interface Phase20PtyEvidence {
   readonly appExitCode: number;
   readonly delegationRejected: boolean;
+  readonly delegationPreparedNoProgress: boolean;
+  readonly hostPreparedActions: readonly string[];
+  readonly hostPreparedExactIdentityVisible: boolean;
+  readonly hostPreparedSummaryVisible: boolean;
+  readonly hostPreparedTargetVisible: boolean;
   readonly maximumActiveChildrenVisible: boolean;
   readonly outputBase64: string;
   readonly receiptsVisible: boolean;
@@ -58,6 +63,10 @@ describe("Phase 20E real PTY controlled delegation lifecycle", () => {
     expect(evidence).toMatchObject({
       appExitCode: 0,
       delegationRejected: true,
+      delegationPreparedNoProgress: true,
+      hostPreparedExactIdentityVisible: true,
+      hostPreparedSummaryVisible: true,
+      hostPreparedTargetVisible: true,
       maximumActiveChildrenVisible: true,
       receiptsVisible: true,
       replayStable: true,
@@ -67,6 +76,12 @@ describe("Phase 20E real PTY controlled delegation lifecycle", () => {
       signal: null,
       verifiedReceiptVisible: true,
     });
+    expect(evidence.hostPreparedActions).toEqual(expect.arrayContaining([
+      "delegation.decide",
+      "delegation.resume",
+    ]));
+    expect(raw).toContain("HOST PREPARED ACTION | delegation.resume");
+    expect(raw).toContain("[CONFIRM EXACT PREPARED ACTION]");
     expect(raw).toContain("DELEGATION DECISION | REJECT");
     expect(raw).toContain("DELEGATION DECISION | START_OR_RESUME");
     expect(raw).toContain("PTY_SHELL_RESTORED");

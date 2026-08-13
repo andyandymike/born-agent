@@ -4,6 +4,10 @@ import {
   delegationParentBindingSchema,
   delegationRevisionContentSchema,
 } from "./delegation-schema.js";
+import {
+  persistedApplicationCommitBindingV1Schema,
+  persistedUserActionOriginV2Schema,
+} from "../control-plane/application-protocol.js";
 
 const uuid = z.string().uuid();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -31,10 +35,21 @@ const exactDelegation = {
   parent_run_id: uuid,
 } as const;
 
-const origin = z.object({
-  kind: z.enum(["model", "user", "host"]),
-  input_surface: z.enum(["cli", "tui", "tool", "internal"]),
-}).strict();
+const origin = z.union([
+  z.object({
+    kind: z.enum(["model", "host"]),
+    input_surface: z.enum(["tool", "internal"]),
+  }).strict(),
+  persistedUserActionOriginV2Schema,
+]);
+
+const preEffectCancellationOrigin = z.union([
+  z.object({
+    kind: z.literal("host"),
+    input_surface: z.literal("internal"),
+  }).strict(),
+  persistedUserActionOriginV2Schema,
+]);
 
 const budgetCounters = z.object({
   artifact_bytes: nonnegativeInteger,
@@ -83,7 +98,7 @@ export const phase20DelegationSessionEventDataSchemas = {
     decision: z.enum(["approved", "rejected"]),
     decision_request_id: uuid,
     display_artifact: artifact,
-    origin: z.object({ kind: z.literal("user"), input_surface: z.enum(["cli", "tui"]) }).strict(),
+    origin: persistedUserActionOriginV2Schema,
     reason: boundedText(4096).min(1).optional(),
     revision_event_id: uuid,
   }).strict(),
@@ -104,6 +119,23 @@ export const phase20DelegationSessionEventDataSchemas = {
     cancel_request_id: uuid,
     terminal_event_id: uuid.nullable(),
   }).strict(),
+  "delegation.owner.pre_effect.terminal": z.object({
+    ...exactDelegation,
+    cancel_request_event_id: uuid,
+    cancel_request_id: uuid,
+    child_attempt_id: uuid.optional(),
+    operation_id: uuid.optional(),
+    origin: preEffectCancellationOrigin,
+    owner_application_commit: persistedApplicationCommitBindingV1Schema,
+    outcome: z.literal("cancelled"),
+  }).strict().superRefine((value, context) => {
+    if ((value.child_attempt_id === undefined) !== (value.operation_id === undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "admitted pre-effect cancellation identity must be complete",
+      });
+    }
+  }),
   "delegation.stale": z.object({
     ...exactDelegation,
     observed_binding_sha256: sha256,
@@ -124,6 +156,12 @@ export const phase20DelegationSessionEventDataSchemas = {
     envelope_artifact: artifact,
     envelope_sha256: sha256,
     executable: z.literal(false),
+    origin: persistedUserActionOriginV2Schema.optional(),
+  }).strict(),
+  "delegation.resume.requested": z.object({
+    ...exactDelegation,
+    origin: persistedUserActionOriginV2Schema,
+    resume_request_id: uuid,
   }).strict(),
   "delegation.parent.barrier.requested": z.object({
     barrier_id: uuid,
@@ -263,6 +301,7 @@ export const phase20DelegationSessionEventDataSchemas = {
     parent_actor_id: uuid,
     parent_run_id: uuid,
     repository_id: sha256,
+    origin: persistedUserActionOriginV2Schema.optional(),
   }).strict(),
   "delegation.group.takeover": z.object({
     group_id: uuid,

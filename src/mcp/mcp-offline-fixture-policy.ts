@@ -9,7 +9,7 @@ const REQUIRED_FIXTURE_FILES = Object.freeze([
 ]);
 const REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/server.mjs": "9093c8cbf78b9bc29b0d1ae82f2ed75fb6b28af951aa1c3ef786070f53ad3037",
-  "package.json": "6890a02b6f11d4cf5e1cc8da3adcfad8f423fa79077a98555aa656deefb47d8e",
+  "package.json": "468b24f37629ea9fa1eb55b784f253f1727ab4c03c92aed9b87975f532fa0cb0",
   "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 
