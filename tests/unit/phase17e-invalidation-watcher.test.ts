@@ -89,6 +89,28 @@ describe("Phase 17E repository invalidation watcher", () => {
     watcher.stop();
   });
 
+  it("classifies the production v2 pointer and index lock as cache authority hints", async () => {
+    vi.useFakeTimers();
+    const port = new FakeWatchPort();
+    const invalidations: unknown[] = [];
+    const watcher = await RepositoryInvalidationWatcher.create(
+      await workspace(),
+      (value) => invalidations.push(value),
+      { debounceMs: 1, port },
+    );
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(1);
+    port.event!("rename", ".bornagent/cache/repository-intelligence/v2/current.json");
+    await vi.advanceTimersByTimeAsync(1);
+    port.event!("change", ".bornagent/cache/repository-intelligence/v2/locks/index.lock");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(invalidations.slice(1)).toEqual([
+      { kind: "cache", relativePath: ".bornagent/cache/repository-intelligence/v2/current.json" },
+      { kind: "cache", relativePath: ".bornagent/cache/repository-intelligence/v2/locks/index.lock" },
+    ]);
+    watcher.stop();
+  });
+
   it("maps rename/missing names to unknown, stops after watch error, and stops idempotently", async () => {
     vi.useFakeTimers();
     const port = new FakeWatchPort();

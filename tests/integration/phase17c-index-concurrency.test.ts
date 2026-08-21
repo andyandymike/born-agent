@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { RepositoryIndexStore } from "../../src/repository-intelligence/index-store.js";
+import { RepositoryIndexV2Store } from "../../src/repository-intelligence/index-v2-store.js";
 
 const execFileAsync = promisify(execFile);
 const temporary: string[] = [];
@@ -65,10 +65,10 @@ describe("Phase 17C cross-process index concurrency", () => {
     expect(first.generationSha256).toBe(second.generationSha256);
     expect([first.buildMode, second.buildMode].sort()).toEqual(["cold", "reused"]);
     expect(await readFile(sourcePath)).toEqual(before);
-    const store = await RepositoryIndexStore.openExisting(root);
+    const store = await RepositoryIndexV2Store.openExisting(root);
     expect(store).not.toBeNull();
     expect((await store!.readCurrent())?.generation.generationSha256).toBe(first.generationSha256);
-    expect(await readdir(store!.paths.generationsRoot)).toEqual([first.generationSha256]);
+    expect(await readdir(store!.paths.rootsRoot)).toHaveLength(1);
     expect(await readdir(store!.paths.locksRoot)).toEqual([]);
     expect(await readdir(store!.paths.temporaryRoot)).toEqual([]);
   }, 40_000);

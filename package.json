@@ -40,7 +40,12 @@
     "phase4:validate": "node scripts/validate-phase-04-session.mjs",
     "pack:smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs",
     "repository:baseline": "tsx src/repository-intelligence/benchmark/run-baseline-cli.ts",
-    "repository:candidates": "tsx src/repository-intelligence/benchmark/run-candidates-cli.ts"
+    "repository:candidates": "tsx src/repository-intelligence/benchmark/run-candidates-cli.ts",
+    "repository:cache:benchmark": "tsx src/repository-intelligence/benchmark/run-cache-benchmark-cli.ts",
+    "repository:cache:compare": "tsx src/repository-intelligence/benchmark/run-cache-compare-cli.ts",
+    "repository:cache:installed-smoke": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/pack-smoke.mjs --repository-cache-installed-smoke",
+    "repository:cache:race": "tsx src/repository-intelligence/benchmark/run-cache-race-cli.ts",
+    "repository:cache:validate": "tsx src/repository-intelligence/benchmark/run-cache-validate-cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.7",

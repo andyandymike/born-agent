@@ -3,6 +3,10 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { DEFAULT_IGNORED_DIRECTORY_NAMES } from "./source-inventory-policy.js";
+import {
+  repositoryCacheCurrentRelativePath,
+  repositoryCacheIndexLockRelativePath,
+} from "./repository-cache-version.js";
 
 export interface RepositoryInvalidation {
   readonly kind: "cache" | "rules" | "source" | "unknown";
@@ -34,8 +38,14 @@ const PRIORITY: Readonly<Record<RepositoryInvalidation["kind"], number>> = Objec
   unknown: 4,
 });
 const ignoredDirectories = new Set<string>(DEFAULT_IGNORED_DIRECTORY_NAMES);
-const cacheCurrent = ".bornagent/cache/repository-intelligence/v1/current.json";
-const cacheLock = ".bornagent/cache/repository-intelligence/v1/locks/index.lock";
+const cacheAuthorityPaths = new Set<string>([
+  // The selected production paths drive live invalidation. v1 remains
+  // classified as cache churn for old-binary compatibility during rollback.
+  repositoryCacheCurrentRelativePath(),
+  repositoryCacheIndexLockRelativePath(),
+  repositoryCacheCurrentRelativePath("v1"),
+  repositoryCacheIndexLockRelativePath("v1"),
+]);
 
 class NodeRepositoryInvalidationWatchPort implements RepositoryInvalidationWatchPort {
   start(
@@ -81,7 +91,7 @@ function classify(eventType: "change" | "rename", filename: Buffer | string | nu
   // PHASE17: platform watch bytes are only invalidation hints. Rename, overflow-like
   // missing names, and malformed paths force a later full authoritative rescan.
   const relativePath = canonicalRelativePath(filename);
-  if (relativePath === cacheCurrent || relativePath === cacheLock) {
+  if (relativePath !== null && cacheAuthorityPaths.has(relativePath)) {
     // Atomic publication commonly reports a rename for these exact internal
     // paths. Preserve the cache classification so the coordinator can verify
     // the authoritative pointer instead of invalidating its own generation.

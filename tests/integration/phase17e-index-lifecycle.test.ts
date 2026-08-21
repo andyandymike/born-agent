@@ -45,16 +45,16 @@ describe("Phase 17E index lifecycle", () => {
 
   it("reports a corrupt pointer read-only, then repairs pointer and exact corrupt generation", async () => {
     const root = await workspace();
-    const initial = await DefaultRepositoryNavigationService.create(root);
+    const initial = await DefaultRepositoryNavigationService.create(root, { cacheStorageVersion: "v1" });
     const first = await initial.ensureCurrent({ allowBuild: true, signal: new AbortController().signal });
     const store = (await RepositoryIndexStore.openExisting(root))!;
     await writeFile(join(store.paths.root, "current.json"), "{}\n", "utf8");
 
-    await expect(DefaultRepositoryNavigationService.inspect(root)).resolves.toMatchObject({
+    await expect(DefaultRepositoryNavigationService.inspect(root, { cacheStorageVersion: "v1" })).resolves.toMatchObject({
       indexState: "blocked",
       reason: "cache_corrupt",
     });
-    const pointerRepair = await DefaultRepositoryNavigationService.create(root);
+    const pointerRepair = await DefaultRepositoryNavigationService.create(root, { cacheStorageVersion: "v1" });
     const repaired = await pointerRepair.ensureCurrent({ allowBuild: true, signal: new AbortController().signal });
     expect(repaired.stored.generation.generationSha256).toBe(first.stored.generation.generationSha256);
 
@@ -63,7 +63,7 @@ describe("Phase 17E index lifecycle", () => {
       "[]\n",
       "utf8",
     );
-    const generationRepair = await DefaultRepositoryNavigationService.create(root);
+    const generationRepair = await DefaultRepositoryNavigationService.create(root, { cacheStorageVersion: "v1" });
     const recovered = await generationRepair.ensureCurrent({ allowBuild: true, signal: new AbortController().signal });
     expect(recovered.stored.generation.generationSha256).toBe(first.stored.generation.generationSha256);
     expect(await readdir(store.paths.quarantineRoot)).toEqual([

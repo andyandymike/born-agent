@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
@@ -18,6 +18,44 @@ import { pathToFileURL } from "node:url";
 const workspaceRoot = resolve(import.meta.dirname, "..");
 const cliPath = join(workspaceRoot, "dist", "cli.js");
 const pnpmCliPath = process.env.npm_execpath;
+const scriptArguments = process.argv.slice(2).filter((value) => value !== "--");
+const repositoryCacheInstalledSmoke = scriptArguments.includes("--repository-cache-installed-smoke");
+
+function installedSmokeOptions() {
+  if (!repositoryCacheInstalledSmoke) {
+    if (scriptArguments.length !== 0) throw new TypeError("pack smoke received unknown arguments");
+    return null;
+  }
+  const positional = scriptArguments.filter(
+    (value) => value !== "--repository-cache-installed-smoke" && value !== "--delete-cache-and-replay",
+  );
+  const values = new Map();
+  for (let index = 0; index < positional.length; index += 2) {
+    const key = positional[index];
+    const value = positional[index + 1];
+    if (!key?.startsWith("--") || value === undefined || values.has(key)) {
+      throw new TypeError("repository cache installed smoke expects unique flag/value pairs");
+    }
+    values.set(key, value);
+  }
+  if (
+    !scriptArguments.includes("--delete-cache-and-replay") ||
+    values.get("--commands") !== "status,index,outline,symbol,references" ||
+    typeof values.get("--report") !== "string" ||
+    [...values.keys()].some((key) => key !== "--commands" && key !== "--report")
+  ) {
+    throw new TypeError("repository cache installed smoke requires the exact five commands, --delete-cache-and-replay, and --report");
+  }
+  const report = resolve(workspaceRoot, values.get("--report"));
+  const difference = relative(workspaceRoot, report);
+  if (difference === "" || difference === ".." || difference.startsWith(`..${sep}`) ||
+      !difference.split(sep).join("/").startsWith(".bornagent/evals/repository-cache/")) {
+    throw new TypeError("repository cache installed smoke report must remain below .bornagent/evals/repository-cache");
+  }
+  return Object.freeze({ report });
+}
+
+const installedOptions = installedSmokeOptions();
 
 if (!pnpmCliPath) {
   throw new Error("pack smoke must run from a pnpm script");
@@ -395,6 +433,74 @@ try {
         .filter(Boolean)
         .join("\n"),
     );
+  }
+
+  // RIC4: exercise the real binary from the extracted tarball. This is kept in
+  // the ordinary pack smoke too, so the release path cannot silently omit the
+  // selected v2 cache implementation.
+  const repositorySmokeRoot = join(temporaryRoot, "repository-cache-smoke");
+  await mkdir(repositorySmokeRoot, { recursive: true });
+  await writeFile(
+    join(repositorySmokeRoot, "sample.ts"),
+    "export function answer(): number { return 42; }\nexport const observed = answer();\n",
+    "utf8",
+  );
+  const runRepositoryCommand = (args) => runCommand(process.execPath, [binaryPath, ...args], repositorySmokeRoot);
+  const statusBefore = JSON.parse(runRepositoryCommand(["repo", "status", "--json"]));
+  if (statusBefore.indexState !== "idle") throw new Error("installed repository cache status created or selected an unexpected index");
+  const firstIndex = JSON.parse(runRepositoryCommand(["repo", "index", "--json"]));
+  const firstOutlineSource = runRepositoryCommand(["repo", "query", "outline", "--max-depth", "2", "--limit", "100"]);
+  const firstSymbolSource = runRepositoryCommand(["repo", "query", "symbol", "answer", "--limit", "20"]);
+  const firstSymbols = JSON.parse(firstSymbolSource);
+  const symbolId = firstSymbols.result?.[0]?.symbolId;
+  if (typeof symbolId !== "string") throw new Error("installed repository symbol query did not return answer");
+  const firstReferencesSource = runRepositoryCommand(["repo", "query", "references", symbolId, "--limit", "50"]);
+  const cacheRoot = join(repositorySmokeRoot, ".bornagent", "cache", "repository-intelligence");
+  const parentKey = await readFile(join(cacheRoot, "navigation-integrity.key"));
+  const legacyKey = await readFile(join(cacheRoot, "v1", "navigation-integrity.key"));
+  if (!parentKey.equals(legacyKey)) throw new Error("installed repository cache migration keys disagree");
+  await rm(join(cacheRoot, "v2"), { force: true, recursive: true });
+  const statusDeleted = JSON.parse(runRepositoryCommand(["repo", "status", "--json"]));
+  if (statusDeleted.indexState !== "idle") throw new Error("installed repository cache delete did not remove the v2 index");
+  const secondIndex = JSON.parse(runRepositoryCommand(["repo", "index", "--json"]));
+  const secondOutlineSource = runRepositoryCommand(["repo", "query", "outline", "--max-depth", "2", "--limit", "100"]);
+  const secondSymbolSource = runRepositoryCommand(["repo", "query", "symbol", "answer", "--limit", "20"]);
+  const secondSymbols = JSON.parse(secondSymbolSource);
+  const secondSymbolId = secondSymbols.result?.[0]?.symbolId;
+  const secondReferencesSource = runRepositoryCommand(["repo", "query", "references", secondSymbolId, "--limit", "50"]);
+  if (
+    firstIndex.generationSha256 !== secondIndex.generationSha256 ||
+    firstOutlineSource !== secondOutlineSource ||
+    firstSymbolSource !== secondSymbolSource ||
+    firstReferencesSource !== secondReferencesSource ||
+    !(await readFile(join(cacheRoot, "navigation-integrity.key"))).equals(parentKey) ||
+    !(await readFile(join(cacheRoot, "v1", "navigation-integrity.key"))).equals(legacyKey)
+  ) {
+    throw new Error("installed repository cache delete/rebuild changed its generation, query result, or key identity");
+  }
+  if (installedOptions !== null) {
+    const body = {
+      candidate: "production_v2",
+      commandOutputSha256: {
+        index: sha256(JSON.stringify({ first: firstIndex, second: secondIndex })),
+        outline: sha256(firstOutlineSource),
+        references: sha256(firstReferencesSource),
+        status: sha256(JSON.stringify({ before: statusBefore, deleted: statusDeleted })),
+        symbol: sha256(firstSymbolSource),
+      },
+      commands: ["status", "index", "outline", "symbol", "references"],
+      deleteCacheAndReplay: true,
+      generationSha256: firstIndex.generationSha256,
+      schemaVersion: 1,
+      status: "pass",
+    };
+    const report = { ...body, reportSha256: sha256(JSON.stringify(body)) };
+    await mkdir(dirname(installedOptions.report), { recursive: true });
+    const temporaryReport = `${installedOptions.report}.${String(process.pid)}.tmp`;
+    await writeFile(temporaryReport, `${JSON.stringify(report)}\n`, "utf8");
+    await rm(installedOptions.report, { force: true });
+    await rename(temporaryReport, installedOptions.report);
+    process.stdout.write(`${JSON.stringify({ path: relative(workspaceRoot, installedOptions.report).split(sep).join("/"), reportSha256: report.reportSha256, status: "pass" })}\n`);
   }
 
   const delegationHelp = spawnSync(
@@ -1501,7 +1607,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, {
     force: true,

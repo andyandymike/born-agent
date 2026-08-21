@@ -238,7 +238,8 @@ export class RepositoryIndexStore {
   }
 
   async recoverOwnedTemps(limit = 128): Promise<number> {
-    const names = (await readdir(this.paths.temporaryRoot)).filter((name) => /^build-[0-9a-f-]{36}$/u.test(name)).slice(0, limit);
+    const names = (await readdir(this.paths.temporaryRoot)).filter((name) =>
+      /^build-[0-9a-f-]{36}$/u.test(name)).slice(0, limit);
     for (const name of names) {
       const path = this.paths.temporaryGenerationPath(name);
       await this.paths.assertKnownPath(path, this.paths.temporaryRoot);

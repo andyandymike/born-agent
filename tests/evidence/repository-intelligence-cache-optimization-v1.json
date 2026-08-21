@@ -1,0 +1,450 @@
+{
+  "bootstrapCases": [
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract accepts the exact manifest and report set",
+      "id": "ric0.manifest.valid"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a missing required case",
+      "id": "ric0.manifest.missing-case-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a duplicate evidence id",
+      "id": "ric0.manifest.duplicate-id-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a renamed required case",
+      "id": "ric0.manifest.renamed-case-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies an unexpected skip",
+      "id": "ric0.manifest.unexpected-skip-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a mismatched not-applicable reason",
+      "id": "ric0.manifest.not-applicable-reason-mismatch-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies the wrong candidate",
+      "id": "ric0.manifest.wrong-candidate-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies the wrong capability identity",
+      "id": "ric0.manifest.wrong-capability-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies the wrong corpus",
+      "id": "ric0.manifest.wrong-corpus-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies the wrong storage policy",
+      "id": "ric0.manifest.wrong-policy-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies the wrong checkout platform or Node runtime",
+      "id": "ric0.manifest.wrong-checkout-platform-node-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a report hash mismatch",
+      "id": "ric0.receipt.report-hash-mismatch-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a manifest hash mismatch",
+      "id": "ric0.receipt.manifest-hash-mismatch-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies a network attempt",
+      "id": "ric0.guard.network-attempt-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract denies an ambient credential read",
+      "id": "ric0.guard.credential-attempt-denied"
+    },
+    {
+      "file": "tests/unit/repository-cache-evidence.test.ts",
+      "fullName": "RIC0 repository cache evidence contract represents unavailable counters as null",
+      "id": "ric0.counter.unavailable-is-null"
+    }
+  ],
+  "candidateProfiles": [
+    {
+      "candidateCapabilitySha256": "3ccdb138fbb3c667e638bac59d204b8519ef553d4576183d2e72fc64e40f045c",
+      "candidateCompositionSha256": "583e3cfc7103c1f761965a9237fec5c816e57b726731521dbe3ee4c7a078a7b1",
+      "candidateId": "monolith_v1",
+      "capabilities": [
+        "monolith_storage_v1",
+        "semantic_index_v1"
+      ]
+    },
+    {
+      "candidateCapabilitySha256": "29dadc666b4114b0e85cde74dd4a42880af779ef3ea0e8e9237946bbf394e70d",
+      "candidateCompositionSha256": "1d2aceda904b102da05de31fb488a3a6a3a3c2324024ff0c535a526009e01ce1",
+      "candidateId": "sharded_cas_v2",
+      "capabilities": [
+        "semantic_index_v1",
+        "sharded_storage_v2"
+      ]
+    },
+    {
+      "candidateCapabilitySha256": "5af0304eb16321f030d3eb9c9714880d32dfdde32e2d868dfd600fab2e63c813",
+      "candidateCompositionSha256": "8312447e26281f2e953d61629cd3d2abbcbfffc83cfeeb2a1ae33936f5b4199b",
+      "candidateId": "rooted_gc_v2",
+      "capabilities": [
+        "lease_protocol_v2",
+        "rooted_gc_v2",
+        "semantic_index_v1",
+        "sharded_storage_v2"
+      ]
+    },
+    {
+      "candidateCapabilitySha256": "096cada69f0fc161a77265fc35ff1f53b5ca81e89d82aa6ba7bc61a8b347e306",
+      "candidateCompositionSha256": "344cf7d46603b0b1c12ef6c0187c33edbe4a5af4675e850f1e2ad6c146ea9da6",
+      "candidateId": "persistent_dag_v2",
+      "capabilities": [
+        "lease_protocol_v2",
+        "persistent_facts_v1",
+        "rooted_gc_v2",
+        "semantic_index_v1",
+        "sharded_storage_v2"
+      ]
+    },
+    {
+      "candidateCapabilitySha256": "33a5cf14617f48fe10695c8bb655995b8f647011cab6caa72333c792cd39ddb8",
+      "candidateCompositionSha256": "b330943c7eaa679f6e1883a898ef2aee4d45b143afcb8c6412dad864ea720a6d",
+      "candidateId": "production_v2",
+      "capabilities": [
+        "lease_protocol_v2",
+        "production_selected_v2",
+        "rooted_gc_v2",
+        "semantic_index_v1",
+        "sharded_storage_v2"
+      ]
+    }
+  ],
+  "corpora": [
+    {
+      "corpusId": "medium-deterministic",
+      "definitionSha256": "71d50963046d24b50beea23ff302dad01a71aa3f8f400d51f0c8efa0dce427ca",
+      "fileCount": 512,
+      "generatorVersion": 1,
+      "seed": 17021,
+      "workspaceSha256": "7c72323fd6eafc085f84823efb12a43904ac954e1cd128bb042206f0714efd69"
+    }
+  ],
+  "evidence": [
+    {
+      "candidateId": "monolith_v1",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E001-V1-BASELINE",
+      "requiredTraceCases": [
+        "C0",
+        "C1A",
+        "C1B",
+        "C1C",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8A",
+        "C8B",
+        "C8C",
+        "C9",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "workPackage": "RIC0"
+    },
+    {
+      "candidateId": "sharded_cas_v2",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E002-SHARDED-CAS",
+      "requiredTraceCases": [
+        "C0", "C1A", "C1B", "C1C", "C2", "C3", "C4", "C5", "C6", "C7",
+        "C8A", "C8B", "C8C", "C9", "C10", "C11", "C12"
+      ],
+      "workPackage": "RIC1"
+    },
+    {
+      "candidateId": "rooted_gc_v2",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E003A-LEASE-PROTOCOL",
+      "requiredTraceCases": [
+        "C0", "C1A", "C1B", "C1C", "C2", "C3", "C4", "C5", "C6", "C7",
+        "C8A", "C8B", "C8C", "C9", "C10", "C11", "C12"
+      ],
+      "workPackage": "RIC2"
+    },
+    {
+      "candidateId": "rooted_gc_v2",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E003B-ROOTED-GC",
+      "requiredTraceCases": [
+        "C0", "C1A", "C1B", "C1C", "C2", "C3", "C4", "C5", "C6", "C7",
+        "C8A", "C8B", "C8C", "C9", "C10", "C11", "C12"
+      ],
+      "workPackage": "RIC2"
+    },
+    {
+      "candidateId": "persistent_dag_v2",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E004-PERSISTENT-FACTS",
+      "requiredTraceCases": [
+        "C0", "C1A", "C1B", "C1C", "C2", "C3", "C4", "C5", "C6", "C7",
+        "C8A", "C8B", "C8C", "C9", "C10", "C11", "C12"
+      ],
+      "workPackage": "RIC3"
+    },
+    {
+      "candidateId": "production_v2",
+      "corpusId": "medium-deterministic",
+      "evidenceId": "RIC-E005-PRODUCTION-CLOSURE",
+      "requiredTraceCases": [
+        "C0", "C1A", "C1B", "C1C", "C2", "C3", "C4", "C5", "C6", "C7",
+        "C8A", "C8B", "C8C", "C9", "C10", "C11", "C12"
+      ],
+      "workPackage": "RIC4"
+    }
+  ],
+  "guard": {
+    "descriptor": {
+      "credentialPolicy": "deny-known-provider-env-read-v1",
+      "guardedCredentialNames": [
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID"
+      ],
+      "networkPolicy": "deny-fetch-dns-tcp-udp-v1",
+      "schemaVersion": 1
+    },
+    "identitySha256": "13991a918aff504f1c9b0ce7ee5c66beae9a06e97968e3364c97352ebdef5ced"
+  },
+  "manifestId": "repository-intelligence-cache-optimization-v1",
+  "queries": [
+    {
+      "inputSha256": "fd55e33ac48ded1fcc8a5e3e2f7cd63f94d5be08e3218c5a08f83379ec8bf045",
+      "queryId": "Q-OUTLINE-SUBTREE"
+    },
+    {
+      "inputSha256": "ae2a3f11929d0068881898eecefee87d05405f5d34976a9be53a33248f3af574",
+      "queryId": "Q-REFERENCES-HOT"
+    },
+    {
+      "inputSha256": "587bcc14cb17e7c89b4398f264f43ef039e9c081de2c970265640cc53a7bb20e",
+      "queryId": "Q-STATUS-CURRENT"
+    },
+    {
+      "inputSha256": "3a789620220a012f01e90ace2c0f9f9a110353fe0069849dcaef1f4625fb2189",
+      "queryId": "Q-SYMBOL-FUZZY"
+    }
+  ],
+  "schemaVersion": 1,
+  "storagePolicy": {
+    "decoderIdentitySha256": "5ef7dbfc83dcc1101a40e25102e6d172f0b45bf5c37227b8206ad3611e02ba63",
+    "leaseGcLockWaitMs": 5000,
+    "maxActiveLeases": 4096,
+    "maxGcBytesPerPass": 134217728,
+    "maxGcEntriesPerPass": 4096,
+    "maxGcPassesPerRun": 67,
+    "maxGcRootMetadataBytesPerSnapshot": 67108864,
+    "maxKnownRoots": 4096,
+    "maxLeaseBytes": 16384,
+    "maxManagedObjects": 262144,
+    "maxObjectBytes": 8388608,
+    "maxObjectsPerRoot": 65536,
+    "maxQuarantineBytes": 67108864,
+    "maxQuarantineEntries": 128,
+    "maxRootBytes": 8388608,
+    "normalizationIdentitySha256": "c7db0a8987855266255166bb009ef0e90bae8c3c99a42c03bb586e5e7512e5fa",
+    "objectKindBounds": [
+      {
+        "kind": "dependency_view",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "4f9721f88eeecae8e128be7942a6bfbebdb722b0b873448d606b210062755d1d"
+      },
+      {
+        "kind": "fact_receipt",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "ad7e3243bfdd3c45a0d2c68fda30173053fd44a1c494483ff5b51b727d2dc242"
+      },
+      {
+        "kind": "outline_view",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "c170ae58ec23a02e4d12a71cf79c014e22817de9e8d73441ca017a5745ce6ffe"
+      },
+      {
+        "kind": "reference_posting",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "5c05eb9ac241f9b371049b862896fb1da8874d1546ef264b9c901267ba181263"
+      },
+      {
+        "kind": "symbol_payload",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "94b980d286d9d3cbb6a246bba714ca4bdf8c619cc0d82e482c2508687d41f677"
+      },
+      {
+        "kind": "symbol_search_directory",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "d7a75899baf1bb9b44c18f4ded8cfc321db12fc59b2330a02fd83d9af1a2a3af"
+      },
+      {
+        "kind": "unit_directory",
+        "maxDecodedBytes": 33554432,
+        "maxEncodedBytes": 8388608,
+        "maxRecords": 65536,
+        "objectSchemaVersion": 1,
+        "schemaIdentitySha256": "faa1ec73b2c03549b4cb16aac118e266346b9eba2422c6e57050c94c37c6fbaa"
+      }
+    ],
+    "partitionAlgorithm": "kind-logical-range-v1",
+    "partitionAlgorithmVersion": 1,
+    "publishHeadroomBytes": 67108864,
+    "schemaVersion": 1,
+    "softTotalBudgetBytes": 536870912,
+    "targetEncodedObjectBytes": 1048576
+  },
+  "storagePolicySha256": "86285e0e186dd9e74f38aed844c5db5b6f371cac8e4bf0d8277e27204d3e8a5f",
+  "traceCases": [
+    {
+      "caseId": "C0",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C1A",
+      "minimumSamples": 7,
+      "queryIds": ["Q-STATUS-CURRENT"],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C1B",
+      "minimumSamples": 7,
+      "queryIds": ["Q-OUTLINE-SUBTREE", "Q-REFERENCES-HOT", "Q-SYMBOL-FUZZY"],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C1C",
+      "minimumSamples": 7,
+      "queryIds": ["Q-OUTLINE-SUBTREE", "Q-REFERENCES-HOT", "Q-SYMBOL-FUZZY"],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C2",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C3",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C4",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C5",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C6",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C7",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C8A",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C8B",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["sharded_storage_v2"]
+    },
+    {
+      "caseId": "C8C",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["persistent_facts_v1"]
+    },
+    {
+      "caseId": "C9",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C10",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["semantic_index_v1"]
+    },
+    {
+      "caseId": "C11",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["lease_protocol_v2", "rooted_gc_v2"]
+    },
+    {
+      "caseId": "C12",
+      "minimumSamples": 7,
+      "queryIds": [],
+      "requiredCapabilities": ["lease_protocol_v2", "rooted_gc_v2"]
+    }
+  ]
+}
