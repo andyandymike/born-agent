@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
 const workspaceRoot = resolve(import.meta.dirname, "..");
-const failureTailLimit = 12_000;
+// GitHub stores only about 4 KiB for one check annotation. Preserve the actual
+// process tail so Vitest's final failure and stack are not displaced by earlier
+// PTY screen output.
+const failureTailLimit = 3_500;
 const stages = Object.freeze([
   Object.freeze({ label: "lint", script: "lint" }),
   Object.freeze({ label: "typecheck", script: "typecheck" }),

@@ -19,6 +19,41 @@ const reportPath = configuredReportPath === undefined
   : resolve(configuredReportPath);
 await mkdir(dirname(reportPath), { recursive: true });
 
+function emitGitHubError(title, message) {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const escaped = message
+    .slice(-3_500)
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+  process.stdout.write(`::error title=${title}::${escaped}\n`);
+}
+
+async function describeFailedAssertions() {
+  try {
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const failures = [];
+    for (const testFile of Array.isArray(report.testResults) ? report.testResults : []) {
+      for (const assertion of Array.isArray(testFile.assertionResults) ? testFile.assertionResults : []) {
+        if (assertion.status !== "failed") continue;
+        const fullName = typeof assertion.fullName === "string"
+          ? assertion.fullName
+          : [...(Array.isArray(assertion.ancestorTitles) ? assertion.ancestorTitles : []), assertion.title]
+            .filter((part) => typeof part === "string")
+            .join(" ");
+        failures.push([
+          `file=${typeof testFile.name === "string" ? testFile.name : "unknown"}`,
+          `test=${fullName || "unknown"}`,
+          ...(Array.isArray(assertion.failureMessages) ? assertion.failureMessages : []),
+        ].join("\n"));
+      }
+    }
+    return failures.join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
 try {
   const result = spawnSync(process.execPath, [
     pnpmCliPath,
@@ -36,12 +71,15 @@ try {
   });
 
   if (result.status !== 0) {
-    throw new Error([
+    const failure = [
       "Phase 21A focused validation failed",
       result.error?.message,
       result.stdout,
       result.stderr,
-    ].filter(Boolean).join("\n"));
+      await describeFailedAssertions(),
+    ].filter(Boolean).join("\n");
+    emitGitHubError("Phase 21A focused gate failed", failure);
+    throw new Error(failure);
   }
 
   const report = JSON.parse(await readFile(reportPath, "utf8"));
@@ -54,13 +92,15 @@ try {
   // PHASE21: The focused gate is named and counted so a typo, empty glob, or
   // newly skipped required test cannot turn missing evidence into a green gate.
   if (total < 60 || failed !== 0 || pending !== 0 || failedSuites !== 0 || pendingSuites !== 0) {
-    throw new Error(`Phase 21A evidence is incomplete: ${JSON.stringify({
+    const failure = `Phase 21A evidence is incomplete: ${JSON.stringify({
       failed,
       failedSuites,
       pending,
       pendingSuites,
       total,
-    })}`);
+    })}`;
+    emitGitHubError("Phase 21A evidence incomplete", failure);
+    throw new Error(failure);
   }
 
   process.stdout.write(`Phase 21A focused gate passed: ${String(total)} tests, required skips 0.\n`);
