@@ -44,6 +44,7 @@ function workerEnvironment(
   const names = [
     "PATH", "Path", "SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "XDG_STATE_HOME", "LANG", "LC_ALL",
     "BORN_PROVIDER", "BORN_MODEL", "BORN_OLLAMA_BASE_URL",
+    "BORN_PHASE20_CANONICAL_FAKE_OBSERVATION_MS",
   ] as const;
   const result: NodeJS.ProcessEnv = {};
   for (const name of names) if (environment[name] !== undefined) result[name] = environment[name];

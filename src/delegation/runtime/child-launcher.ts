@@ -137,7 +137,11 @@ function childEnvironment(
   operationRoot: string,
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
-  for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "NO_COLOR", "BORN_PROVIDER", "BORN_MODEL", "BORN_OLLAMA_BASE_URL"] as const) {
+  for (const name of [
+    "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "NO_COLOR",
+    "BORN_PROVIDER", "BORN_MODEL", "BORN_OLLAMA_BASE_URL",
+    "BORN_PHASE20_CANONICAL_FAKE_OBSERVATION_MS",
+  ] as const) {
     if (source[name] !== undefined) result[name] = source[name];
   }
   result.BORN_DELEGATION_CHILD_STATE_ROOT = operationRoot;

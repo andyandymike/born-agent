@@ -203,7 +203,10 @@ describe("Phase 19D bounded background worker", () => {
     await manager.allocate({ allowDirty: false, graphRevision: 1, graphSha256: graph.graphSha256, signal: new AbortController().signal, sourceNodeId: "verify" });
 
     const cliEntryPath = resolve("dist/cli.js");
-    const environment = { ...process.env, LOCALAPPDATA: userState };
+    // Keep the product control-plane state inside this fixture on both
+    // platforms. Linux resolves it from XDG_STATE_HOME rather than the
+    // Windows-only LOCALAPPDATA fallback.
+    const environment = { ...process.env, LOCALAPPDATA: userState, XDG_STATE_HOME: userState };
     const runtime = createNodeRuntime({
       approvalInput: { interactive: true, readLine: async () => "y" },
       cliEntryPath,

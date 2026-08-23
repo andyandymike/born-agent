@@ -9,8 +9,12 @@ export default defineConfig({
     // integration suites. Bounding workers keeps per-test crash deadlines
     // meaningful instead of turning CPU contention into false timeouts. The
     // hosted Windows repository gate opts into one worker because its two-core
-    // runner also cold-starts sealed child processes inside these tests.
+    // runner also cold-starts sealed child processes inside these tests. Give
+    // only that explicit CI profile a larger per-test scheduling allowance;
+    // default/local tests retain Vitest's 5s timeout and built/PTY cases keep
+    // their own domain-specific outer budgets.
     maxWorkers: serializeHostedWindowsRepositoryCheck ? 1 : 2,
+    testTimeout: serializeHostedWindowsRepositoryCheck ? 30_000 : 5_000,
     coverage: {
       reporter: ["text", "html"],
     },
