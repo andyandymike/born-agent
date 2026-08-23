@@ -8,6 +8,7 @@ import {
   ArchitectureEvidenceError,
   createEvidenceReceipt,
   evaluateEvidence,
+  parseArchitectureArguments,
   parseEvidenceManifest,
   parseEvidenceReceipt,
   verifyEvidenceReceipt,
@@ -102,6 +103,23 @@ afterEach(async () => {
 });
 
 describe("AS0.1 architecture evidence contract", () => {
+  test("accepts exactly one package-manager argument separator", () => {
+    expect(parseArchitectureArguments([
+      "--",
+      "--receipt",
+      "receipt.json",
+    ])).toMatchObject({ receipts: ["receipt.json"] });
+    expectCode(
+      () => parseArchitectureArguments([
+        "--",
+        "--",
+        "--receipt",
+        "receipt.json",
+      ]),
+      "evidence_cli_invalid",
+    );
+  });
+
   test("accepts the exact manifest and report set", async () => {
     const fullName = "AS0.1 architecture evidence contract accepts the exact manifest and report set";
     const source = manifestSource([{ fullName }]);

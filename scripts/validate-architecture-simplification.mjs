@@ -629,11 +629,12 @@ async function captureExecutionContext(workspaceRoot) {
   });
 }
 
-function parseArguments(argv) {
+export function parseArchitectureArguments(argv) {
+  const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv;
   const options = { reportArgv: [], reports: [], receipts: [] };
-  for (let index = 0; index < argv.length; index += 1) {
-    const option = argv[index];
-    const value = argv[index + 1];
+  for (let index = 0; index < normalizedArgv.length; index += 1) {
+    const option = normalizedArgv[index];
+    const value = normalizedArgv[index + 1];
     if (option === "--help") return Object.freeze({ ...options, help: true });
     if (value === undefined || value.startsWith("--")) fail("evidence_cli_invalid", `${option} requires a value`);
     index += 1;
@@ -674,7 +675,7 @@ function usage() {
 
 async function main() {
   const workspaceRoot = resolve(import.meta.dirname, "..");
-  const options = parseArguments(process.argv.slice(2));
+  const options = parseArchitectureArguments(process.argv.slice(2));
   if (options.help === true) {
     process.stdout.write(`${usage()}\n`);
     return;

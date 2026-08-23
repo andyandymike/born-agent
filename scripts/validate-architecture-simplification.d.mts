@@ -19,6 +19,16 @@ export class ArchitectureEvidenceError extends Error {
   readonly code: string;
 }
 
+export function parseArchitectureArguments(argv: readonly string[]): Readonly<{
+  readonly help?: true;
+  readonly manifest?: string;
+  readonly platform?: string;
+  readonly profile?: string;
+  readonly receiptOut?: string;
+  readonly receipts: readonly string[];
+  readonly reportArgv: readonly string[];
+  readonly reports: readonly string[];
+}>;
 export function parseEvidenceManifest(source: string): ArchitectureEvidenceManifestV1;
 export function parseEvidenceReceipt(source: string): ArchitectureEvidenceReceiptV1;
 export function sha256(source: string | Uint8Array): string;
