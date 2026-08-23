@@ -291,10 +291,19 @@ jobs:
           BORN_ARCHITECTURE_REPORT_2: ${{ runner.temp }}/architecture-phase21a.json
           BORN_ARCHITECTURE_REPORT_2_ARGV: '["pnpm","phase21a:gate"]'
           BORN_ARCHITECTURE_REPORT_3: ${{ runner.temp }}/architecture-self-test.json
-          BORN_ARCHITECTURE_REPORT_3_ARGV: '["pnpm","test","tests/unit/architecture-simplification-evidence.test.ts","--maxWorkers=1","--reporter=json","--outputFile=${{ runner.temp }}/architecture-self-test.json"]'
           BORN_ARCHITECTURE_RECEIPT_OUT: ${{ runner.temp }}/architecture-default-receipt.json
         run: |
+          $defaultEvidenceArgv = @(
+            "pnpm",
+            "test",
+            "tests/unit/architecture-simplification-evidence.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=$env:BORN_ARCHITECTURE_REPORT_3"
+          )
+          $env:BORN_ARCHITECTURE_REPORT_3_ARGV = $defaultEvidenceArgv | ConvertTo-Json -Compress
           pnpm architecture:gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm architecture:gate -- --receipt "${{ runner.temp }}/architecture-default-receipt.json"
 
       - name: Generate Windows AS0.2 architecture characterization
@@ -324,12 +333,39 @@ jobs:
         env:
           BORN_ARCHITECTURE_PROFILE: metric
           BORN_ARCHITECTURE_REPORT_1: ${{ runner.temp }}/architecture-as0.2-command.json
-          BORN_ARCHITECTURE_REPORT_1_ARGV: '["pnpm","architecture:characterize","--","--check","--report","${{ runner.temp }}/architecture-as0.2-command.json"]'
           BORN_ARCHITECTURE_REPORT_2: ${{ runner.temp }}/architecture-as0.2-vitest.json
-          BORN_ARCHITECTURE_REPORT_2_ARGV: '["pnpm","test","tests/unit/architecture-simplification-characterization.test.ts","tests/unit/architecture-simplification-handoff-v2.test.ts","tests/unit/architecture-simplification-bounded-scanner.test.ts","tests/unit/architecture-simplification-local-application-host.test.ts","tests/unit/architecture-simplification-runtime-attenuation.test.ts","tests/unit/architecture-simplification-exact-session-evidence.test.ts","tests/unit/architecture-simplification-run-cancellation-lifecycle.test.ts","tests/unit/architecture-simplification-session-registry-read-path.test.ts","tests/unit/architecture-simplification-product-tui-boundary.test.ts","tests/unit/architecture-simplification-run-termination.test.ts","tests/unit/architecture-simplification-projection-ownership.test.ts","--maxWorkers=1","--reporter=json","--outputFile=${{ runner.temp }}/architecture-as0.2-vitest.json"]'
           BORN_ARCHITECTURE_RECEIPT_OUT: ${{ runner.temp }}/architecture-as0.2-receipt.json
         run: |
+          $metricCharacterizationArgv = @(
+            "pnpm",
+            "architecture:characterize",
+            "--",
+            "--check",
+            "--report",
+            $env:BORN_ARCHITECTURE_REPORT_1
+          )
+          $metricTestsArgv = @(
+            "pnpm",
+            "test",
+            "tests/unit/architecture-simplification-characterization.test.ts",
+            "tests/unit/architecture-simplification-handoff-v2.test.ts",
+            "tests/unit/architecture-simplification-bounded-scanner.test.ts",
+            "tests/unit/architecture-simplification-local-application-host.test.ts",
+            "tests/unit/architecture-simplification-runtime-attenuation.test.ts",
+            "tests/unit/architecture-simplification-exact-session-evidence.test.ts",
+            "tests/unit/architecture-simplification-run-cancellation-lifecycle.test.ts",
+            "tests/unit/architecture-simplification-session-registry-read-path.test.ts",
+            "tests/unit/architecture-simplification-product-tui-boundary.test.ts",
+            "tests/unit/architecture-simplification-run-termination.test.ts",
+            "tests/unit/architecture-simplification-projection-ownership.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=$env:BORN_ARCHITECTURE_REPORT_2"
+          )
+          $env:BORN_ARCHITECTURE_REPORT_1_ARGV = $metricCharacterizationArgv | ConvertTo-Json -Compress
+          $env:BORN_ARCHITECTURE_REPORT_2_ARGV = $metricTestsArgv | ConvertTo-Json -Compress
           pnpm architecture:gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm architecture:gate -- --receipt "${{ runner.temp }}/architecture-as0.2-receipt.json"
 
       - name: Verify Windows built background worker paths
@@ -372,14 +408,45 @@ jobs:
         env:
           BORN_ARCHITECTURE_PROFILE: built_paths
           BORN_ARCHITECTURE_REPORT_1: ${{ runner.temp }}/architecture-built-worker.json
-          BORN_ARCHITECTURE_REPORT_1_ARGV: '["pnpm","test","tests/integration/phase19d-background-worker.test.ts","tests/integration/phase20d-background-worker-delegation.test.ts","tests/integration/phase20d-background-worker-readonly.test.ts","tests/integration/phase20d-real-coordinator-takeover.test.ts","--maxWorkers=1","--reporter=json","--outputFile=${{ runner.temp }}/architecture-built-worker.json"]'
           BORN_ARCHITECTURE_REPORT_2: ${{ runner.temp }}/architecture-built-phase20c.json
-          BORN_ARCHITECTURE_REPORT_2_ARGV: '["pnpm","test","tests/integration/phase20c-pre-effect-retry.test.ts","tests/integration/phase20c-coding-worktree.test.ts","--maxWorkers=1","--reporter=json","--outputFile=${{ runner.temp }}/architecture-built-phase20c.json"]'
           BORN_ARCHITECTURE_REPORT_3: ${{ runner.temp }}/architecture-built-phase20e.json
-          BORN_ARCHITECTURE_REPORT_3_ARGV: '["pnpm","test","tests/integration/phase20e-tui-pty.test.ts","tests/integration/phase20e-coding-tui-pty.test.ts","tests/integration/phase20e-promotion-composition.test.ts","--maxWorkers=1","--reporter=json","--outputFile=${{ runner.temp }}/architecture-built-phase20e.json"]'
           BORN_ARCHITECTURE_RECEIPT_OUT: ${{ runner.temp }}/architecture-built-paths-receipt.json
         run: |
+          $builtWorkerArgv = @(
+            "pnpm",
+            "test",
+            "tests/integration/phase19d-background-worker.test.ts",
+            "tests/integration/phase20d-background-worker-delegation.test.ts",
+            "tests/integration/phase20d-background-worker-readonly.test.ts",
+            "tests/integration/phase20d-real-coordinator-takeover.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=$env:BORN_ARCHITECTURE_REPORT_1"
+          )
+          $builtPhase20cArgv = @(
+            "pnpm",
+            "test",
+            "tests/integration/phase20c-pre-effect-retry.test.ts",
+            "tests/integration/phase20c-coding-worktree.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=$env:BORN_ARCHITECTURE_REPORT_2"
+          )
+          $builtPhase20eArgv = @(
+            "pnpm",
+            "test",
+            "tests/integration/phase20e-tui-pty.test.ts",
+            "tests/integration/phase20e-coding-tui-pty.test.ts",
+            "tests/integration/phase20e-promotion-composition.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=$env:BORN_ARCHITECTURE_REPORT_3"
+          )
+          $env:BORN_ARCHITECTURE_REPORT_1_ARGV = $builtWorkerArgv | ConvertTo-Json -Compress
+          $env:BORN_ARCHITECTURE_REPORT_2_ARGV = $builtPhase20cArgv | ConvertTo-Json -Compress
+          $env:BORN_ARCHITECTURE_REPORT_3_ARGV = $builtPhase20eArgv | ConvertTo-Json -Compress
           pnpm architecture:gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm architecture:gate -- --receipt "${{ runner.temp }}/architecture-built-paths-receipt.json"
 
       - name: Smoke packed artifact
