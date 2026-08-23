@@ -137,38 +137,62 @@ jobs:
       - name: Verify built background worker paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase19d-background-worker.test.ts
-          tests/integration/phase20d-background-worker-delegation.test.ts
-          tests/integration/phase20d-background-worker-readonly.test.ts
-          tests/integration/phase20d-real-coordinator-takeover.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-worker.json
+        shell: bash
+        run: |
+          set +e
+          pnpm test \
+            tests/integration/phase19d-background-worker.test.ts \
+            tests/integration/phase20d-background-worker-delegation.test.ts \
+            tests/integration/phase20d-background-worker-readonly.test.ts \
+            tests/integration/phase20d-real-coordinator-takeover.test.ts \
+            --maxWorkers=1 \
+            --reporter=json \
+            --outputFile=${{ runner.temp }}/architecture-built-worker.json
+          test_exit=$?
+          set -e
+          if (( test_exit != 0 )); then
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-worker.json" || true
+            exit "$test_exit"
+          fi
 
       - name: Verify built Phase 20C paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase20c-pre-effect-retry.test.ts
-          tests/integration/phase20c-coding-worktree.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-phase20c.json
+        shell: bash
+        run: |
+          set +e
+          pnpm test \
+            tests/integration/phase20c-pre-effect-retry.test.ts \
+            tests/integration/phase20c-coding-worktree.test.ts \
+            --maxWorkers=1 \
+            --reporter=json \
+            --outputFile=${{ runner.temp }}/architecture-built-phase20c.json
+          test_exit=$?
+          set -e
+          if (( test_exit != 0 )); then
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-phase20c.json" || true
+            exit "$test_exit"
+          fi
 
       - name: Verify built Phase 20E paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase20e-tui-pty.test.ts
-          tests/integration/phase20e-coding-tui-pty.test.ts
-          tests/integration/phase20e-promotion-composition.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-phase20e.json
+        shell: bash
+        run: |
+          set +e
+          pnpm test \
+            tests/integration/phase20e-tui-pty.test.ts \
+            tests/integration/phase20e-coding-tui-pty.test.ts \
+            tests/integration/phase20e-promotion-composition.test.ts \
+            --maxWorkers=1 \
+            --reporter=json \
+            --outputFile=${{ runner.temp }}/architecture-built-phase20e.json
+          test_exit=$?
+          set -e
+          if (( test_exit != 0 )); then
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-phase20e.json" || true
+            exit "$test_exit"
+          fi
 
       - name: Validate built-path architecture evidence
         env:
@@ -373,38 +397,62 @@ jobs:
       - name: Verify Windows built background worker paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase19d-background-worker.test.ts
-          tests/integration/phase20d-background-worker-delegation.test.ts
-          tests/integration/phase20d-background-worker-readonly.test.ts
-          tests/integration/phase20d-real-coordinator-takeover.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-worker.json
+        run: |
+          $testArgs = @(
+            "test",
+            "tests/integration/phase19d-background-worker.test.ts",
+            "tests/integration/phase20d-background-worker-delegation.test.ts",
+            "tests/integration/phase20d-background-worker-readonly.test.ts",
+            "tests/integration/phase20d-real-coordinator-takeover.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=${{ runner.temp }}/architecture-built-worker.json"
+          )
+          pnpm @testArgs
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-worker.json"
+            exit $testExit
+          }
 
       - name: Verify Windows built Phase 20C paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase20c-pre-effect-retry.test.ts
-          tests/integration/phase20c-coding-worktree.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-phase20c.json
+        run: |
+          $testArgs = @(
+            "test",
+            "tests/integration/phase20c-pre-effect-retry.test.ts",
+            "tests/integration/phase20c-coding-worktree.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=${{ runner.temp }}/architecture-built-phase20c.json"
+          )
+          pnpm @testArgs
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-phase20c.json"
+            exit $testExit
+          }
 
       - name: Verify Windows built Phase 20E paths
         env:
           BORN_RUN_BUILT_WORKER_TEST: "1"
-        run: >-
-          pnpm test
-          tests/integration/phase20e-tui-pty.test.ts
-          tests/integration/phase20e-coding-tui-pty.test.ts
-          tests/integration/phase20e-promotion-composition.test.ts
-          --maxWorkers=1
-          --reporter=json
-          --outputFile=${{ runner.temp }}/architecture-built-phase20e.json
+        run: |
+          $testArgs = @(
+            "test",
+            "tests/integration/phase20e-tui-pty.test.ts",
+            "tests/integration/phase20e-coding-tui-pty.test.ts",
+            "tests/integration/phase20e-promotion-composition.test.ts",
+            "--maxWorkers=1",
+            "--reporter=json",
+            "--outputFile=${{ runner.temp }}/architecture-built-phase20e.json"
+          )
+          pnpm @testArgs
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            node scripts/report-vitest-failures.mjs "${{ runner.temp }}/architecture-built-phase20e.json"
+            exit $testExit
+          }
 
       - name: Validate Windows built-path architecture evidence
         env:
