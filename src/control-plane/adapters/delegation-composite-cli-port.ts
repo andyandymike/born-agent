@@ -22,7 +22,6 @@ import { durableDelegationCancelSignalV1Schema } from "../../delegation/delegati
 import { preparedChildEnvelopeSchema } from "../../delegation/context/child-envelope-schema.js";
 import { contextCapsuleSchema } from "../../delegation/context/context-capsule-schema.js";
 import type { DecodedStoredEvent } from "../../events/event-decoder-registry.js";
-import { SessionCatalog } from "../../sessions/session-catalog.js";
 import { reconstructMultiRunSession } from "../../sessions/reconstruct-multi-run-session.js";
 import { SessionLockError } from "../../sessions/session-lock.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
@@ -869,11 +868,6 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     authority: DelegationOwnerExecutionV1,
     runtime: DelegationOwnerRuntimePortV1,
   ): Promise<void> {
-    const session = await new SessionCatalog(this.options.runtime.cwd).read(input.sessionId);
-    const delegation = [...session.delegations.revisions].reverse().find((candidate) =>
-      candidate.delegationId === input.request.payload.delegationId && !["rejected", "superseded"].includes(candidate.status)
-    );
-    if (delegation === undefined) throw new DelegationError("delegation_revision_conflict", "Delegation resume target is unavailable");
     const context: TaskMutationContext = Object.freeze({
       authenticatedApplication: authority.authenticatedMutation,
       expectedSessionSeq: events.length,
@@ -887,6 +881,13 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     try {
       if (writer.events.length !== events.length || writer.events.at(-1)?.eventId !== events.at(-1)?.eventId) {
         throw new DelegationError("delegation_revision_conflict", "Delegation changed while recording resume dispatch");
+      }
+      const session = reconstructMultiRunSession(writer.events);
+      const delegation = [...session.delegations.revisions].reverse().find((candidate) =>
+        candidate.delegationId === input.request.payload.delegationId && !["rejected", "superseded"].includes(candidate.status)
+      );
+      if (delegation === undefined) {
+        throw new DelegationError("delegation_revision_conflict", "Delegation resume target is unavailable");
       }
       await writer.appendDelegationEvent("delegation.resume.requested", {
         delegation_id: delegation.delegationId,

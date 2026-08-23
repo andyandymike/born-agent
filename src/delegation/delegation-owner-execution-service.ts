@@ -29,7 +29,8 @@ import {
   type DelegationAdmissionV1,
 } from "./bounded-delegation-scheduler.js";
 import { readVerifiedChildReceipt } from "./receipts/child-receipt-verifier.js";
-import { SessionCatalog, SessionCatalogError } from "../sessions/session-catalog.js";
+import { SessionCatalogError } from "../sessions/session-catalog.js";
+import type { SessionCatalog } from "../sessions/session-catalog.js";
 import { SessionLockError } from "../sessions/session-lock.js";
 import {
   reconstructMultiRunSession,
@@ -224,21 +225,6 @@ function delegationWriterFactory(runtime: DelegationOwnerRuntimePortV1): TaskMut
   };
 }
 
-async function queuedDelegationSnapshot(
-  runtime: DelegationOwnerRuntimePortV1,
-  options: DelegationOwnerActionOptionsV1,
-  ownerExecution?: DelegationOwnerExecutionV1,
-) {
-  const writer = await delegationWriterFactory(runtime)(
-    delegationMutationContext(runtime, options, ownerExecution),
-  );
-  try {
-    return reconstructMultiRunSession(writer.events);
-  } finally {
-    await writer.close();
-  }
-}
-
 function delegationContinuationOptions(
   options: DelegationOwnerActionOptionsV1,
 ): DelegationOwnerActionOptionsV1 {
@@ -329,30 +315,57 @@ function internalDiagnosticIdentity(error: unknown): string {
   return parts.join(":").slice(0, 256) || "UnknownError";
 }
 
-/** @internal Reads only after a bounded active-writer handoff; it never bypasses the lock. */
+const OWNER_SNAPSHOT_HANDOFF_DEADLINE_MS = 45_000;
+const OWNER_SNAPSHOT_HANDOFF_MAX_ATTEMPTS = 4_096;
+const TRANSIENT_OWNER_SNAPSHOT_LOCK_CODES = new Set<SessionLockError["code"]>([
+  "active_session_lock",
+  "lock_identity_changed",
+  "lock_too_young",
+  "unknown_session_lock_owner",
+]);
+
+/**
+ * @internal Reads through the same serialized writer path as owner mutations.
+ * It never bypasses a lock and never recovers or removes another owner's lock.
+ */
 export async function readDelegationOwnerSession(
-  runtime: Pick<DelegationOwnerRuntimePortV1, "cwd" | "waitForRetry">,
+  runtime: DelegationOwnerRuntimePortV1,
   sessionId: string,
+  inputSurface: "cli" | "tui" = "cli",
 ): Promise<DelegationSession> {
   assertCanonicalSessionId(sessionId);
-  const catalog = new SessionCatalog(runtime.cwd);
-  for (let attempt = 0; attempt < 512; attempt += 1) {
+  const startedAt = Date.now();
+  const writerFactory = delegationWriterFactory(runtime);
+  const context = Object.freeze({
+    inputSurface,
+    now: () => runtime.timestamp(),
+    randomUuid: () => runtime.randomUUID(),
+    sessionId,
+    workspace: runtime.cwd,
+  });
+  for (let attempt = 0; attempt < OWNER_SNAPSHOT_HANDOFF_MAX_ATTEMPTS; attempt += 1) {
+    let writer: V2SessionWriter | null = null;
     try {
-      return await catalog.read(sessionId);
+      writer = await writerFactory(context);
+      return reconstructMultiRunSession(writer.events);
     } catch (error) {
       if (
-        !(error instanceof SessionCatalogError) ||
-        error.code !== "active_session_writer" ||
-        attempt === 511
+        !(error instanceof SessionLockError) ||
+        !TRANSIENT_OWNER_SNAPSHOT_LOCK_CODES.has(error.code) ||
+        Date.now() - startedAt >= OWNER_SNAPSHOT_HANDOFF_DEADLINE_MS ||
+        attempt === OWNER_SNAPSHOT_HANDOFF_MAX_ATTEMPTS - 1
       ) {
         throw error;
       }
-      // Repository projection and Application owners use the same session
-      // ledger. A completed short writer may overlap this observation by one
-      // scheduling turn; wait for its lock release, then take a fresh exact
-      // snapshot. A persistent or unverified lock remains fail-closed.
-      await runtime.waitForRetry(10);
+    } finally {
+      await writer?.close().catch(() => undefined);
     }
+    // Typed TUI projections and owner mutations share the session lock. Enter
+    // the owner queue so an acquired writer is published through the Host
+    // broker; pending projections then read that exact in-memory prefix rather
+    // than repeatedly winning a new filesystem snapshot lock. A genuinely
+    // external or unresolved owner still reaches the hard deadline above.
+    await runtime.waitForRetry(11 + ((attempt * 17) % 29));
   }
   throw new DelegationError(
     "delegation_effect_reconciliation_required",
@@ -1311,7 +1324,11 @@ export async function executeDelegationOwnerStart(
                 `automatic retry could not prepare a fresh child envelope (${internalDiagnosticIdentity(preparedExit.diagnostic)})`,
               );
             }
-            const nextState = await queuedDelegationSnapshot(runtime, retryOptions);
+            const nextState = await readDelegationOwnerSession(
+              runtime,
+              retryOptions.sessionId,
+              retryOptions.inputSurface,
+            );
             const nextRevision = [...nextState.delegations.revisions].reverse().find((value) =>
               value.delegationId === delegationId && value.status === "queued" && value.envelope !== null);
             if (nextRevision === undefined) {

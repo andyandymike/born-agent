@@ -28,6 +28,8 @@ import {
   importChildSessionShard,
   seedChildSessionShard,
 } from "../../src/delegation/runtime/child-session-shard.js";
+import { openDelegationWriter } from "../../src/delegation/runtime/child-launcher.js";
+import { SessionLockError } from "../../src/sessions/session-lock.js";
 
 const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
@@ -66,6 +68,42 @@ function operation(
     boundedResultRef: null,
     boundedResultSha256: null,
   });
+}
+
+async function seedCompletedSession(root: string, adapterVersion: string): Promise<void> {
+  const writer = await V2SessionWriter.createNew(root, IDS.session, {
+    createEventId: randomUUID,
+    timestamp: () => "2026-08-10T00:00:00.000Z",
+  });
+  const publisher = new EventPublisher({
+    randomUUID,
+    renderer: { render: () => undefined },
+    runId: IDS.parent,
+    sessionId: IDS.session,
+    timestamp: () => "2026-08-10T00:00:00.000Z",
+    writer,
+  });
+  try {
+    await publisher.publish({
+      data: { command: "chat", input: { role: "user", text: "seed" }, model: "qwen3:1.7b", provider: "ollama", timeout_ms: 1_000, workspace: root },
+      type: "run.started",
+    });
+    await publisher.publish({
+      data: {
+        adapter: "deterministic-fake",
+        adapter_version: adapterVersion,
+        capabilities: { cancellation: "abort_signal", reasoning: "none", streaming: true, tools: "none", usage: "complete" },
+        config_fingerprint: SHA,
+        model: "qwen3:1.7b",
+        provider: "ollama",
+        resume_capability: "canonical_only",
+      },
+      type: "backend.selected",
+    });
+    await publisher.publish({ data: { duration_ms: 1, output_chars: 0 }, type: "run.completed" });
+  } finally {
+    await writer.close();
+  }
 }
 
 describe("Phase 20C runtime authority and recovery", () => {
@@ -211,57 +249,33 @@ describe("Phase 20C runtime authority and recovery", () => {
   it("waits for a short session-writer handoff before reading an exact owner snapshot", async () => {
     const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-owner-read-"));
     temporary.push(root);
-    const initial = await V2SessionWriter.createNew(root, IDS.session, {
-      createEventId: randomUUID,
-      timestamp: () => "2026-08-10T00:00:00.000Z",
-    });
-    const seed = new EventPublisher({
-      randomUUID,
-      renderer: { render: () => undefined },
-      runId: IDS.parent,
-      sessionId: IDS.session,
-      timestamp: () => "2026-08-10T00:00:00.000Z",
-      writer: initial,
-    });
-    await seed.publish({
-      data: {
-        command: "chat",
-        input: { role: "user", text: "seed" },
-        model: "qwen3:1.7b",
-        provider: "ollama",
-        timeout_ms: 1_000,
-        workspace: root,
-      },
-      type: "run.started",
-    });
-    await seed.publish({
-      data: {
-        adapter: "deterministic-fake",
-        adapter_version: "phase20-owner-read-v1",
-        capabilities: {
-          cancellation: "abort_signal",
-          reasoning: "none",
-          streaming: true,
-          tools: "none",
-          usage: "complete",
-        },
-        config_fingerprint: SHA,
-        model: "qwen3:1.7b",
-        provider: "ollama",
-        resume_capability: "canonical_only",
-      },
-      type: "backend.selected",
-    });
-    await seed.publish({ data: { duration_ms: 1, output_chars: 0 }, type: "run.completed" });
-    await initial.close();
+    await seedCompletedSession(root, "phase20-owner-read-v1");
 
     const overlappingWriter = await V2SessionWriter.openExisting(root, IDS.session, {
       createEventId: randomUUID,
       timestamp: () => "2026-08-10T00:00:01.000Z",
     });
+    const queue = new DelegationSessionWriterQueue();
+    let opens = 0;
+    let observed = 0;
+    const factory = queue.wrap(async (context) => {
+      opens += 1;
+      return V2SessionWriter.openExisting(
+        context.workspace,
+        context.sessionId,
+        { createEventId: context.randomUuid, timestamp: context.now },
+      );
+    });
     let waits = 0;
     const snapshot = await readDelegationOwnerSession({
       cwd: root,
+      delegationWriterFactory: factory,
+      env: {},
+      observeSessionWriter: () => { observed += 1; },
+      onCancel: () => () => undefined,
+      platform: process.platform,
+      randomUUID,
+      timestamp: () => "2026-08-10T00:00:02.000Z",
       waitForRetry: async () => {
         waits += 1;
         await overlappingWriter.close();
@@ -269,8 +283,47 @@ describe("Phase 20C runtime authority and recovery", () => {
     }, IDS.session);
 
     expect(waits).toBe(1);
+    expect(opens).toBe(2);
+    expect(observed).toBe(1);
     expect(snapshot.sessionId).toBe(IDS.session);
     expect(snapshot.events).toHaveLength(3);
+  });
+
+  it("keeps child terminal writer acquisition bounded beyond the former five-second window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-terminal-writer-"));
+    temporary.push(root);
+    await seedCompletedSession(root, "phase20-terminal-writer-v1");
+
+    let attempts = 0;
+    let elapsedMs = 0;
+    const writer = await openDelegationWriter(
+      async (context) => {
+        attempts += 1;
+        if (attempts <= 3) throw new SessionLockError("active_session_lock", "fixture lock handoff");
+        return V2SessionWriter.openExisting(context.workspace, context.sessionId, {
+          createEventId: context.randomUuid,
+          timestamp: context.now,
+        });
+      },
+      {
+        inputSurface: "cli",
+        now: () => "2026-08-10T00:00:01.000Z",
+        randomUuid: randomUUID,
+        sessionId: IDS.session,
+        workspace: root,
+      },
+      {
+        now: () => elapsedMs,
+        wait: async () => { elapsedMs += 3_000; },
+      },
+    );
+    try {
+      expect(attempts).toBe(4);
+      expect(elapsedMs).toBe(9_000);
+      expect(writer.events).toHaveLength(3);
+    } finally {
+      await writer.close();
+    }
   });
 
   it("keeps prepared/executable envelope identities distinct and imports one minimal child shard", async () => {

@@ -79,11 +79,21 @@ const RETRYABLE_SESSION_LOCK_CODES = new Set<SessionLockError["code"]>([
   "unknown_session_lock_owner",
 ]);
 
-async function openDelegationWriter(
+const DELEGATION_WRITER_HANDOFF_DEADLINE_MS = 15_000;
+
+/** @internal Bounded writer acquisition shared by child admission and terminal repair. */
+export async function openDelegationWriter(
   factory: TaskMutationWriterFactory,
   context: TaskMutationContext,
+  retry: Readonly<{
+    readonly deadlineMs?: number;
+    readonly now?: () => number;
+    readonly wait?: (delayMs: number) => Promise<void>;
+  }> = {},
 ): ReturnType<TaskMutationWriterFactory> {
-  const deadline = Date.now() + 5_000;
+  const now = retry.now ?? Date.now;
+  const wait = retry.wait ?? delay;
+  const deadline = now() + (retry.deadlineMs ?? DELEGATION_WRITER_HANDOFF_DEADLINE_MS);
   let attempt = 0;
   for (;;) {
     try {
@@ -92,7 +102,7 @@ async function openDelegationWriter(
       if (
         !(error instanceof SessionLockError) ||
         !RETRYABLE_SESSION_LOCK_CODES.has(error.code) ||
-        Date.now() >= deadline
+        now() >= deadline
       ) {
         throw error;
       }
@@ -101,7 +111,7 @@ async function openDelegationWriter(
       // recover, or impersonate the observed owner.
       const delayMs = 11 + ((attempt * 17) % 29);
       attempt += 1;
-      await delay(delayMs);
+      await wait(delayMs);
     }
   }
 }
