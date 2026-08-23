@@ -21,6 +21,7 @@ import {
 import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
 import { EventPublisher } from "../../src/events/event-publisher.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
+import { readDelegationOwnerSession } from "../../src/delegation/delegation-owner-execution-service.js";
 import {
   childSessionShardWorkspace,
   DelegationSessionWriterQueue,
@@ -205,6 +206,71 @@ describe("Phase 20C runtime authority and recovery", () => {
     const second = await secondPending;
     expect(secondAcquired).toBe(true);
     await second.close();
+  });
+
+  it("waits for a short session-writer handoff before reading an exact owner snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-owner-read-"));
+    temporary.push(root);
+    const initial = await V2SessionWriter.createNew(root, IDS.session, {
+      createEventId: randomUUID,
+      timestamp: () => "2026-08-10T00:00:00.000Z",
+    });
+    const seed = new EventPublisher({
+      randomUUID,
+      renderer: { render: () => undefined },
+      runId: IDS.parent,
+      sessionId: IDS.session,
+      timestamp: () => "2026-08-10T00:00:00.000Z",
+      writer: initial,
+    });
+    await seed.publish({
+      data: {
+        command: "chat",
+        input: { role: "user", text: "seed" },
+        model: "qwen3:1.7b",
+        provider: "ollama",
+        timeout_ms: 1_000,
+        workspace: root,
+      },
+      type: "run.started",
+    });
+    await seed.publish({
+      data: {
+        adapter: "deterministic-fake",
+        adapter_version: "phase20-owner-read-v1",
+        capabilities: {
+          cancellation: "abort_signal",
+          reasoning: "none",
+          streaming: true,
+          tools: "none",
+          usage: "complete",
+        },
+        config_fingerprint: SHA,
+        model: "qwen3:1.7b",
+        provider: "ollama",
+        resume_capability: "canonical_only",
+      },
+      type: "backend.selected",
+    });
+    await seed.publish({ data: { duration_ms: 1, output_chars: 0 }, type: "run.completed" });
+    await initial.close();
+
+    const overlappingWriter = await V2SessionWriter.openExisting(root, IDS.session, {
+      createEventId: randomUUID,
+      timestamp: () => "2026-08-10T00:00:01.000Z",
+    });
+    let waits = 0;
+    const snapshot = await readDelegationOwnerSession({
+      cwd: root,
+      waitForRetry: async () => {
+        waits += 1;
+        await overlappingWriter.close();
+      },
+    }, IDS.session);
+
+    expect(waits).toBe(1);
+    expect(snapshot.sessionId).toBe(IDS.session);
+    expect(snapshot.events).toHaveLength(3);
   });
 
   it("keeps prepared/executable envelope identities distinct and imports one minimal child shard", async () => {

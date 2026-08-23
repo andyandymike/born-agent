@@ -58,7 +58,11 @@ describe("Phase 20E real PTY child effect approvals", () => {
       ["--import", import.meta.resolve("tsx"), driver, workspace, app, "delegation-coding"],
       {
         cwd: workspace,
-        env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
+        env: {
+          ...process.env,
+          LOCALAPPDATA: join(workspace, "user-state"),
+          XDG_STATE_HOME: join(workspace, "user-state"),
+        },
         maxBuffer: 4 * 1024 * 1024,
         timeout: 170_000,
         windowsHide: true,
@@ -90,7 +94,11 @@ describe("Phase 20E real PTY child effect approvals", () => {
       ["--import", import.meta.resolve("tsx"), driver, workspace, app, "delegation-coding-cancel"],
       {
         cwd: workspace,
-        env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
+        env: {
+          ...process.env,
+          LOCALAPPDATA: join(workspace, "user-state"),
+          XDG_STATE_HOME: join(workspace, "user-state"),
+        },
         maxBuffer: 4 * 1024 * 1024,
         timeout: 170_000,
         windowsHide: true,
@@ -122,7 +130,11 @@ describe("Phase 20E real PTY child effect approvals", () => {
       ["--import", import.meta.resolve("tsx"), driver, workspace, app, "delegation-coding-exit-cancel"],
       {
         cwd: workspace,
-        env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
+        env: {
+          ...process.env,
+          LOCALAPPDATA: join(workspace, "user-state"),
+          XDG_STATE_HOME: join(workspace, "user-state"),
+        },
         maxBuffer: 4 * 1024 * 1024,
         timeout: 170_000,
         windowsHide: true,

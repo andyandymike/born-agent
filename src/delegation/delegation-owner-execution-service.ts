@@ -329,9 +329,35 @@ function internalDiagnosticIdentity(error: unknown): string {
   return parts.join(":").slice(0, 256) || "UnknownError";
 }
 
-async function session(runtime: DelegationOwnerRuntimePortV1, sessionId: string) {
+/** @internal Reads only after a bounded active-writer handoff; it never bypasses the lock. */
+export async function readDelegationOwnerSession(
+  runtime: Pick<DelegationOwnerRuntimePortV1, "cwd" | "waitForRetry">,
+  sessionId: string,
+): Promise<DelegationSession> {
   assertCanonicalSessionId(sessionId);
-  return new SessionCatalog(runtime.cwd).read(sessionId);
+  const catalog = new SessionCatalog(runtime.cwd);
+  for (let attempt = 0; attempt < 512; attempt += 1) {
+    try {
+      return await catalog.read(sessionId);
+    } catch (error) {
+      if (
+        !(error instanceof SessionCatalogError) ||
+        error.code !== "active_session_writer" ||
+        attempt === 511
+      ) {
+        throw error;
+      }
+      // Repository projection and Application owners use the same session
+      // ledger. A completed short writer may overlap this observation by one
+      // scheduling turn; wait for its lock release, then take a fresh exact
+      // snapshot. A persistent or unverified lock remains fail-closed.
+      await runtime.waitForRetry(10);
+    }
+  }
+  throw new DelegationError(
+    "delegation_effect_reconciliation_required",
+    "bounded delegation session observation did not converge",
+  );
 }
 
 function exactDelegationRevision(
@@ -408,7 +434,7 @@ export async function executeDelegationOwnerResume(
   ownerExecution?: DelegationOwnerExecutionV1,
 ): Promise<DelegationOwnerExecutionOutcomeV1> {
   try {
-    let current = await session(runtime, options.sessionId);
+    let current = await readDelegationOwnerSession(runtime, options.sessionId);
     let revision = [...current.delegations.revisions].reverse().find((candidate) =>
       candidate.delegationId === options.delegationId);
     if (revision === undefined) {
@@ -435,7 +461,7 @@ export async function executeDelegationOwnerResume(
         "delegation_effect_reconciliation_required",
         "runtime has no durable pre-effect operation reconciler",
       )));
-      current = await session(runtime, options.sessionId);
+      current = await readDelegationOwnerSession(runtime, options.sessionId);
       revision = [...current.delegations.revisions].reverse().find((candidate) =>
         candidate.delegationId === options.delegationId);
       if (revision === undefined) {
@@ -556,7 +582,7 @@ function factReader(runtime: DelegationOwnerRuntimePortV1, sessionId: string, so
   return {
     read: async (request) => {
       try {
-        const state = await new SessionCatalog(runtime.cwd).read(sessionId);
+        const state = await readDelegationOwnerSession(runtime, sessionId);
         if (request.kind === "receipt") {
           const revision = state.delegations.revisions.find((candidate) =>
             candidate.status === "accepted" && candidate.receipt?.sha256 === request.sha256);
@@ -627,7 +653,7 @@ async function managedExecution(
   ) {
     throw new DelegationError("delegation_workspace_conflict", "coding delegation requires an exact Phase 19 Graph worktree binding");
   }
-  const state = await new SessionCatalog(runtime.cwd).read(sessionId);
+  const state = await readDelegationOwnerSession(runtime, sessionId);
   const projected = state.worktrees.workspaces.find((workspace) =>
     workspace.identity.workspaceId === workspaceId &&
     workspace.identity.graphId === binding.graphId &&
@@ -720,7 +746,7 @@ export async function executeDelegationOwnerPrepare(
 ): Promise<DelegationOwnerExecutionOutcomeV1> {
   void interaction;
   try {
-    const state = await session(runtime, options.sessionId);
+    const state = await readDelegationOwnerSession(runtime, options.sessionId);
     const delegation = [...state.delegations.revisions].reverse().find((candidate) =>
       candidate.delegationId === options.delegationId && ["approved", "queued"].includes(candidate.status));
     if (delegation === undefined) throw new DelegationError("delegation_revision_conflict", "prepare requires an approved delegation");
@@ -999,7 +1025,7 @@ export async function executeDelegationOwnerStart(
     ? runtime.onCancel(() => controller.abort())
     : () => ownerExecution.cancellationSignal?.removeEventListener("abort", forwardApplicationCancellation);
   try {
-    const state = await session(runtime, options.sessionId);
+    const state = await readDelegationOwnerSession(runtime, options.sessionId);
     const delegation = [...state.delegations.revisions].reverse().find((candidate) => candidate.delegationId === options.delegationId);
     if (delegation?.status !== "queued" || delegation.envelope === null) {
       throw new DelegationError("delegation_revision_conflict", "start requires one prepared queued delegation");
@@ -1080,7 +1106,7 @@ export async function executeDelegationOwnerStart(
     // writer fence below closes the remaining request/admission race.
     try {
       assertNoDurablePreAdmissionCancellation(
-        await session(runtime, options.sessionId),
+        await readDelegationOwnerSession(runtime, options.sessionId),
         delegation,
       );
     } catch (error) {

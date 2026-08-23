@@ -54,6 +54,7 @@ function childEnvironment(): Record<string, string> {
     "TMPDIR",
     "USERPROFILE",
     "WINDIR",
+    "XDG_STATE_HOME",
   ];
   const result: Record<string, string> = {
     COLORTERM: "truecolor",

@@ -52,7 +52,11 @@ describe("Phase 20E real PTY controlled delegation lifecycle", () => {
       ["--import", import.meta.resolve("tsx"), driver, workspace, app, "delegation"],
       {
         cwd: workspace,
-        env: { ...process.env, LOCALAPPDATA: join(workspace, "user-state") },
+        env: {
+          ...process.env,
+          LOCALAPPDATA: join(workspace, "user-state"),
+          XDG_STATE_HOME: join(workspace, "user-state"),
+        },
         maxBuffer: 4 * 1024 * 1024,
         timeout: 170_000,
         windowsHide: true,
