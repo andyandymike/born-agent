@@ -743,6 +743,13 @@ async function main() {
 if (process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   main().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      const escaped = message
+        .replaceAll("%", "%25")
+        .replaceAll("\r", "%0D")
+        .replaceAll("\n", "%0A");
+      process.stdout.write(`::error title=Architecture evidence invalid::${escaped}\n`);
+    }
     process.stderr.write(`architecture_evidence_invalid: ${message}\n`);
     process.exitCode = 1;
   });

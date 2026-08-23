@@ -462,6 +462,7 @@ async function main(): Promise<void> {
         throw new Error(`${label}: exact retained draft is no longer visible`);
       }
       const retainedCount = fresh.split("input kept locally").length - 1;
+      const busyCount = fresh.split("control_operation_busy").length - 1;
       // This Enter is a fresh command submission only. A Host modal is absent
       // in the exact output slice, and the next Enter is forbidden until this
       // one has either opened that modal or emitted a new retained-draft fact.
@@ -470,7 +471,11 @@ async function main(): Promise<void> {
         (plain) => {
           const current = plain.slice(minimumOffset);
           return current.includes(header) ||
-            current.split("input kept locally").length - 1 > retainedCount;
+            current.split("input kept locally").length - 1 > retainedCount ||
+            (
+              current.includes(`> ${command}`) &&
+              current.split("control_operation_busy").length - 1 > busyCount
+            );
         },
         `${label} prepared action or retained draft`,
         15_000,
@@ -512,12 +517,17 @@ async function main(): Promise<void> {
         throw new Error(`${label}: exact retained draft is no longer visible`);
       }
       const retainedCount = fresh.split("input kept locally").length - 1;
+      const busyCount = fresh.split("control_operation_busy").length - 1;
       terminal.write("\r");
       await waitFor(
         (plain) => {
           const current = plain.slice(minimumOffset);
           return resultVisible(current) ||
-            current.split("input kept locally").length - 1 > retainedCount;
+            current.split("input kept locally").length - 1 > retainedCount ||
+            (
+              current.includes(`> ${command}`) &&
+              current.split("control_operation_busy").length - 1 > busyCount
+            );
         },
         `${label} result or retained draft`,
         15_000,
@@ -1003,6 +1013,12 @@ async function main(): Promise<void> {
         "Graph TUI draft",
         30_000,
       );
+      // The completed run can become visible one scheduling turn before its
+      // session writer releases the exact read lock used by Graph admission.
+      // Model a human review pause so the first Enter is not an artificial
+      // same-tick race; a later typed busy result still follows the retained
+      // draft retry path above.
+      await delay(1_500);
       terminal.resize(103, 31);
       const resized = terminal.cols === 103 && terminal.rows === 31;
       const graphApproveOffset = visibleText(raw).length;
