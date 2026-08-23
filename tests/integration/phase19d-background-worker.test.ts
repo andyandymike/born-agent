@@ -240,5 +240,10 @@ describe("Phase 19D bounded background worker", () => {
         "utf8",
       ),
     ).toContain("phase7 clamp verification passed");
-  }, 120_000);
+    // The node may legitimately consume its complete 120s budget before the
+    // worker publishes the durable terminal, and the enclosing Graph permits
+    // 180s.  Keep this harness outside both domain budgets so a loaded hosted
+    // runner reports the actual terminal instead of Vitest killing evidence
+    // collection first.
+  }, 210_000);
 });

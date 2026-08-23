@@ -1,11 +1,16 @@
 import { defineConfig } from "vitest/config";
 
+const serializeHostedWindowsRepositoryCheck =
+  process.env.BORN_CI_WINDOWS_SERIAL_TESTS === "1";
+
 export default defineConfig({
   test: {
     // Phase 17's pinned TypeScript engine is intentionally loaded by several
     // integration suites. Bounding workers keeps per-test crash deadlines
-    // meaningful instead of turning CPU contention into false timeouts.
-    maxWorkers: 2,
+    // meaningful instead of turning CPU contention into false timeouts. The
+    // hosted Windows repository gate opts into one worker because its two-core
+    // runner also cold-starts sealed child processes inside these tests.
+    maxWorkers: serializeHostedWindowsRepositoryCheck ? 1 : 2,
     coverage: {
       reporter: ["text", "html"],
     },

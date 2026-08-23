@@ -206,7 +206,7 @@ jobs:
   windows-phase20:
     name: windows-phase20
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -251,6 +251,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify repository
+        env:
+          BORN_CI_WINDOWS_SERIAL_TESTS: "1"
         run: pnpm check
 
       - name: Verify AM1 working-state evidence
