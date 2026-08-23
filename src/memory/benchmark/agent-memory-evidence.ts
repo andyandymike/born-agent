@@ -195,6 +195,10 @@ const inputFileSchema = z.object({
   sha256: sha256Schema,
 }).strict();
 
+export type AgentMemoryInputFileV1 = Readonly<
+  z.infer<typeof inputFileSchema>
+>;
+
 const checkoutSchema = z.object({
   fileCount: z.number().int().positive().max(50_000),
   fingerprintSha256: sha256Schema,
@@ -522,9 +526,11 @@ export function parseAgentMemoryEvidenceReceipt(
 
 export async function captureAgentMemoryInputFingerprint(
   workspaceRoot: string,
-  manifest: AgentMemoryEvidenceManifestV1,
+  manifest: Readonly<{
+    readonly characterizationInputs: readonly string[];
+  }>,
 ): Promise<{
-  readonly files: readonly z.infer<typeof inputFileSchema>[];
+  readonly files: readonly AgentMemoryInputFileV1[];
   readonly fingerprintSha256: string;
 }> {
   const canonicalRoot = await realpath(resolve(workspaceRoot));

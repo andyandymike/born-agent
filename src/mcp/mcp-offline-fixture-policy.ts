@@ -9,9 +9,9 @@ const REQUIRED_FIXTURE_FILES = Object.freeze([
 ]);
 const REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/server.mjs": "9093c8cbf78b9bc29b0d1ae82f2ed75fb6b28af951aa1c3ef786070f53ad3037",
-  // AM0: this remains a frozen byte oracle. The reviewed change adds only
-  // local, guarded agent-memory baseline and validation entrypoints.
-  "package.json": "8c94d7e1a7dad22d3909bb812076e524071e71f993768aba4824a4b30f000c8b",
+  // AM1: this remains a frozen byte oracle. The reviewed change adds only
+  // local, guarded working-state benchmark and validation entrypoints.
+  "package.json": "974b80adea04ca77543d78c084ec14206c6d634847fa2752b3a8b86412f91ff0",
   "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 
@@ -26,7 +26,7 @@ const PHASE18_REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/phase18-server/resources/guide.md": "687e67e92fb08155e839600ccf1e3c4c279543a5d9ecab32e48378b97620fab8",
   "fixtures/mcp/phase18-server/resources/large.txt": "29300fac5e5817c9cf9dc0a6c01b93ab88799a1b8f6996e325f4855dd0bc7417",
   "fixtures/mcp/phase18-server/server.mjs": "b1957b5fb498edc6b3a6adb338e85612a156d447e42241f51bb5dfce75aa31c8",
-  "package.json": "8c94d7e1a7dad22d3909bb812076e524071e71f993768aba4824a4b30f000c8b",
+  "package.json": "974b80adea04ca77543d78c084ec14206c6d634847fa2752b3a8b86412f91ff0",
   "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 

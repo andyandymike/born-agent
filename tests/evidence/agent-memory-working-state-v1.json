@@ -1,0 +1,86 @@
+{
+  "baselineManifest": "tests/evidence/agent-memory-v1.json",
+  "characterizationInputs": [
+    "package.json",
+    "src/context/agent-context-runtime.ts",
+    "src/context/context-projector.ts",
+    "src/context/incremental-context-projector.ts",
+    "src/context/context-planner.ts",
+    "src/context/deterministic-compactor.ts",
+    "src/context/protected-fact-ledger.ts",
+    "src/context/token-estimator.ts",
+    "src/control-plane/control-file-lock.ts",
+    "src/control-plane/exact-session-evidence-reader.ts",
+    "src/control-plane/session-ledger-head.ts",
+    "src/memory/benchmark/agent-memory-corpus.ts",
+    "src/memory/benchmark/agent-memory-evidence.ts",
+    "src/memory/benchmark/agent-memory-working-state-evidence.ts",
+    "src/memory/benchmark/agent-memory-working-state-runner.ts",
+    "src/memory/benchmark/run-agent-memory-working-state-cli.ts",
+    "src/memory/benchmark/run-agent-memory-working-state-protected-child.ts",
+    "src/memory/benchmark/run-agent-memory-working-state-validate-cli.ts",
+    "src/memory/working-state/working-state-builder.ts",
+    "src/memory/working-state/working-state-projection-session.ts",
+    "src/memory/working-state/working-state-schema.ts",
+    "src/memory/working-state/working-state-store.ts",
+    "src/mcp/mcp-offline-fixture-policy.ts",
+    "src/sessions/rename-durability.ts",
+    "tests/unit/agent-memory-working-state-evidence.test.ts",
+    "tests/unit/agent-memory-working-state-store.test.ts",
+    "tests/unit/agent-memory-working-state.test.ts"
+  ],
+  "commands": [
+    { "command": "pnpm memory:working:benchmark", "commandId": "am1-benchmark" },
+    { "command": "pnpm memory:working:validate -- --report <report-path>", "commandId": "am1-validate" },
+    { "command": "pnpm test -- tests/unit/agent-memory-working-state.test.ts tests/unit/agent-memory-working-state-store.test.ts tests/unit/agent-memory-working-state-evidence.test.ts", "commandId": "am1-focused-gate" }
+  ],
+  "corpusId": "agent-memory-synthetic-v1",
+  "defaultMode": "off",
+  "equivalenceCaseIds": [
+    "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10", "N11", "N12",
+    "T01", "T02", "T03", "T04", "T05", "T06",
+    "A01", "A02", "A03", "A04",
+    "R01", "R02", "R03", "R04",
+    "U01", "U02", "U03", "U04",
+    "E01", "E02", "E03",
+    "P01", "P02", "P03"
+  ],
+  "evaluatedMode": "working",
+  "evidenceId": "AM-E002-WORKING-STATE",
+  "faultMatrixSha256": "dcc706508fd436a386767283544d40010b0fdba18dd0cec8ff878ae259d67a76",
+  "faults": [
+    { "expectedResult": "missing", "faultId": "WF01", "injection": "missing_pointer" },
+    { "expectedResult": "corrupt", "faultId": "WF02", "injection": "corrupt_pointer" },
+    { "expectedResult": "future_head", "faultId": "WF03", "injection": "future_head" },
+    { "expectedResult": "working_state_busy", "faultId": "WF04", "injection": "append_race" },
+    { "expectedResult": "working_state_publish_failed", "faultId": "WF05", "injection": "pointer_install_crash" },
+    { "expectedResult": "working_state_stale", "faultId": "WF06", "injection": "same_prefix_divergence" }
+  ],
+  "guard": {
+    "descriptor": {
+      "credentialPolicy": "deny-known-provider-env-read-v1",
+      "guardedCredentialNames": [
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID"
+      ],
+      "networkPolicy": "deny-fetch-dns-tcp-udp-v1",
+      "providerPolicy": "no-provider-construction-or-dispatch-v1",
+      "schemaVersion": 1
+    },
+    "identitySha256": "87c44593c65c8e7ccb0d2f04e17b8ac95dfaf2e64fa89e22350bd523f6ed7a25"
+  },
+  "manifestId": "agent-memory-working-state-v1",
+  "performance": [
+    { "caseId": "N03", "historyClass": "short", "maximumWorkingToBaselineRatio": 1.1, "minimumImprovementRatio": null, "repetitions": 9, "warmupIterations": 2 },
+    { "caseId": "N12", "historyClass": "long", "maximumWorkingToBaselineRatio": null, "minimumImprovementRatio": 0.3, "repetitions": 9, "warmupIterations": 2 }
+  ],
+  "performanceOracleSha256": "7f4d4a7cb4d99efb70ef0b6198d26bebb115725131650a5516a6d3b0f01a8db8",
+  "privacyPolicy": "synthetic-fixtures-only-v1",
+  "schemaVersion": 1,
+  "workPackage": "AM1"
+}

@@ -31,6 +31,8 @@
     "lint": "eslint .",
     "memory:baseline": "tsx src/memory/benchmark/run-agent-memory-baseline-cli.ts",
     "memory:validate": "tsx src/memory/benchmark/run-agent-memory-validate-cli.ts",
+    "memory:working:benchmark": "tsx src/memory/benchmark/run-agent-memory-working-state-cli.ts",
+    "memory:working:validate": "tsx src/memory/benchmark/run-agent-memory-working-state-validate-cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "phase21a:gate": "node scripts/validate-phase21a.mjs",

@@ -58,6 +58,7 @@ export class ContextProjectionError extends Error {
       | "duplicate_event_id"
       | "duplicate_event_sequence"
       | "estimator_mismatch"
+      | "incremental_projection_mismatch"
       | "invalid_epoch"
       | "invalid_event_data",
     message: string,

@@ -57,6 +57,15 @@ jobs:
       - name: Verify repository
         run: pnpm check
 
+      - name: Verify AM1 working-state evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm memory:working:benchmark
+          mapfile -t reports < <(find .bornagent/evals/agent-memory/working/reports -maxdepth 1 -type f -name 'agent-memory-working-state-*.json' -print)
+          test "${#reports[@]}" -eq 1
+          pnpm memory:working:validate -- --report "${reports[0]}"
+
       - name: Record repository verification evidence
         run: >-
           pnpm architecture:report
@@ -243,6 +252,17 @@ jobs:
 
       - name: Verify repository
         run: pnpm check
+
+      - name: Verify AM1 working-state evidence
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm memory:working:benchmark
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $reports = @(Get-ChildItem -LiteralPath ".bornagent/evals/agent-memory/working/reports" -File -Filter "agent-memory-working-state-*.json")
+          if ($reports.Count -ne 1) { throw "expected exactly one AM1 working-state report" }
+          pnpm memory:working:validate -- --report $reports[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record repository verification evidence
         run: >-

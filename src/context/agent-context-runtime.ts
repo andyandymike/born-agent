@@ -1,6 +1,7 @@
 import type { RunEvent } from "../events/run-event.js";
 import type { RepositoryRuleSet } from "../repository-rules/repository-rule-set.js";
 import {
+  ContextProjectionError,
   ContextProjector,
   type FrozenRepositoryRulesInput,
   type ProjectableContextEvent,
@@ -25,6 +26,10 @@ import type {
 } from "./token-estimator.js";
 import { canonicalJson, sha256Canonical } from "../completion/canonical-json.js";
 import type { TaskContextProjection } from "../coordination/task-context-projection.js";
+import {
+  IncrementalContextProjector,
+  type IncrementalContextProjectionObservationV1,
+} from "./incremental-context-projector.js";
 
 export interface FrozenTaskContextInput {
   readonly projection: TaskContextProjection;
@@ -42,6 +47,10 @@ export interface AgentContextRuntimeOptions {
   readonly capabilityContext?: () => readonly ContextItemInput[];
   readonly systemInstructions: string;
   readonly taskContext?: () => FrozenTaskContextInput;
+  readonly workingState?: Readonly<{
+    readonly mode: "shadow" | "working";
+    readonly observation?: IncrementalContextProjectionObservationV1;
+  }>;
 }
 
 export interface AgentContextPlanningInput {
@@ -112,6 +121,8 @@ export class AgentContextRuntime {
   readonly #estimator: TokenEstimator;
   readonly #planner: ContextPlanner;
   readonly #projector: ContextProjector;
+  readonly #workingProjector: IncrementalContextProjector | null;
+  readonly #workingStateMode: "off" | "shadow" | "working";
   readonly #repositoryRules: FrozenRepositoryRulesInput | null;
   readonly #repositoryRuleContext: (() => readonly ContextItemInput[]) | undefined;
   readonly #capabilityContext: (() => readonly ContextItemInput[]) | undefined;
@@ -127,6 +138,13 @@ export class AgentContextRuntime {
         : { plannerVersion: options.plannerVersion }),
     });
     this.#projector = new ContextProjector(options.estimator);
+    this.#workingProjector = options.workingState === undefined
+      ? null
+      : new IncrementalContextProjector(
+          options.estimator,
+          options.workingState.observation,
+        );
+    this.#workingStateMode = options.workingState?.mode ?? "off";
     this.#repositoryRules = frozenRules(
       options.repositoryRules,
       options.repositoryRulesEventId,
@@ -184,7 +202,7 @@ export class AgentContextRuntime {
       ...selectedCapabilities,
       ...(taskContextItem === undefined ? [] : [taskContextItem]),
     ];
-    const state = this.#projector.project({
+    const projectionInput = {
       ...(additionalItems.length === 0 ? {} : { additionalItems }),
       ...(input.artifactRefsByEventId === undefined
         ? {}
@@ -199,7 +217,19 @@ export class AgentContextRuntime {
           version: "phase10-v1",
         },
       ],
-    });
+    } as const;
+    const state = this.#workingStateMode === "working"
+      ? this.#workingProjector!.project(projectionInput)
+      : this.#projector.project(projectionInput);
+    if (this.#workingStateMode === "shadow") {
+      const working = this.#workingProjector!.project(projectionInput);
+      if (canonicalJson(working) !== canonicalJson(state)) {
+        throw new ContextProjectionError(
+          "incremental_projection_mismatch",
+          "working-state projection does not match the cold context oracle",
+        );
+      }
+    }
     const fullEstimatedInputTokens = state.items.reduce(
       (total, item) => total + item.estimatedTokens,
       0,
