@@ -112,10 +112,10 @@ const node = createNodeRuntime({
   // The real Windows PTY gate cold-starts package-owned child processes while
   // the full built-path matrix is already exercising worker/process teardown.
   // Keep production's 30s default unchanged; this explicit bounded fixture
-  // budget prevents host load from turning a healthy cold start into an
-  // unknown-effect handshake timeout.
+  // budget covers cold starts after the built-path matrix has exercised
+  // several sealed workers without weakening the outer 170s process bound.
   ...(delegationLifecycle || delegationCodingAnyLifecycle
-    ? { delegationHandshakeTimeoutMs: 60_000 }
+    ? { delegationHandshakeTimeoutMs: 90_000 }
     : {}),
   env: process.env,
   execPath: process.execPath,

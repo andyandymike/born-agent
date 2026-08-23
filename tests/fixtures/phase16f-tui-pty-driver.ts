@@ -583,9 +583,10 @@ async function main(): Promise<void> {
         plain.includes("action=apply_patch");
       // The authenticated composite now performs durable owner registration,
       // projection refresh, and child startup before the first effect review.
-      // On loaded Windows workers that complete path can legitimately exceed
-      // the old 35s fixture budget without any duplicate dispatch.
-      await waitFor(patchApprovalVisible, "actor-bound child patch approval", 60_000);
+      // The built-path matrix cold-starts several sealed Node workers before
+      // this case.  Keep the approval predicate exact, but allow the explicit
+      // fixture handshake budget to elapse before declaring an unknown effect.
+      await waitFor(patchApprovalVisible, "actor-bound child patch approval", 100_000);
       if (delegationCodingExitCancelLifecycle) {
         terminal.write("\u0004");
         await waitFor(
