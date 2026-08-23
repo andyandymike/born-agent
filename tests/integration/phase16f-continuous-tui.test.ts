@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../src/cli/run-cli.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadOrCreateHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import { readStoredSession } from "../../src/sessions/read-stored-session.js";
 import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
 import type { PiTuiRenderer, PiTuiRendererOptions } from "../../src/tui/pi-tui-renderer.js";
@@ -429,6 +431,16 @@ describe("Phase 16F continuous TUI", () => {
       type: "run.incomplete",
     });
     expect(backend.calls).toHaveLength(1);
+
+    const authority = await loadOrCreateHostControlAuthority({
+      root: controlPlaneStateRoot,
+    });
+    const operations = new ControlOperationJournal(authority.paths);
+    await vi.waitFor(async () => {
+      expect((await operations.list()).find(
+        (operation) => operation.actionKind === "session.message.submit",
+      )?.state).toBe("completed");
+    }, { interval: 50, timeout: 10_000 });
 
     const show = createMemoryIO();
     expect(
