@@ -290,6 +290,35 @@ function waitHandshake(child: ChildProcess, timeoutMs: number): Promise<Delegati
   });
 }
 
+export type DelegationChildHandshakeOutcomeV1 =
+  | Readonly<{ readonly kind: "accepted"; readonly handshake: DelegationChildHandshakeV1 }>
+  | Readonly<{ readonly kind: "rejected"; readonly error: DelegationError }>;
+
+/**
+ * @internal Owns the handshake rejection immediately. The child can fail while
+ * the parent is fsyncing its spawned sidecar; returning a non-rejecting outcome
+ * prevents that expected failure from becoming an unhandled rejection before
+ * the caller reaches its later await.
+ */
+export function waitDelegationChildHandshakeOutcome(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<DelegationChildHandshakeOutcomeV1> {
+  return waitHandshake(child, timeoutMs).then(
+    (handshake) => Object.freeze({ handshake, kind: "accepted" as const }),
+    (error: unknown) => Object.freeze({
+      error: error instanceof DelegationError
+        ? error
+        : new DelegationError(
+            "delegation_handshake_failed",
+            "child handshake observation failed",
+            { cause: error },
+          ),
+      kind: "rejected" as const,
+    }),
+  );
+}
+
 async function verifyDurableApprovalRequest(input: {
   readonly context: TaskMutationContext;
   readonly frame: DelegationChildApprovalRequestFrameV1;
@@ -982,7 +1011,7 @@ export class DelegationChildLauncher {
       // Install the IPC listener before any awaited sidecar write. A fast
       // packaged child may send its one-shot handshake while the parent is
       // fsyncing the spawned state; EventEmitter does not replay that frame.
-      const handshakePromise = waitHandshake(
+      const handshakeOutcomePromise = waitDelegationChildHandshakeOutcome(
         child,
         this.options.handshakeTimeoutMs ?? 30_000,
       );
@@ -999,10 +1028,12 @@ export class DelegationChildLauncher {
         });
       } catch (error) {
         child.kill();
-        await handshakePromise.catch(() => undefined);
+        await handshakeOutcomePromise;
         throw error;
       }
-      const handshake: DelegationChildHandshakeV1 = await handshakePromise;
+      const handshakeOutcome = await handshakeOutcomePromise;
+      if (handshakeOutcome.kind === "rejected") throw handshakeOutcome.error;
+      const handshake = handshakeOutcome.handshake;
       if (cancelled() && this.options.context.authenticatedApplication === undefined) {
         throw new DelegationError("delegation_cancelled", "delegated child launch was cancelled during handshake");
       }

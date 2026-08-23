@@ -6,6 +6,8 @@ import {
   executeDelegationOwnerPrepare,
   executeDelegationOwnerResume,
   executeDelegationOwnerStart,
+  openDelegationOwnerWriter,
+  readDelegationOwnerEvidence,
   type DelegationOwnerInteractionPortV1,
   type DelegationOwnerExecutionV1,
   type DelegationOwnerRuntimePortV1,
@@ -27,7 +29,6 @@ import { SessionLockError } from "../../sessions/session-lock.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
 import { parseStrictJson } from "../../system/strict-json.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
-import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import type {
   ActiveDelegationControlPortV1,
 } from "../active-delegation-control-registry.js";
@@ -110,12 +111,7 @@ function resolvedHead(
   return signer.create({ eventId: end.eventId, rawEventSha256: raw, sequence: end.sessionSeq, sessionId: end.sessionId }).publicHead;
 }
 
-async function readEvidence(workspace: string, sessionId: string) {
-  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
-  return Object.freeze({ events: evidence.events, rawSha256: evidence.rawSha256 });
-}
-
-type DelegationCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readEvidence>>;
+type DelegationCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readDelegationOwnerEvidence>>;
 type DelegationGroupTakeoverCompositeResultV1 = Extract<DelegationCompositeResultV1, { readonly kind: "group_takeover" }>;
 
 function assertExpectedHead(
@@ -295,7 +291,11 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
   async execute(input: Parameters<DelegationCompositeOwnerPortV1["execute"]>[0]): Promise<DelegationCompositeOwnerCommitV1> {
     const activeWriter = { current: null as V2SessionWriter | null };
     const runtime = await this.#runtimeForActiveSession(input, activeWriter);
-    const beforeEvidence = await readEvidence(this.options.runtime.cwd, input.sessionId);
+    const beforeEvidence = await readDelegationOwnerEvidence(
+      runtime,
+      input.sessionId,
+      localSurface(input),
+    );
     assertExpectedHead(beforeEvidence.events, input, beforeEvidence.rawSha256, this.options.signer);
     const cancellation = new AbortController();
     const authority: DelegationOwnerExecutionV1 = Object.freeze({
@@ -364,7 +364,11 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
       );
     }
     const captured = outcome.result;
-    const evidence = await readEvidence(this.options.runtime.cwd, input.sessionId);
+    const evidence = await readDelegationOwnerEvidence(
+      runtime,
+      input.sessionId,
+      localSurface(input),
+    );
     const fresh = evidence.events.filter((event) => event.sessionSeq > input.expectedHead.sequence);
     const owned = fresh.filter((event) => exactApplicationCommit(event, input.applicationCommit));
     const primaryType = captured.kind === "pre_effect_terminal"
@@ -557,7 +561,11 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
   async reconcile(input: Parameters<NonNullable<DelegationCompositeOwnerPortV1["reconcile"]>>[0]): Promise<DelegationCompositeOwnerCommitV1 | null> {
     try {
       const evidence = await (this.options.readObservationEvidence?.(input.sessionId) ??
-        readEvidence(this.options.runtime.cwd, input.sessionId));
+        readDelegationOwnerEvidence(
+          this.options.runtime,
+          input.sessionId,
+          localSurface(input),
+        ));
       if (!exactExpectedPrefix(evidence.events, input, evidence.rawSha256, this.options.signer)) return null;
       const fresh = evidence.events.filter((event) => event.sessionSeq > input.expectedHead.sequence);
       if (fresh.some((event) =>
@@ -988,20 +996,7 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     runtime: DelegationOwnerRuntimePortV1,
     context: TaskMutationContext,
   ): Promise<V2SessionWriter> {
-    const factory = runtime.delegationWriterFactory ?? (async (writerContext: TaskMutationContext) =>
-      V2SessionWriter.openExisting(
-        writerContext.workspace,
-        writerContext.sessionId,
-        { createEventId: writerContext.randomUuid, timestamp: writerContext.now },
-      ));
-    const writer = await factory(context);
-    try {
-      runtime.observeSessionWriter?.(writer);
-      return writer;
-    } catch (error) {
-      await writer.close().catch(() => undefined);
-      throw error;
-    }
+    return openDelegationOwnerWriter(runtime, context);
   }
 
   async #recoverTakeover(

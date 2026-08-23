@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,14 +23,20 @@ import {
 import { V2SessionWriter } from "../../src/sessions/v2-session-writer.js";
 import { EventPublisher } from "../../src/events/event-publisher.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
-import { readDelegationOwnerSession } from "../../src/delegation/delegation-owner-execution-service.js";
+import {
+  openDelegationOwnerWriter,
+  readDelegationOwnerSession,
+} from "../../src/delegation/delegation-owner-execution-service.js";
 import {
   childSessionShardWorkspace,
   DelegationSessionWriterQueue,
   importChildSessionShard,
   seedChildSessionShard,
 } from "../../src/delegation/runtime/child-session-shard.js";
-import { openDelegationWriter } from "../../src/delegation/runtime/child-launcher.js";
+import {
+  openDelegationWriter,
+  waitDelegationChildHandshakeOutcome,
+} from "../../src/delegation/runtime/child-launcher.js";
 import { SessionLockError } from "../../src/sessions/session-lock.js";
 
 const temporary: string[] = [];
@@ -324,6 +332,66 @@ describe("Phase 20C runtime authority and recovery", () => {
     } finally {
       await writer.close();
     }
+  });
+
+  it("keeps every owner mutation writer bounded beyond the former five-second window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-owner-writer-"));
+    temporary.push(root);
+    await seedCompletedSession(root, "phase20-owner-writer-v1");
+
+    let attempts = 0;
+    let elapsedMs = 0;
+    const runtime = {
+      cwd: root,
+      delegationWriterFactory: async (context: Parameters<typeof openDelegationOwnerWriter>[1]) => {
+        attempts += 1;
+        if (attempts === 1) throw new SessionLockError("active_session_lock", "fixture projection handoff");
+        return V2SessionWriter.openExisting(context.workspace, context.sessionId, {
+          createEventId: context.randomUuid,
+          timestamp: context.now,
+        });
+      },
+      env: {},
+      onCancel: () => () => undefined,
+      platform: process.platform,
+      randomUUID,
+      timestamp: () => "2026-08-10T00:00:01.000Z",
+      waitForRetry: async () => undefined,
+    };
+    const writer = await openDelegationOwnerWriter(
+      runtime,
+      {
+        inputSurface: "tui",
+        now: runtime.timestamp,
+        randomUuid: runtime.randomUUID,
+        sessionId: IDS.session,
+        workspace: root,
+      },
+      {
+        now: () => elapsedMs,
+        wait: async () => { elapsedMs += 6_000; },
+      },
+    );
+    try {
+      expect(attempts).toBe(2);
+      expect(elapsedMs).toBe(6_000);
+      expect(writer.events).toHaveLength(3);
+    } finally {
+      await writer.close();
+    }
+  });
+
+  it("owns an early child handshake timeout before a delayed sidecar await", async () => {
+    const child = new EventEmitter() as unknown as ChildProcess;
+    const outcome = waitDelegationChildHandshakeOutcome(child, 1);
+
+    // Model a slow Windows fsync/CAS before the launcher reaches its explicit
+    // handshake await. The owned outcome must already be non-rejecting.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect(outcome).resolves.toMatchObject({
+      error: { code: "delegation_handshake_failed" },
+      kind: "rejected",
+    });
   });
 
   it("keeps prepared/executable envelope identities distinct and imports one minimal child shard", async () => {
