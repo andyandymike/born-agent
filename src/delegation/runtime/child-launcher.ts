@@ -57,6 +57,8 @@ import {
 } from "./child-session-shard.js";
 import type { DelegationSessionWriterQueue } from "./child-session-shard.js";
 import type { DelegationApprovalPromptQueue } from "./child-session-shard.js";
+import { DurableDelegationCancellationCursor } from "./durable-delegation-cancellation-cursor.js";
+import type { SessionEventTailObservationV1 } from "../../sessions/session-event-tail-reader.js";
 
 export const DELEGATION_DURABLE_CANCEL_POLL_INTERVALS_V1 = Object.freeze({
   activeChildMs: 100,
@@ -378,6 +380,7 @@ async function verifyDurableApprovalRequest(input: {
 function waitTerminal(input: {
   readonly cancellationGraceMs: number;
   readonly child: ChildProcess;
+  readonly cancellationCursor: DurableDelegationCancellationCursor;
   readonly context: TaskMutationContext;
   readonly envelope: ExecutableChildEnvelopeV1;
   readonly operation: DelegationChildOperationV1;
@@ -569,15 +572,8 @@ function waitTerminal(input: {
       if (settled || cancelPollBusy) return;
       cancelPollBusy = true;
       try {
-        const session = await new SessionCatalog(input.context.workspace).read(input.context.sessionId);
         const actor = input.envelope.prepared.actor;
-        const requested = [...session.events].reverse().find((event) =>
-          event.scope === "session" && event.type === "delegation.cancel.requested" &&
-          event.data.delegation_id === actor.delegationId &&
-          event.data.delegation_revision === actor.delegationRevision &&
-          event.data.delegation_sha256 === actor.delegationSha256 &&
-          event.data.parent_actor_id === actor.parentActorId &&
-          event.data.parent_run_id === actor.parentRunId);
+        const requested = await input.cancellationCursor.poll();
         if (
           requested?.scope === "session" && requested.type === "delegation.cancel.requested" &&
           requested.data.cancel_request_id !== deliveredCancelRequestId
@@ -692,6 +688,7 @@ export interface DelegationWorkspaceFinalizationV1 {
 export class DelegationChildLauncher {
   constructor(private readonly options: {
     readonly childFactory?: DelegationChildProcessFactoryV1;
+    readonly cancellationTailObservation?: SessionEventTailObservationV1;
     readonly cancellationGraceMs?: number;
     readonly cliEntryPath: string;
     readonly context: TaskMutationContext;
@@ -915,6 +912,14 @@ export class DelegationChildLauncher {
       await writer.close();
     }
     let child: ChildProcess | null = null;
+    const cancellationCursor = new DurableDelegationCancellationCursor({
+      ...(this.options.cancellationTailObservation === undefined
+        ? {}
+        : { observation: this.options.cancellationTailObservation }),
+      sessionId: this.options.context.sessionId,
+      target: input.preparedEnvelope.actor,
+      workspace: this.options.context.workspace,
+    });
     let durableCancelPollBusy = false;
     let durableCancelPoll: ReturnType<typeof setInterval> | null = null;
     const stopDurableCancelPoll = () => {
@@ -925,15 +930,8 @@ export class DelegationChildLauncher {
       if (durableCancelPollBusy || durablePreStartCancellation) return;
       durableCancelPollBusy = true;
       try {
-        const parent = await new SessionCatalog(this.options.context.workspace).read(this.options.context.sessionId);
-        const requested = [...parent.events].reverse().find((event) =>
-          event.scope === "session" && event.type === "delegation.cancel.requested" &&
-          event.data.delegation_id === input.delegation.delegationId &&
-          event.data.delegation_revision === input.delegation.delegationRevision &&
-          event.data.delegation_sha256 === input.delegation.delegationSha256 &&
-          event.data.parent_actor_id === input.delegation.parentActorId &&
-          event.data.parent_run_id === input.delegation.parentRunId);
-        if (requested !== undefined) {
+        const requested = await cancellationCursor.poll();
+        if (requested !== null) {
           durablePreStartCancellation = true;
           child?.kill();
         }
@@ -1269,6 +1267,7 @@ export class DelegationChildLauncher {
     const activeChild = child;
     const terminalFrame = await waitTerminal({
       cancellationGraceMs,
+      cancellationCursor,
       child: activeChild,
       context: this.options.context,
       envelope: executableEnvelope,

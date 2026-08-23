@@ -603,7 +603,10 @@ export function reconstructMultiRunSession(
 
   let taskExecution: TaskExecutionProjectionV1 | null;
   try {
-    taskExecution = TaskExecutionProjector.project(events);
+    // AS5.2: TaskExecution consumes the TaskGraph projection already owned by
+    // this reconstruction. Replaying TaskGraph a second time here creates a
+    // duplicate authority-shaped view inside one stable snapshot.
+    taskExecution = TaskExecutionProjector.project(events, taskGraph);
   } catch (error) {
     if (error instanceof TaskGraphError) {
       throw new SessionProjectionError(

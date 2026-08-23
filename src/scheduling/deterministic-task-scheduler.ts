@@ -90,6 +90,18 @@ export interface TaskSchedulerRunResultV1 {
   readonly stopReason: "blocked" | "cancelled" | "completed" | "failed" | "waiting_for_user";
 }
 
+export interface TaskSchedulerProjectionObservationV1 {
+  readonly onMutationProjection?: (input: Readonly<{
+    readonly cachedProjectionReads: number;
+    readonly initialReconstructionCount: number;
+  }>) => void;
+}
+
+interface TaskSchedulerMutationProjectionV1 {
+  readonly initialWorktrees: ReturnType<typeof reconstructMultiRunSession>["worktrees"];
+  refreshExecution(): TaskExecutionProjectionV1;
+}
+
 interface AdmittedTaskAttemptV1 {
   readonly attemptId: string;
   readonly attemptNumber: number;
@@ -138,6 +150,7 @@ export class DeterministicTaskScheduler {
     readonly beforeTransition?: () => Promise<void>;
     readonly context: TaskMutationContext;
     readonly executor: TaskAttemptExecutor;
+    readonly projectionObservation?: TaskSchedulerProjectionObservationV1;
     readonly repositoryId: string;
     readonly writerFactory?: TaskMutationWriterFactory;
   }) {}
@@ -146,14 +159,35 @@ export class DeterministicTaskScheduler {
     return this.options.writerFactory ?? defaultWriterFactory;
   }
 
-  async #mutate<T>(operation: (writer: V2SessionWriter, execution: TaskExecutionProjectionV1) => Promise<T>): Promise<T> {
+  async #mutate<T>(operation: (
+    writer: V2SessionWriter,
+    execution: TaskExecutionProjectionV1,
+    projection: TaskSchedulerMutationProjectionV1,
+  ) => Promise<T>): Promise<T> {
     const writer = await this.writerFactory(this.options.context);
+    let cachedProjectionReads = 0;
+    let initialReconstructionCount = 0;
     try {
+      initialReconstructionCount += 1;
       const session = reconstructMultiRunSession(writer.events);
       if (session.taskExecution === null) throw new TaskGraphError("task_graph_not_approved", "Graph is not enqueued");
-      return await operation(writer, session.taskExecution);
+      return await operation(writer, session.taskExecution, {
+        initialWorktrees: session.worktrees,
+        refreshExecution: () => {
+          const snapshot = writer.readTaskSchedulerProjection();
+          if (snapshot === null || snapshot.taskExecution === null) {
+            throw new TaskGraphError("task_graph_invalid", "durable append did not retain its task execution projection");
+          }
+          cachedProjectionReads += 1;
+          return snapshot.taskExecution;
+        },
+      });
     } finally {
       await writer.close();
+      this.options.projectionObservation?.onMutationProjection?.({
+        cachedProjectionReads,
+        initialReconstructionCount,
+      });
     }
   }
 
@@ -162,7 +196,7 @@ export class DeterministicTaskScheduler {
   }
 
   async #ensureStarted(): Promise<TaskExecutionProjectionV1> {
-    return this.#mutate(async (writer, execution) => {
+    return this.#mutate(async (writer, execution, projection) => {
       if (execution.status === "running") return execution;
       if (execution.status !== "queued") {
         throw new TaskGraphError("task_scheduler_busy", `Graph cannot start from ${execution.status}`);
@@ -188,9 +222,7 @@ export class DeterministicTaskScheduler {
           : { origin: taskUserOrigin(this.options.context) }),
         scheduler_lease_nonce_sha256: leaseSha256,
       });
-      const next = reconstructMultiRunSession(writer.events).taskExecution;
-      if (next === null) throw new TaskGraphError("task_graph_invalid", "Graph start projection disappeared");
-      return next;
+      return projection.refreshExecution();
     });
   }
 
@@ -284,12 +316,11 @@ export class DeterministicTaskScheduler {
     admitted: AdmittedTaskAttemptV1,
     result: TaskAttemptExecutionResultV1,
   ): Promise<TaskExecutionProjectionV1> {
-    return this.#mutate(async (writer, execution) => {
+    return this.#mutate(async (writer, execution, projection) => {
       if (execution.activeAttempt?.attemptId !== admitted.attemptId) {
         throw new TaskGraphError("task_scheduler_busy", "attempt ownership changed before terminal append");
       }
-      const sessionBeforeTerminal = reconstructMultiRunSession(writer.events);
-      const acceptedSnapshot = sessionBeforeTerminal.worktrees.workspaces.find((workspace) =>
+      const acceptedSnapshot = projection.initialWorktrees.workspaces.find((workspace) =>
         workspace.lastSnapshot?.attemptId === admitted.attemptId
       )?.lastSnapshot?.sha256 ?? null;
       const receipt = result.receiptArtifactId === null && result.receiptSha256 === null
@@ -330,7 +361,7 @@ export class DeterministicTaskScheduler {
           workspace_id: execution.activeAttempt.workspaceBinding.workspace_id,
         });
       }
-      let next = reconstructMultiRunSession(writer.events).taskExecution!;
+      let next = projection.refreshExecution();
       if (result.terminal !== "succeeded" && next.readyNodeIds.length === 0) {
         const blockerNodeIds = next.nodes
           .filter((node) => ["blocked", "cancelled", "failed", "skipped"].includes(node.status))
@@ -355,7 +386,7 @@ export class DeterministicTaskScheduler {
               root_blocker_node_ids: [...new Set(roots)].sort(),
               terminal_event_ids: [...new Set(terminalIds)].sort(),
             });
-            next = reconstructMultiRunSession(writer.events).taskExecution!;
+            next = projection.refreshExecution();
           }
         }
         const status = terminalStatus(result.terminal);
@@ -366,7 +397,6 @@ export class DeterministicTaskScheduler {
           status,
         });
       } else if (result.terminal === "succeeded") {
-        next = reconstructMultiRunSession(writer.events).taskExecution!;
         if (next.nodes.every((node) => node.status === "succeeded")) {
           const requiresIntegration = next.nodes.some((node) =>
             node.node.workspace.mode !== "origin_read_only"
@@ -380,7 +410,7 @@ export class DeterministicTaskScheduler {
           });
         }
       }
-      return reconstructMultiRunSession(writer.events).taskExecution!;
+      return projection.refreshExecution();
     });
   }
 
@@ -389,7 +419,7 @@ export class DeterministicTaskScheduler {
     result: TaskAttemptExecutionResultV1,
     waiting: NonNullable<TaskAttemptExecutionResultV1["waitingForUser"]>,
   ): Promise<TaskExecutionProjectionV1> {
-    return this.#mutate(async (writer, execution) => {
+    return this.#mutate(async (writer, execution, projection) => {
       if (execution.activeAttempt?.attemptId !== admitted.attemptId) {
         throw new TaskGraphError("task_scheduler_busy", "attempt ownership changed before waiting transition");
       }
@@ -447,8 +477,8 @@ export class DeterministicTaskScheduler {
         reason: waiting.reason,
         requested_action_ref: waiting.requestedActionRef,
       });
-      const next = reconstructMultiRunSession(writer.events).taskExecution;
-      if (next === null || next.activeAttempt !== null || next.status !== "waiting_for_user") {
+      const next = projection.refreshExecution();
+      if (next.activeAttempt !== null || next.status !== "waiting_for_user") {
         throw new TaskGraphError("task_graph_invalid", "known pre-effect wait did not release scheduler ownership");
       }
       return next;

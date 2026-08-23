@@ -548,13 +548,14 @@ export class EventDecoderRegistry {
 
   public decodeAll(values: readonly unknown[]): readonly DecodedStoredEvent[] {
     const decoded = values.map((value, index) =>
-      this.decodeOne(value, index + 1),
+      this.decodeAt(value, index + 1),
     );
     assertDecodedStoredEventInvariants(decoded);
     return decoded;
   }
 
-  private decodeOne(value: unknown, eventNumber: number): DecodedStoredEvent {
+  /** Decode one physical record at its global one-based session position. */
+  public decodeAt(value: unknown, eventNumber: number): DecodedStoredEvent {
     const routing = routingFields(value, eventNumber);
     const entry = this.entries.get(
       registryKey(routing.schemaVersion, routing.scope, routing.type),

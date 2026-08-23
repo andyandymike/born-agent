@@ -2,6 +2,7 @@ import type { DecodedStoredEvent } from "../events/event-decoder-registry.js";
 import type { Phase19TaskGraphSessionEventData } from "../task-graph/task-graph-event-schema.js";
 import {
   TaskGraphProjector,
+  type TaskGraphProjectionV1,
   type TaskGraphRevisionProjectionV1,
   type TaskGraphStatus,
 } from "../task-graph/task-graph-projector.js";
@@ -259,8 +260,10 @@ function immutableAttempt(attempt: MutableAttempt): TaskAttemptProjectionV1 {
   return Object.freeze({ ...attempt, reservation: Object.freeze({ ...attempt.reservation }) });
 }
 
-function executionGraph(events: readonly DecodedStoredEvent[]): TaskGraphRevisionProjectionV1 | null {
-  const graphProjection = TaskGraphProjector.project(events);
+function executionGraph(
+  events: readonly DecodedStoredEvent[],
+  graphProjection: TaskGraphProjectionV1,
+): TaskGraphRevisionProjectionV1 | null {
   const enqueue = [...events].reverse().find((event) => event.scope === "session" && event.type === "task_graph.enqueued");
   if (enqueue === undefined) return null;
   const data = enqueue.data as Phase19TaskGraphSessionEventData<"task_graph.enqueued">;
@@ -272,8 +275,11 @@ function executionGraph(events: readonly DecodedStoredEvent[]): TaskGraphRevisio
 }
 
 export class TaskExecutionProjector {
-  static project(events: readonly DecodedStoredEvent[]): TaskExecutionProjectionV1 | null {
-    const graph = executionGraph(events);
+  static project(
+    events: readonly DecodedStoredEvent[],
+    projectedTaskGraph: TaskGraphProjectionV1 = TaskGraphProjector.project(events),
+  ): TaskExecutionProjectionV1 | null {
+    const graph = executionGraph(events, projectedTaskGraph);
     if (graph === null) return null;
     const nodes = new Map<string, MutableNode>(graph.content.nodes.map((node) => [node.nodeId, {
       attempts: [],

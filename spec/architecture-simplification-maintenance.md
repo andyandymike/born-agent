@@ -1,6 +1,6 @@
 # BornAgent Architecture Simplification Maintenance Spec
 
-> 状态：AS0.1–AS5.1 Local Gate Passed / Exact-Commit CI Pending；AS5.2 Ready（2026-08-14）
+> 状态：AS0.1–AS5.2 Local Gate Passed / Exact-Commit CI Pending；AS6 Not Started（2026-08-23）
 > 性质：Personal Open-Source Maintenance工作项；不创建Phase 22，不形成新里程碑
 > 前置：Phase 0–20 Implemented、M11 Passed、21A local gate Passed；实施提交仍须服从21A exact-commit release closure
 > 优先顺序：recovery correctness -> bounded resources -> authority/lifecycle simplification -> duplicate-path removal -> efficiency
@@ -18,7 +18,7 @@
 
 本spec由多个可独立验收的maintenance item组成，不要求一次性完成。每次只实施一个item；未满足该item的gate时，不并行展开后续大重构。
 
-AS0.1至AS5.1已按依赖顺序完成本地实现与验证：evidence/characterization、handoff/scanner、single Host/runtime attenuation、shared session evidence/cancellation/read ports、product/TUI boundary以及terminal/resource ownership均已落地。当前tracked manifest为102项（default 54、metric 35、built paths 12、pack 1），四个本地profile均已生成并回读验证receipt；`pnpm check`为263文件/1225测试通过（8文件/16测试为既有opt-in skip），Phase21A required gate为165测试且required skip 0，built-path required cases为12/12，installed-tarball pack smoke通过。characterization v3 canonical SHA-256为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。这些工作包当前均为`local_gate_passed`；只有同一exact commit的Linux/Windows CI receipts均通过后才可标`passed`。AS5.2是下一`ready`工作包，尚未实施；AS6仍未解锁。
+AS0.1至AS5.2已按依赖顺序完成本地实现与验证：evidence/characterization、handoff/scanner、single Host/runtime attenuation、shared session evidence/cancellation/read ports、product/TUI boundary、terminal/resource ownership以及scheduler/child projection ownership均已落地。当前tracked manifest为105项（default 54、metric 38、built paths 12、pack 1）；AS5.2 metric profile 38/38已生成并回读验证receipt，`pnpm check`为279文件/1277测试通过（8文件/16测试为既有opt-in skip），characterization v3 canonical SHA-256仍为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。这些工作包当前均为`local_gate_passed`；只有同一exact commit的Linux/Windows CI receipts均通过后才可标`passed`。AS6保持`not_started`，不得混入本工作包。
 
 ## 1. Review基线
 
@@ -321,8 +321,8 @@ AS0.1 evidence contract
 
 规则：
 
-- AS0.1至AS5.1当前均为`local_gate_passed`；实现保持既有durable event、authority与effect-order合同，并由逐包receipt绑定；
-- AS1至AS5.1已经按依赖顺序独立收口；下一次只允许启动AS5.2，不得顺带展开AS6；
+- AS0.1至AS5.2当前均为`local_gate_passed`；实现保持既有durable event、authority与effect-order合同，并由逐包receipt绑定；
+- AS1至AS5.2已经按依赖顺序独立收口；AS6仍须作为后续独立工作包重新排序，不得混入memory或其他维护提交；
 - AS1的recovery/resource前置条件已经满足，Host、TUI与Agent边界迁移均已在后续独立包完成；
 - AS4.1依赖AS2的Host boundary与AS3的shared lifecycle/evidence boundary；
 - AS5.1至少依赖AS3.2，AS5.2至少依赖AS3.3；
@@ -381,7 +381,7 @@ AS0.1是`ready`规则的唯一bootstrap例外。以下bootstrap IDs现已原样�
 - `as0.1.receipt.report-hash-mismatch-denied`；
 - `as0.1.receipt.manifest-hash-mismatch-denied`。
 
-当前tracked manifest已扩展为102项：default 54项、built paths 12项、pack 1项、metric 35项。AS0.1 bootstrap时的2026-08-13本地Windows证据为：`pnpm check`通过（253 files passed、1192 tests passed、16个既有conditional skip），Phase21A 163/163且required skip为0，default receipt 54/54通过并复验；`pnpm pack:smoke`通过，pack receipt 1/1通过并复验；built-path真实档位在正常Windows process authority下完整执行18项并通过，required receipt 12/12通过并复验。Codex managed process sandbox会拒绝`taskkill /T`并使process-tree/PTY链产生`verified:false`或超时，因此该档位必须在保留零网络/零凭据边界的正常本地或CI process authority下运行，不能把sandbox权限失败误记为产品回归。
+AS0.1 bootstrap后的历史累计快照曾扩展为102项：default 54项、built paths 12项、pack 1项、metric 35项；当前总数以本文顶部和tracked manifest为准。2026-08-13本地Windows证据为：`pnpm check`通过（253 files passed、1192 tests passed、16个既有conditional skip），Phase21A 163/163且required skip为0，default receipt 54/54通过并复验；`pnpm pack:smoke`通过，pack receipt 1/1通过并复验；built-path真实档位在正常Windows process authority下完整执行18项并通过，required receipt 12/12通过并复验。Codex managed process sandbox会拒绝`taskkill /T`并使process-tree/PTY链产生`verified:false`或超时，因此该档位必须在保留零网络/零凭据边界的正常本地或CI process authority下运行，不能把sandbox权限失败误记为产品回归。
 
 AS0.1本地gate通过后已经建立AS0.2具体baseline case；exact-commit CI尚未完成，因此两项都不能标`passed`，也不能用AS0.2测量结果冒充handoff修复。
 
@@ -414,7 +414,7 @@ AS0.1本地gate通过后已经建立AS0.2具体baseline case；exact-commit CI�
 - Deliverables：shared traversal、materialize consumer、manifest-only verify consumer、injectable limits/IO observer；
 - Exit：durable hashes byte-identical，limit在payload读取前后均执行，second pass无整树bytes/base64，全部stale/unsafe/worktree regressions通过。
 
-### 7.6 AS1.1–AS5.1本地实施结果
+### 7.6 AS1.1–AS5.2本地实施结果
 
 - AS1.1：new background operation使用V2 hash-linked revision CAS，不再创建`.handoff.lock`；legacy V1仅按固定兼容矩阵读取，异常lock不自动删除；
 - AS1.2：workspace capture改为遍历时pre/post-read budget与manifest-only二次验证，snapshot/archive identity保持兼容；
@@ -422,7 +422,18 @@ AS0.1本地gate通过后已经建立AS0.2具体baseline case；exact-commit CI�
 - AS3：Graph、Delegation与resume共享strict raw JSONL evidence reader；message/resume共享run cancellation lifecycle；SessionRegistry对外拆为catalog、run owner/cancel与projection read ports，但durable journal taxonomy不变；
 - AS4：product mutation只走ApplicationService，legacy mutation仅存在于显式DomainHarness；TUI command parser为纯函数，controller只调用typed facade，不持有writer/composition authority；
 - AS5.1：`RunTerminator`唯一拥有terminal Hook与durable terminal publication，`AgentLoop`只返回typed outcome；`RunResourceScope`幂等关闭listener、MCP、capability lease与writer，persistence failure后禁止补写terminal；
-- 本轮不实施AS5.2；scheduler/projection增量化与child tail cursor仍按下一工作包验收。
+- AS5.2：`TaskExecutionProjector`消费同一稳定重建已投影的TaskGraph；writer保留append前已验证、append后已durable的TaskGraph/TaskExecution/worktree snapshot，scheduler每个mutation只做一次初始session reconstruction并复用该snapshot；Delegation child启动前与active阶段共享一个strict append-only JSONL cursor，idle poll只验证anchor并读取suffix，启动或一次歧义恢复才full read，durable typed cancellation仍是唯一用户取消authority。
+
+### 7.7 AS5.2 implementation contract与本地结果
+
+- **ID / Goal / Non-goals**：`AS5.2 Projection Ownership`消除scheduler事务内重复full session replay与child cancellation周期性独占全量snapshot；不改变durable event、Graph/Delegation schema、cancellation taxonomy、provider/tool行为或AS6 bootstrap。
+- **Inputs / Preconditions / Dependency receipts**：输入为AS3.3 registry/projection read path与AS5.1 terminal/resource owner；AS3.3 metric evidence保持通过，characterization hash不变。
+- **Touched / Excluded**：只触及TaskExecution projection、V2 writer post-append projection cache、deterministic scheduler、Delegation cancellation observer、evidence manifest/CI selector；不修改catalog journal taxonomy、session writer format、Application authority或child envelope/receipt格式。
+- **Durable compatibility / Reader-writer matrix**：旧JSONL由新reader strict full-start后继续读取；新writer仍写完全相同v2 bytes，旧reader可照常full replay。cursor仅为process-local observation，不写入session或control state。
+- **Migration / Cutover / Rollback**：无durable migration；回滚删除writer projection cache和tail cursor并恢复原full replay读取即可，不需重写历史。
+- **Fault / Unknown-effect policy**：partial tail返回busy并保留旧cursor；anchor/file identity歧义只允许一次exact-prefix full recovery，第二次fail closed；cursor错误不制造cancel，最终writer admission fence与既有unknown-effect policy继续权威。
+- **Deliverables / Evidence**：`as5.2.scheduler-one-reconstruction`、`as5.2.child-idle-tail-cursor`、`as5.2.child-cursor-recovery`均为blocking metric cases；exact命令为AS5.2 targeted Vitest、metric profile gate/receipt回读、`pnpm check`和`git diff --check`。
+- **Exit / Deferred**：本地metric 38/38、full check 279 files/1277 tests、build通过，8 files/16 tests仍是既有opt-in skip；exact-commit Linux/Windows CI仍pending，AS6保持独立`not_started`。
 
 ## 8. Compatibility、migration与rollback
 
@@ -516,8 +527,8 @@ AS2/AS4对每个command/surface维护一行：
 
 ## 11. 状态与完成规则
 
-- 当前总状态为`AS0.1–AS5.1 Local Gate Passed / Exact-Commit CI Pending`；本地receipt只能证明当前patch，尚未获得同一exact commit的Linux/Windows CI receipts，故不标`passed`；
-- 下一工作包为`AS5.2 Projection Ownership`，状态`ready`但未开始；AS6.1与AS6.2仍为`not_started`；
+- 当前总状态为`AS0.1–AS5.2 Local Gate Passed / Exact-Commit CI Pending`；本地receipt只能证明当前patch，尚未获得同一exact commit的Linux/Windows CI receipts，故不标`passed`；
+- AS5.2已经独立本地收口；AS6.1与AS6.2仍为`not_started`，后续由真实使用证据重新排序；
 - work package状态使用`not_started | ready | in_progress | local_gate_passed | passed | deferred_by_evidence`；
 - `ready`表示输入、依赖和evidence IDs齐全；`local_gate_passed`只绑定本地patch receipt；`passed`只绑定exact-commit CI；
 - AS0–AS6逐包记录状态，不得用一个总百分比替代；
@@ -539,6 +550,6 @@ AS2/AS4对每个command/surface维护一行：
 | AS4.1 Product single path | `local_gate_passed` |
 | AS4.2 TUI boundary | `local_gate_passed` |
 | AS5.1 Terminal ownership | `local_gate_passed` |
-| AS5.2 Projection ownership | `ready` |
+| AS5.2 Projection ownership | `local_gate_passed` |
 | AS6.1 Lazy bootstrap | `not_started` |
 | AS6.2 CI and pack reuse | `not_started` |

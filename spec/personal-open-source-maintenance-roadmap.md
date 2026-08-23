@@ -1,8 +1,8 @@
 # BornAgent Personal Open-Source Maintenance Roadmap
 
-> 状态：Active（2026-08-14）
-> 当前工作：AS0.1–AS5.1 exact-commit release closure
-> 下一候选：[`Architecture Simplification Maintenance Spec`](architecture-simplification-maintenance.md)中的AS5.2 Projection Ownership（Ready / Implementation Not Started）
+> 状态：Active（2026-08-23）
+> 当前工作：AS0.1–AS5.2 exact-commit release closure
+> 下一候选：由当前用户任务与真实使用证据排序；AS6保持Not Started
 > 基线：Phase 0–20 Implemented、M11 Passed、21A local gate Passed
 > 路线变化：21B–21E Deferred；当前个人开源项目范围不再追求M12
 
@@ -32,6 +32,6 @@
 
 ## 6. 当前与下一工作项
 
-- 21A与AS0.1–AS5.1仍等待对应exact commit的Linux/Windows CI证据；本地通过不冒充release完成。
-- AS0.1–AS5.1已逐包完成本地实现与gate：evidence/characterization、handoff/scanner、single Host/runtime attenuation、shared session evidence/cancellation/read ports、product/TUI boundary以及terminal/resource ownership均已落地。当前tracked manifest为102项，default/metric/built-path/pack四个本地profile分别为54/35/12/1并全部通过receipt回读验证；characterization v3 canonical SHA-256为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。
-- 下一候选是AS5.2 projection ownership，状态`ready`但尚未实施；AS6仍未解锁。后续继续一次只做一个maintenance item，不做一次性大重写。
+- 21A与AS0.1–AS5.2仍等待对应exact commit的Linux/Windows CI证据；本地通过不冒充release完成。
+- AS0.1–AS5.2已逐包完成本地实现与gate：新增projection ownership使scheduler mutation只初始重建一次，并让child cancellation以process-local cursor读取append-only suffix。当前tracked manifest为105项，default/metric/built-path/pack分别为54/38/12/1；AS5.2 metric 38/38已通过receipt回读，characterization v3 canonical SHA-256仍为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。
+- AS6保持`not_started`。后续继续一次只做一个maintenance item，不做一次性大重写。

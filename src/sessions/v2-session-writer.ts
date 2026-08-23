@@ -44,9 +44,18 @@ import {
   type Phase19TaskGraphSessionEventData,
   type Phase19TaskGraphSessionEventType,
 } from "../task-graph/task-graph-event-schema.js";
-import { TaskGraphProjector } from "../task-graph/task-graph-projector.js";
-import { TaskExecutionProjector } from "../scheduling/task-execution-projector.js";
-import { WorktreeProjector } from "../worktrees/worktree-projector.js";
+import {
+  TaskGraphProjector,
+  type TaskGraphProjectionV1,
+} from "../task-graph/task-graph-projector.js";
+import {
+  TaskExecutionProjector,
+  type TaskExecutionProjectionV1,
+} from "../scheduling/task-execution-projector.js";
+import {
+  WorktreeProjector,
+  type WorktreeProjectionV1,
+} from "../worktrees/worktree-projector.js";
 import { BackgroundProjector } from "../background/background-projector.js";
 import {
   phase20DelegationSessionEventDataSchemas,
@@ -65,6 +74,18 @@ export interface V2SessionWriterOptions {
   readonly afterDurableEvent?: (event: DecodedStoredEvent) => void;
   readonly createEventId?: () => string;
   readonly timestamp?: () => string;
+}
+
+/**
+ * AS5.2: the append owner already computes these projections before the
+ * durable commit. Scheduler code may reuse the exact post-commit values
+ * instead of replaying the complete session again while holding the writer.
+ */
+export interface TaskSchedulerProjectionSnapshotV1 {
+  readonly eventCount: number;
+  readonly taskExecution: TaskExecutionProjectionV1 | null;
+  readonly taskGraph: TaskGraphProjectionV1;
+  readonly worktrees: WorktreeProjectionV1;
 }
 
 class AccumulatingStoredEventDecoder
@@ -142,6 +163,7 @@ export class V2SessionWriter implements SessionWriter {
   private readonly rawValues: unknown[];
   private readonly rawLineSha256s: string[];
   private readonly timestamp: () => string;
+  private taskSchedulerProjection: TaskSchedulerProjectionSnapshotV1 | null = null;
 
   private constructor(
     private readonly store: DurableSessionStore<DecodedStoredEvent>,
@@ -226,6 +248,17 @@ export class V2SessionWriter implements SessionWriter {
 
   readDecodedEvents(): readonly DecodedStoredEvent[] {
     return this.events;
+  }
+
+  /** Returns only a projection produced by the latest successful append. */
+  readTaskSchedulerProjection(): TaskSchedulerProjectionSnapshotV1 | null {
+    const snapshot = this.taskSchedulerProjection;
+    if (snapshot === null) return null;
+    const tailSequence = this.decoded.at(-1)?.sessionSeq ?? 0;
+    if (snapshot.eventCount !== this.decoded.length || snapshot.eventCount !== tailSequence) {
+      throw new Error("task scheduler projection is not bound to the durable writer tail");
+    }
+    return snapshot;
   }
 
   /**
@@ -732,9 +765,9 @@ export class V2SessionWriter implements SessionWriter {
     // cross-event authority invariant. Reject the prospective state before
     // bytes reach the append+sync commit point.
     TaskStateMachine.project(decoded);
-    TaskGraphProjector.project(decoded);
-    TaskExecutionProjector.project(decoded);
-    WorktreeProjector.project(decoded);
+    const taskGraph = TaskGraphProjector.project(decoded);
+    const taskExecution = TaskExecutionProjector.project(decoded, taskGraph);
+    const worktrees = WorktreeProjector.project(decoded);
     BackgroundProjector.project(decoded);
     DelegationProjector.project(decoded);
     assertGoalChangeLedgerSemantics(decoded);
@@ -749,6 +782,12 @@ export class V2SessionWriter implements SessionWriter {
     this.rawValues.push(envelope);
     this.rawLineSha256s.push(sha256(Buffer.from(encoded, "utf8")));
     this.decoded = decoded;
+    this.taskSchedulerProjection = Object.freeze({
+      eventCount: decoded.length,
+      taskExecution,
+      taskGraph,
+      worktrees,
+    });
     if (event.scope === "run") {
       this.nextRunSequence.set(event.runId, event.runSeq + 1);
     }
