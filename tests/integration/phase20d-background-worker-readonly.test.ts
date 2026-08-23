@@ -37,6 +37,26 @@ async function git(cwd: string, ...args: string[]): Promise<void> {
   await execFile("git", args, { cwd, env: process.env, windowsHide: true });
 }
 
+async function waitForCompletedOperation(input: {
+  readonly actionKind: string;
+  readonly excludedOperationIds: ReadonlySet<string>;
+  readonly journal: ControlOperationJournal;
+}): Promise<void> {
+  let last = "missing";
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const operation = (await input.journal.list()).find((candidate) =>
+      candidate.actionKind === input.actionKind &&
+      !input.excludedOperationIds.has(candidate.operationId)
+    );
+    last = operation === undefined
+      ? "missing"
+      : `${operation.operationId}:${operation.state}`;
+    if (operation?.state === "completed") return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  throw new Error(`${input.actionKind} Host operation did not complete: ${last}`);
+}
+
 function budget() {
   return {
     maxArtifactBytes: 512 * 1024,
@@ -605,6 +625,11 @@ describe("Phase 20D Phase 19 background-worker read-only delegation", () => {
       workerId: launched.result.workerId,
       workerRoot,
       workspace,
+    });
+    await waitForCompletedOperation({
+      actionKind: "graph.run",
+      excludedOperationIds: beforeOperationIds,
+      journal: operations,
     });
     const cancelIo = createMemoryIO();
     const cancelExit = await runCli([

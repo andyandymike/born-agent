@@ -13,6 +13,8 @@ import { BackgroundOperationStore } from "../../src/background/background-operat
 import { runCli } from "../../src/cli/run-cli.js";
 import { sha256Canonical } from "../../src/completion/canonical-json.js";
 import { taskMutationContext } from "../../src/commands/task-control-plane-command.js";
+import { ControlOperationJournal } from "../../src/control-plane/control-operation-journal.js";
+import { loadExistingHostControlAuthority } from "../../src/control-plane/host-control-identity.js";
 import { SessionCatalog } from "../../src/sessions/session-catalog.js";
 import { NodeGitWorktreePort } from "../../src/worktrees/git-worktree-port.js";
 import { ManagedWorktreeManager } from "../../src/worktrees/managed-worktree-manager.js";
@@ -44,6 +46,26 @@ function budget(overrides: Readonly<Record<string, unknown>> = {}) {
     maxReportedTokens: 0,
     ...overrides,
   };
+}
+
+async function waitForCompletedOperation(input: {
+  readonly actionKind: string;
+  readonly excludedOperationIds: ReadonlySet<string>;
+  readonly journal: ControlOperationJournal;
+}): Promise<void> {
+  let last = "missing";
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const operation = (await input.journal.list()).find((candidate) =>
+      candidate.actionKind === input.actionKind &&
+      !input.excludedOperationIds.has(candidate.operationId)
+    );
+    last = operation === undefined
+      ? "missing"
+      : `${operation.operationId}:${operation.state}`;
+    if (operation?.state === "completed") return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  throw new Error(`${input.actionKind} Host operation did not complete: ${last}`);
 }
 
 async function waitForWaiting(input: {
@@ -196,7 +218,19 @@ describe("Phase 19D bounded background worker", () => {
       workerUserStateRoot: workerRoot,
       worktreeUserStateRoot: worktreeRoot,
     });
+    if (runtime.controlPlaneStateRoot === undefined) {
+      throw new Error("Phase 19D control root is unavailable");
+    }
     expect(await runCli(["graph", "enqueue", SESSION_ID, "--revision", "1", "--sha256", graph.graphSha256, "--runtime-profile", "local-free", "--background"], createMemoryIO().io, runtime)).toBe(0);
+    const authority = await loadExistingHostControlAuthority({
+      root: runtime.controlPlaneStateRoot,
+    });
+    const operations = new ControlOperationJournal(authority.paths);
+    await waitForCompletedOperation({
+      actionKind: "graph.enqueue",
+      excludedOperationIds: new Set(),
+      journal: operations,
+    });
     const launchIo = createMemoryIO();
     expect(await runCli(["graph", "run", SESSION_ID, "--background", "--json"], launchIo.io, runtime), launchIo.readStderr()).toBe(0);
     const launched = JSON.parse(launchIo.readStdout()) as { readonly result: { readonly accepted: boolean; readonly operationId: string; readonly workerId: string } };
