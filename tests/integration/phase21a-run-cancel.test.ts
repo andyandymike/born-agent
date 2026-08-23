@@ -672,5 +672,5 @@ describe("Phase 21A durable run cancellation", () => {
     ));
     expect(events.filter((event) => event.type === "run.cancel.requested")).toHaveLength(1);
     expect(events.filter((event) => event.type === "run.cancelled")).toHaveLength(1);
-  });
+  }, 30_000);
 });

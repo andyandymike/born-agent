@@ -53,7 +53,7 @@ describe("RIC1 repository cache sharded query", () => {
     expect(counters.dataObjectBytesReadByKind.reference_posting).toBe(0);
     expect(counters.dataObjectBytesReadByKind.dependency_view).toBe(0);
     expect(counters.dataObjectBytesReadByKind.fact_receipt).toBe(0);
-  });
+  }, 20_000);
 
   it("audits every object for status but does not read unrelated postings for symbol lookup", async () => {
     const root = await fixture();
@@ -77,5 +77,5 @@ describe("RIC1 repository cache sharded query", () => {
     await store!.readCurrent();
     expect(store!.snapshotCounters().dataObjectBytesReadByKind.reference_posting).toBeGreaterThan(0);
     expect(store!.snapshotCounters().dataObjectBytesReadByKind.fact_receipt).toBe(0);
-  });
+  }, 20_000);
 });

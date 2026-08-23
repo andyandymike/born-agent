@@ -1172,13 +1172,36 @@ async function main(): Promise<void> {
     terminal.resize(103, 31);
     const resized = terminal.cols === 103 && terminal.rows === 31;
     await delay(100);
-    terminal.write("\u0003");
-    await waitFor((plain) => plain.includes("run=cancelled"), "first run cancelled");
     let repositoryDirty = false;
     let repositoryReady = false;
     let repositoryRefreshed = false;
     let retainedDraftBlockedVisible = false;
     let secondTaskOffset = 0;
+    if (!repositoryLifecycle) {
+      // Prove retention while the first coordinator operation is undeniably
+      // active. Waiting for the durable cancelled projection first creates a
+      // scheduler race: a fast Host may already have completed the outer
+      // operation before the next PTY key arrives.
+      secondTaskOffset = visibleText(raw).length;
+      terminal.write("Second PTY run");
+      await waitFor(
+        (plain) => plain.slice(secondTaskOffset).includes("> Second PTY run"),
+        "second run retained draft",
+      );
+      terminal.write("\r");
+      await waitFor(
+        (plain) => {
+          const fresh = plain.slice(secondTaskOffset);
+          return (fresh.includes("Run active") || fresh.includes("Session refresh in progress")) &&
+            fresh.includes("input kept locally") &&
+            fresh.includes("> Second PTY run");
+        },
+        "active operation retains second run draft",
+      );
+      retainedDraftBlockedVisible = true;
+    }
+    terminal.write("\u0003");
+    await waitFor((plain) => plain.includes("run=cancelled"), "first run cancelled");
     if (repositoryLifecycle) {
       const firstRefreshOffset = visibleText(raw).length;
       terminal.write("/refresh\r");
@@ -1226,24 +1249,6 @@ async function main(): Promise<void> {
       );
       repositoryRefreshed = true;
       terminal.write("\u007f".repeat(8));
-    } else {
-      secondTaskOffset = visibleText(raw).length;
-      terminal.write("Second PTY run");
-      await waitFor(
-        (plain) => plain.includes("> Second PTY run"),
-        "second run retained draft",
-      );
-      terminal.write("\r");
-      await waitFor(
-        (plain) => {
-          const fresh = plain.slice(secondTaskOffset);
-          return (fresh.includes("Run active") || fresh.includes("Session refresh in progress")) &&
-            fresh.includes("input kept locally") &&
-            fresh.includes("> Second PTY run");
-        },
-        "active operation retains second run draft",
-      );
-      retainedDraftBlockedVisible = true;
     }
     // The durable cancelled projection is visible before the outer message
     // operation releases its in-process runner. Observe that exact Host
