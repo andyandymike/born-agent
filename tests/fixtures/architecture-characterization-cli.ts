@@ -18,15 +18,16 @@ interface Options {
 }
 
 function argumentsFor(argv: readonly string[]): Options {
+  const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv;
   let check = false;
   let report: string | null = null;
   let write = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const option = argv[index];
+  for (let index = 0; index < normalizedArgv.length; index += 1) {
+    const option = normalizedArgv[index];
     if (option === "--check") check = true;
     else if (option === "--write") write = true;
     else if (option === "--report") {
-      const value = argv[index + 1];
+      const value = normalizedArgv[index + 1];
       if (value === undefined || value.startsWith("--")) throw new Error("--report requires a path");
       report = value;
       index += 1;
