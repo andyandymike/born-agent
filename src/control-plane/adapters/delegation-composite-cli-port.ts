@@ -29,6 +29,7 @@ import { SessionLockError } from "../../sessions/session-lock.js";
 import { V2SessionWriter } from "../../sessions/v2-session-writer.js";
 import { parseStrictJson } from "../../system/strict-json.js";
 import type { DurableRecordReferenceV1 } from "../control-operation-schema.js";
+import { ExactSessionEvidenceReader } from "../exact-session-evidence-reader.js";
 import type {
   ActiveDelegationControlPortV1,
 } from "../active-delegation-control-registry.js";
@@ -111,7 +112,12 @@ function resolvedHead(
   return signer.create({ eventId: end.eventId, rawEventSha256: raw, sequence: end.sessionSeq, sessionId: end.sessionId }).publicHead;
 }
 
-type DelegationCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readDelegationOwnerEvidence>>;
+async function readObservationEvidence(workspace: string, sessionId: string) {
+  const evidence = await new ExactSessionEvidenceReader().read({ sessionId, workspace });
+  return Object.freeze({ events: evidence.events, rawSha256: evidence.rawSha256 });
+}
+
+type DelegationCompositeObservationEvidenceV1 = Awaited<ReturnType<typeof readObservationEvidence>>;
 type DelegationGroupTakeoverCompositeResultV1 = Extract<DelegationCompositeResultV1, { readonly kind: "group_takeover" }>;
 
 function assertExpectedHead(
@@ -323,8 +329,7 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
         ownerPreparedActionSha256: input.applicationCommit.preparedActionSha256,
         requestCancel: (
           cancelInput: Parameters<ActiveDelegationControlPortV1["requestCancel"]>[0],
-        ) => this.#requestCancelWithActiveWriter(
-          activeWriter,
+        ) => this.#requestCancelWithQueuedWriter(
           runtime,
           cancelInput,
         ),
@@ -401,8 +406,7 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
     });
   }
 
-  async #requestCancelWithActiveWriter(
-    activeWriter: { current: V2SessionWriter | null },
+  async #requestCancelWithQueuedWriter(
     runtime: DelegationOwnerRuntimePortV1,
     input: Parameters<ActiveDelegationControlPortV1["requestCancel"]>[0],
   ): ReturnType<ActiveDelegationControlPortV1["requestCancel"]> {
@@ -536,18 +540,18 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
       return execution;
     };
     for (let attempt = 0; attempt < 512; attempt += 1) {
-      let writer = activeWriter.current;
-      let closeWriter = false;
+      let writer: V2SessionWriter | null = null;
       try {
-        if (writer === null || writer.isClosed()) {
-          writer = await this.#openWriter(runtime, baseMutationContext);
-          closeWriter = true;
-        }
+        // Cancellation joins the same per-session writer queue as the owner.
+        // Borrowing the observer's current writer would bypass that queue and
+        // race its append tail; queue order gives start-or-cancel one exact
+        // durable winner without expanding either operation's authority.
+        writer = await this.#openWriter(runtime, baseMutationContext);
         return await requestWithWriter(writer);
       } catch (error) {
         if (!isTransientWriterHandoff(error) || attempt === 511) throw error;
       } finally {
-        if (closeWriter && writer !== null) await writer.close().catch(() => undefined);
+        if (writer !== null) await writer.close().catch(() => undefined);
       }
       // A closing writer can lose only before the append gate. Re-acquiring the
       // exact session writer and scanning this Application operation id is safe:
@@ -561,11 +565,7 @@ export class CliDelegationCompositeOwnerPort implements DelegationCompositeOwner
   async reconcile(input: Parameters<NonNullable<DelegationCompositeOwnerPortV1["reconcile"]>>[0]): Promise<DelegationCompositeOwnerCommitV1 | null> {
     try {
       const evidence = await (this.options.readObservationEvidence?.(input.sessionId) ??
-        readDelegationOwnerEvidence(
-          this.options.runtime,
-          input.sessionId,
-          localSurface(input),
-        ));
+        readObservationEvidence(this.options.runtime.cwd, input.sessionId));
       if (!exactExpectedPrefix(evidence.events, input, evidence.rawSha256, this.options.signer)) return null;
       const fresh = evidence.events.filter((event) => event.sessionSeq > input.expectedHead.sequence);
       if (fresh.some((event) =>

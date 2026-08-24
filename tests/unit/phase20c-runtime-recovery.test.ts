@@ -38,6 +38,7 @@ import {
   waitDelegationChildHandshakeOutcome,
 } from "../../src/delegation/runtime/child-launcher.js";
 import { SessionLockError } from "../../src/sessions/session-lock.js";
+import { createNodeRuntime } from "../../src/cli/node-runtime.js";
 
 const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
@@ -295,6 +296,34 @@ describe("Phase 20C runtime authority and recovery", () => {
     expect(observed).toBe(1);
     expect(snapshot.sessionId).toBe(IDS.session);
     expect(snapshot.events).toHaveLength(3);
+  });
+
+  it("does not snapshot the parent session when no child operation sidecar exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-empty-operation-inspection-"));
+    temporary.push(root);
+    await seedCompletedSession(root, "phase20-empty-operation-inspection-v1");
+    const writer = await V2SessionWriter.openExisting(root, IDS.session, {
+      createEventId: randomUUID,
+      timestamp: () => "2026-08-10T00:00:01.000Z",
+    });
+    const runtime = createNodeRuntime({
+      approvalInput: { interactive: false, readLine: async () => null },
+      cliEntryPath: join(root, "unused-cli.js"),
+      cwd: root,
+      delegationUserStateRoot: join(root, "delegation-state"),
+      env: {},
+      execPath: process.execPath,
+      killProcess: () => undefined,
+      nodeVersion: process.version,
+      onCancel: () => () => undefined,
+      platform: process.platform,
+      version: "phase20-empty-operation-inspection-v1",
+    });
+    try {
+      await expect(runtime.inspectDelegationOperations!(IDS.session)).resolves.toEqual([]);
+    } finally {
+      await writer.close();
+    }
   });
 
   it("keeps child terminal writer acquisition bounded beyond the former five-second window", async () => {

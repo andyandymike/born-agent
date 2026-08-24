@@ -312,6 +312,17 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     sessionId,
     workspace: options.cwd,
   });
+  const readDelegationOwnerSession = async (
+    sessionId: string,
+    inputSurface: "cli" | "tui" = "cli",
+  ) => {
+    const writer = await delegationWriterFactory(taskContext(sessionId, inputSurface));
+    try {
+      return reconstructMultiRunSession(writer.events);
+    } finally {
+      await writer.close();
+    }
+  };
   const recoveryOwnerBinding = (
     session: Awaited<ReturnType<SessionCatalog["read"]>>,
     operation: NonNullable<Awaited<ReturnType<DelegationOperationStore["read"]>>>,
@@ -1117,13 +1128,20 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
         return Object.freeze(results);
       },
       inspectDelegationOperations: async (sessionId) => {
-        const session = await new SessionCatalog(options.cwd).read(sessionId);
         const stores = await DelegationOperationStore.listExisting(delegationUserStateRoot());
-        const probe = new NodeProcessIdentityProbe();
-        const results = [];
+        const operations = [];
         for (const store of stores) {
           const operation = await store.read();
-          if (operation === null || operation.sessionId !== sessionId) continue;
+          if (operation !== null && operation.sessionId === sessionId) operations.push(operation);
+        }
+        // A queued Delegation normally has no child sidecar yet. Do not turn
+        // that empty inspection into an unrelated SessionCatalog snapshot-lock
+        // race with the TUI or the owner's just-closed resume-fence writer.
+        if (operations.length === 0) return Object.freeze([]);
+        const session = await readDelegationOwnerSession(sessionId);
+        const probe = new NodeProcessIdentityProbe();
+        const results = [];
+        for (const operation of operations) {
           const ownerObservation = operation.process === null
             ? "not_started" as const
             : await probe.probe({
@@ -1163,7 +1181,7 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
             "pre-effect operation does not belong to the selected session",
           );
         }
-        const session = await new SessionCatalog(options.cwd).read(sessionId);
+        const session = await readDelegationOwnerSession(sessionId, inputSurface);
         const context = operation.failure?.code === "delegation_cancelled"
           ? Object.freeze({
               ...taskContext(sessionId, inputSurface),
