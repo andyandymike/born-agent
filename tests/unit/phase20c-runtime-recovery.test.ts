@@ -344,8 +344,10 @@ describe("Phase 20C runtime authority and recovery", () => {
       version: "phase20-worktree-read-v1",
       worktreeUserStateRoot: join(root, "worktree-state"),
     });
+    let observedWriters = 0;
     const manager = await runtime.createManagedWorktreeManager!({
       io: createMemoryIO().io,
+      observeSessionWriter: () => { observedWriters += 1; },
       sessionId: IDS.session,
     });
     const overlappingWriter = await V2SessionWriter.openExisting(root, IDS.session, {
@@ -360,6 +362,7 @@ describe("Phase 20C runtime authority and recovery", () => {
         graphSha256: SHA,
         nodeId: "missing",
       })).rejects.toMatchObject({ code: "worktree_allocation_stale" });
+      expect(observedWriters).toBe(1);
     } finally {
       clearTimeout(release);
       await overlappingWriter.close();

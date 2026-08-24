@@ -207,6 +207,7 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
     readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
     readonly inputSurface?: "cli" | "tui";
     readonly io: CliIO;
+    readonly observeSessionWriter?: (writer: SessionWriter) => void;
     readonly sessionId: string;
   }) => Promise<ManagedWorktreeManager>;
   readonly createWorktreePromotionRuntime?: (options: {

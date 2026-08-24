@@ -292,11 +292,15 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     delegationWriterQueue(context.sessionId).wrap(
       (value) => openBackgroundSessionWriter(value),
     )(context);
-  const delegationManagedWorktreeWriterFactory = (context: TaskMutationContext) =>
+  const delegationManagedWorktreeWriterFactory = (
+    context: TaskMutationContext,
+    observeSessionWriter?: (writer: Parameters<NonNullable<CliRuntime["observeSessionWriter"]>>[0]) => void,
+  ) =>
     openDelegationOwnerWriter({
       cwd: options.cwd,
       delegationWriterFactory,
       env: options.env,
+      ...(observeSessionWriter === undefined ? {} : { observeSessionWriter }),
       onCancel: () => () => undefined,
       platform: options.platform,
       randomUUID,
@@ -386,7 +390,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       source_state_sha256: source.snapshot.sourceStateSha256,
     });
   };
-  const createManagedWorktreeManager: NonNullable<CliRuntime["createManagedWorktreeManager"]> = async ({ authenticatedMutation, inputSurface, io, sessionId }) =>
+  const createManagedWorktreeManager: NonNullable<CliRuntime["createManagedWorktreeManager"]> = async ({
+    authenticatedMutation,
+    inputSurface,
+    io,
+    observeSessionWriter,
+    sessionId,
+  }) =>
     new ManagedWorktreeManager({
       context: Object.freeze({
         ...taskContext(sessionId, inputSurface),
@@ -397,10 +407,13 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
       repositoryRulesSha256: await repositoryRuleIdentity(options.cwd),
       // Delegation-owned worktree lookup reads the parent session too. Route
-      // it through the same serialized, bounded owner handoff as every other
-      // pre-admission read so a live TUI projection cannot turn observation
-      // contention into an unknown-effect terminal.
-      writerFactory: delegationManagedWorktreeWriterFactory,
+      // it through the same serialized, bounded owner handoff and publish the
+      // acquired writer to the typed TUI projection. Otherwise projection
+      // refreshes can keep opening competing readers and starve this owner.
+      writerFactory: (context) => delegationManagedWorktreeWriterFactory(
+        context,
+        observeSessionWriter,
+      ),
     });
   const createTaskAttemptExecutor: NonNullable<CliRuntime["createTaskAttemptExecutor"]> =
     ({ approvalMode = "interactive", io, runtimeProfileId, sessionId, writerFactory }) => {

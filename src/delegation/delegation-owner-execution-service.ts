@@ -122,6 +122,7 @@ export interface DelegationOwnerRuntimePortV1 {
   readonly createManagedWorktreeManager?: (options: {
     readonly authenticatedMutation?: AuthenticatedTaskMutationBindingV1;
     readonly inputSurface?: "cli" | "tui";
+    readonly observeSessionWriter?: (writer: SessionWriter) => void;
     readonly sessionId: string;
   }) => Promise<ManagedWorktreeManager>;
   readonly createDelegationChildLauncher?: (options: {
@@ -714,7 +715,12 @@ async function managedExecution(
   if (projected === undefined || ["removed", "archived", "reconciliation_required"].includes(projected.status)) {
     throw new DelegationError("delegation_workspace_conflict", "delegation managed workspace is missing, stale, or unavailable");
   }
-  const manager = await runtime.createManagedWorktreeManager?.({ sessionId });
+  const manager = await runtime.createManagedWorktreeManager?.({
+    ...(runtime.observeSessionWriter === undefined
+      ? {}
+      : { observeSessionWriter: runtime.observeSessionWriter }),
+    sessionId,
+  });
   if (manager === undefined) throw new DelegationError("delegation_workspace_conflict", "runtime cannot locate the approved managed worktree");
   const handle = await manager.locate({
     graphId: binding.graphId,
