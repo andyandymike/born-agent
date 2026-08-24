@@ -39,6 +39,7 @@ import {
 } from "../../src/delegation/runtime/child-launcher.js";
 import { SessionLockError } from "../../src/sessions/session-lock.js";
 import { createNodeRuntime } from "../../src/cli/node-runtime.js";
+import { createMemoryIO } from "../helpers.js";
 
 const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
@@ -323,6 +324,45 @@ describe("Phase 20C runtime authority and recovery", () => {
       await expect(runtime.inspectDelegationOperations!(IDS.session)).resolves.toEqual([]);
     } finally {
       await writer.close();
+    }
+  });
+
+  it("routes managed-worktree lookup through the bounded delegation writer handoff", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bornagent-phase20-worktree-read-"));
+    temporary.push(root);
+    await seedCompletedSession(root, "phase20-worktree-read-v1");
+    const runtime = createNodeRuntime({
+      approvalInput: { interactive: false, readLine: async () => null },
+      cliEntryPath: join(root, "unused-cli.js"),
+      cwd: root,
+      env: {},
+      execPath: process.execPath,
+      killProcess: () => undefined,
+      nodeVersion: process.version,
+      onCancel: () => () => undefined,
+      platform: process.platform,
+      version: "phase20-worktree-read-v1",
+      worktreeUserStateRoot: join(root, "worktree-state"),
+    });
+    const manager = await runtime.createManagedWorktreeManager!({
+      io: createMemoryIO().io,
+      sessionId: IDS.session,
+    });
+    const overlappingWriter = await V2SessionWriter.openExisting(root, IDS.session, {
+      createEventId: randomUUID,
+      timestamp: () => "2026-08-10T00:00:01.000Z",
+    });
+    const release = setTimeout(() => { void overlappingWriter.close(); }, 25);
+    try {
+      await expect(manager.locate({
+        graphId: "a0000000-0000-4000-8000-000000000021",
+        graphRevision: 1,
+        graphSha256: SHA,
+        nodeId: "missing",
+      })).rejects.toMatchObject({ code: "worktree_allocation_stale" });
+    } finally {
+      clearTimeout(release);
+      await overlappingWriter.close();
     }
   });
 

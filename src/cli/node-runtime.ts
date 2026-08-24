@@ -94,6 +94,7 @@ import { capabilitySnapshotSchema } from "../capabilities/capability-snapshot.js
 import { DelegationError } from "../delegation/delegation-errors.js";
 import {
   executeDelegationOwnerStart,
+  openDelegationOwnerWriter,
 } from "../delegation/delegation-owner-execution-service.js";
 import {
   persistedUserActionOriginV2Schema,
@@ -291,6 +292,19 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
     delegationWriterQueue(context.sessionId).wrap(
       (value) => openBackgroundSessionWriter(value),
     )(context);
+  const delegationManagedWorktreeWriterFactory = (context: TaskMutationContext) =>
+    openDelegationOwnerWriter({
+      cwd: options.cwd,
+      delegationWriterFactory,
+      env: options.env,
+      onCancel: () => () => undefined,
+      platform: options.platform,
+      randomUUID,
+      timestamp: () => new Date().toISOString(),
+      waitForRetry: (delayMs) => new Promise((resolve) => {
+        timers.setTimeout(resolve, delayMs);
+      }),
+    }, context);
   const delegationApprovalQueue = (sessionId: string) => {
     const current = delegationApprovalQueues.get(sessionId);
     if (current !== undefined) return current;
@@ -382,6 +396,11 @@ export function createNodeRuntime(options: NodeRuntimeOptions): CliRuntime {
       managedRoot: worktreeUserStateRoot(),
       prompt: new TerminalApprovalPrompt({ ...options.approvalInput, output: io.stderr }),
       repositoryRulesSha256: await repositoryRuleIdentity(options.cwd),
+      // Delegation-owned worktree lookup reads the parent session too. Route
+      // it through the same serialized, bounded owner handoff as every other
+      // pre-admission read so a live TUI projection cannot turn observation
+      // contention into an unknown-effect terminal.
+      writerFactory: delegationManagedWorktreeWriterFactory,
     });
   const createTaskAttemptExecutor: NonNullable<CliRuntime["createTaskAttemptExecutor"]> =
     ({ approvalMode = "interactive", io, runtimeProfileId, sessionId, writerFactory }) => {
