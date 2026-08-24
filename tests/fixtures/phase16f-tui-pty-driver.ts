@@ -464,9 +464,13 @@ async function main(): Promise<void> {
       }
       const retainedCount = fresh.split("input kept locally").length - 1;
       const busyCount = fresh.split("control_operation_busy").length - 1;
+      const readyCount = fresh.split("index=ready").length - 1;
       // This Enter is a fresh command submission only. A Host modal is absent
       // in the exact output slice, and the next Enter is forbidden until this
-      // one has either opened that modal or emitted a new retained-draft fact.
+      // one has either opened that modal, emitted a new retained-draft fact,
+      // or preserved the exact draft through a newer ready repository view.
+      // Windows can split one external edit into multiple watcher events, so
+      // the latter is real bounded progress and requires a fresh user Enter.
       terminal.write("\r");
       await waitFor(
         (plain) => {
@@ -475,7 +479,10 @@ async function main(): Promise<void> {
             current.split("input kept locally").length - 1 > retainedCount ||
             (
               current.includes(`> ${command}`) &&
-              current.split("control_operation_busy").length - 1 > busyCount
+              (
+                current.split("control_operation_busy").length - 1 > busyCount ||
+                current.split("index=ready").length - 1 > readyCount
+              )
             );
         },
         `${label} prepared action or retained draft`,
@@ -519,6 +526,7 @@ async function main(): Promise<void> {
       }
       const retainedCount = fresh.split("input kept locally").length - 1;
       const busyCount = fresh.split("control_operation_busy").length - 1;
+      const readyCount = fresh.split("index=ready").length - 1;
       terminal.write("\r");
       await waitFor(
         (plain) => {
@@ -527,7 +535,10 @@ async function main(): Promise<void> {
             current.split("input kept locally").length - 1 > retainedCount ||
             (
               current.includes(`> ${command}`) &&
-              current.split("control_operation_busy").length - 1 > busyCount
+              (
+                current.split("control_operation_busy").length - 1 > busyCount ||
+                current.split("index=ready").length - 1 > readyCount
+              )
             );
         },
         `${label} result or retained draft`,
