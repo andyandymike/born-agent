@@ -148,7 +148,10 @@ describe("Phase 19E completion composition", () => {
       approvalInput: { interactive: true, readLine: async () => "y" },
       capabilityUserStateRoot: join(userState, "capabilities"),
       cwd: workspace,
-      env: { ...process.env, LOCALAPPDATA: userState },
+      // The controller root follows LOCALAPPDATA on Windows and XDG_STATE_HOME
+      // on Linux. Bind both so this integration fixture never reuses a real or
+      // prior-test Host authority after its temporary repository is removed.
+      env: { ...process.env, LOCALAPPDATA: userState, XDG_STATE_HOME: userState },
       execPath: process.execPath,
       killProcess: (identity, signal) => process.kill(identity, signal),
       nodeVersion: process.versions.node,
@@ -164,7 +167,16 @@ describe("Phase 19E completion composition", () => {
       randomUUID,
     };
 
-    expect(await runCli(["goal", "set", SESSION_ID, "--text", "Promote a verified isolated change"], createMemoryIO().io, runtime)).toBe(0);
+    const goalIo = createMemoryIO();
+    const goalExitCode = await runCli(
+      ["goal", "set", SESSION_ID, "--text", "Promote a verified isolated change"],
+      goalIo.io,
+      runtime,
+    );
+    expect(
+      goalExitCode,
+      `goal set must succeed before the completion composition fixture continues\n${goalIo.readStderr()}${goalIo.readStdout()}`,
+    ).toBe(0);
     const goal = (await new SessionCatalog(workspace).read(SESSION_ID)).taskState.goals[0]!;
     await writeFile(join(workspace, "plan.json"), JSON.stringify({
       items: [{
