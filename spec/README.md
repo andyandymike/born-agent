@@ -2,9 +2,9 @@
 
 这里存放 BornAgent 的可执行实现合同。`ROADMAP.md` 负责阶段顺序和学习目标，`spec/` 负责把当前阶段约束成可以实现、测试和验收的行为。
 
-> 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
+> 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前维护合同：[`Architecture Simplification Maintenance Spec`](architecture-simplification-maintenance.md)；AS0.1–AS5.1已完成本地实现与gate，exact-commit Linux/Windows CI仍待完成。下一候选为AS5.2 projection ownership（Ready / Implementation Not Started），不表示release closure已经完成。
+> 当前状态：Architecture Simplification AS0.1–AS5.2与Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`通过Linux/Windows CI。AM0/AM1仅为`component_verified`，production memory仍为`off`且没有跨session长期记忆；当前ML1按[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)以真实跨进程CLI行为、学习记录和时间账为完成边界。
 
 ## 当前阅读顺序
 
@@ -72,6 +72,10 @@
     - [`21C — Bounded Browser and Computer-Use Effects`](12-m12-product-surfaces-remote/21c-bounded-browser-and-computer-use-effects.md)：isolated frame/action/permit、human takeover、dispatch unknown-effect
     - [`21D — Remote Worker, Fencing, and Artifact Transport`](12-m12-product-surfaces-remote/21d-remote-worker-fencing-and-artifact-transport.md)：outbound enrollment、lease epoch、CAS transfer、quarantine/import
     - [`21E — Team Governance and M12 Gate`](12-m12-product-surfaces-remote/21e-team-governance-and-m12-gate.md)：principal/role/policy/separation/quota/audit与real M12 gate
+24. Agent Memory learning-delivery lane：
+    - [`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)：切片顺序、学习问题、预算与时间账
+    - [`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)：当前数据、端口、行为、实验晋级与机械验收合同
+    - `agent-memory-and-context-maintenance.md`：本地exhaustive research/threat-model参考；不作为当前排期或完成权威
 
 Phase 0–20均已实现并有分阶段本地/跨平台证据，21A已通过本地gate。21B–21E已Deferred且M12不再是当前个人项目目标，因此Web、IDE、browser/computer-use、remote worker与team mode仍不可用。当前开发转为真实使用驱动的release、可靠性、简化、质量效率与开源维护。Phase18的Skills、MCP primitives、declarative/command Hooks和local Plugin lifecycle/reconciliation已通过M9；
 Phase19的Graph/scheduler/worktree/promotion/background/product integration已通过M10；Phase20的authority-attenuated controlled delegation、sealed child、max2 scheduler、receipt、ConPTY/PTY、process-tree、pack与Pages gate已通过M11。没有加入marketplace、network install、nested Agent tree、daemon或remote worker。
@@ -84,11 +88,12 @@ Phase20 final candidate与精确GitHub run、平台计数、skip解除和失败�
 发生冲突时，按以下顺序处理：
 
 1. 用户在当前任务中的明确要求。
-2. 已批准且更新时间更晚的 Phase implementation spec。
-3. `ROADMAP.md` 的阶段边界与退出条件。
-4. 学习笔记和历史实现说明。
+2. `ROADMAP.md` 与当前 active learning/maintenance track 的路线、切片边界与退出方向。
+3. 在该边界内，已批准且更新时间更晚的 Phase 或 active maintenance/slice implementation spec所定义的exact行为。
+4. live code、tests、CLI evidence与exact-commit receipts所证明的当前事实状态。
+5. 学习笔记和历史实现说明。
 
-Phase spec 可以细化 roadmap，但不能把后续 Phase 的能力提前带入当前 Phase。若确实需要改变阶段边界，应先同时更新 roadmap 和对应 spec，再改代码。
+Phase或active slice spec可以细化roadmap，但不能把后续能力提前带入当前切片。若确实需要改变边界，应先同时更新roadmap、learning track和对应spec，再改代码。旧exhaustive research draft排在这些active文档之后。
 
 ## M0 的产品边界
 

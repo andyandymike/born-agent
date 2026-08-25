@@ -15,8 +15,9 @@ playwright-report/
 *.tsbuildinfo
 *.tgz
 
-# Private/local planning and learning material (not public documentation)
-/spec/
+# Private/local planning and learning material; one active memory spec is a narrow public exception
+/spec/*
+!/spec/agent-memory-lightweight-core-and-adapters.md
 /docs/learning/
 /ROADMAP.md
 /TODO.local.md

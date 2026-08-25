@@ -4,9 +4,19 @@
 [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md)
 
-BornAgent is a learning-first local coding agent. Runtime authority comes from a
-versioned policy profile rather than scattered provider/Docker flags. With no
-policy option, every command uses the packaged `local-free-v1` profile:
+BornAgent is a learning-first local coding agent. The project has two primary
+goals: reproduce and compare frontier agent techniques through inspectable
+experiments, and turn each implementation into reusable personal knowledge
+about AI-agent concepts, source call chains, engineering tradeoffs, failures,
+and actual development time. A feature therefore enters through a runnable
+vertical slice with an experiment baseline and learning record, not through a
+large speculative framework. See the [learning roadmap](ROADMAP.md), the
+[Agent Memory track](docs/agent-memory/learning-and-delivery-track.md), and the
+active [Lightweight Memory Core and Frontier Adapters spec](spec/agent-memory-lightweight-core-and-adapters.md).
+
+Runtime authority comes from a versioned policy profile rather than scattered
+provider/Docker flags. With no policy option, every command uses the packaged
+`local-free-v1` profile:
 
 - provider/model: literal-loopback Ollama with `qwen3:1.7b`;
 - remote providers and credential reads: denied;

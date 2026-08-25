@@ -1,12 +1,12 @@
 # BornAgent 学习型开发路线图
 
-> 状态：Phase 0–20 Implemented；M11 Passed；21A local gate Passed；21B–21E Deferred；M12 Not Pursued in Current Scope（2026-08-14）
-> 当前路线：Personal Open-Source Maintenance；Architecture Simplification已本地收口到AS5.2；Agent Memory AM0/AM1已通过本地gate，等待exact-commit Linux/Windows CI；AS6与AM2保持not_started
-> 目标：一边构建一个类似 Claude Code / OpenCode 的本地编码 Agent，一边系统理解模型调用、工具执行、权限、上下文、会话与评测。
+> 状态：Phase 0–20 Implemented；M11 Passed；21A exact-commit CI Passed；21B–21E Deferred；M12 Not Pursued in Current Scope（2026-08-24）
+> 当前路线：Personal Open-Source Maintenance；Architecture Simplification AS5.2与Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`通过Linux/Windows CI；production memory仍为`off`且没有跨session长期记忆；当前合同为[`Lightweight Memory Core and Frontier Adapters`](spec/agent-memory-lightweight-core-and-adapters.md)的ML1
+> 目标：一边构建一个类似 Claude Code / OpenCode 的本地编码 Agent，一边亲手实现与复现前沿Agent技术，系统积累模型调用、工具执行、权限、上下文、会话、记忆、评测和真实工程时间经验。
 
 > 历史状态说明：Phase 0–15章节中保留的未勾选checkbox是早期archival planning原貌，不是当前未完成gate；当前状态以本页顶部、对应milestone spec/learning evidence和后续已通过gate记录为准。没有可复核证据时不得据此补勾或重写历史。
 
-Phase 0–21 的详细实现合同与当前实施状态见 [`spec/README.md`](spec/README.md)；当前有效后续路线见[`Personal Open-Source Maintenance Roadmap`](spec/personal-open-source-maintenance-roadmap.md)。Phase17 / M8、Phase18 / M9、Phase19 / M10与Phase20 / M11均已收口，21A的surface-neutral本地控制平面已通过本地gate。21B–21E保留为设计参考但已Deferred，不提前宣称Web/IDE/browser/remote/team能力。
+Phase 0–21 的详细实现合同与当前实施状态见 [`spec/README.md`](spec/README.md)；当前有效后续路线见[`Personal Open-Source Maintenance Roadmap`](spec/personal-open-source-maintenance-roadmap.md)。Agent Memory当前由tracked [`Agent Memory学习与交付路线`](docs/agent-memory/learning-and-delivery-track.md)决定切片顺序，并由[`Lightweight Memory Core and Frontier Adapters Spec`](spec/agent-memory-lightweight-core-and-adapters.md)约束exact行为和验收：详细威胁模型可以保留为研究资产，但不能替代可运行纵向切片、学习记录或真实时间账。Phase17 / M8、Phase18 / M9、Phase19 / M10与Phase20 / M11均已收口，21A的surface-neutral本地控制平面已通过本地gate。21B–21E保留为设计参考但已Deferred，不提前宣称Web/IDE/browser/remote/team能力。
 
 ## 1. 我们要做什么
 
@@ -39,6 +39,8 @@ BornAgent 最终应该能在本地代码仓库中完成这样的闭环：
 9. **本地默认永远零付费。** Phase 15 把 access rule 迁移为 runtime policy，但唯一隐式默认仍是 `local-free-v1`；远程 profile
    只能由受信用户配置定义并逐 run 显式选择。本路线的实现、测试和验收继续只用 fake/mock 或 loopback Ollama，不读取真实 key、
    不发真实远程请求，也不执行 checked-in full eval。配置化不允许 prompt/repository/environment 静默扩大权限。
+10. **先锋技术通过实验进入。** 每个候选先记录primary source、baseline、单一intervention、指标和失败条件；即使结果为reject，只要可复现且解释清楚，也形成有效学习成果。没有超过简单baseline的技术不因论文名气进入production。
+11. **工程时间也是学习证据。** 每个切片记录estimate与actual wall-clock window，并拆分research、feature、tests、CI/debug和learning/docs。超过估算上限或一半时间偏离目标时先报告，不静默扩张范围。
 
 ## 3. 每个 Phase 的固定完成流程
 
@@ -53,6 +55,7 @@ BornAgent 最终应该能在本地代码仓库中完成这样的闭环：
 7. 用 `rg` 人工核对本阶段关键 `// PHASEx:` 注释，并在学习笔记中复述其保护的 invariant。
 8. 写 `docs/learning/phase-XX-*.md` 学习记录。
 9. 满足退出条件后再进入下一阶段。
+10. 报告实际时间分布，以及用户现在能做什么、仍然不能做什么。
 
 建议每个 Phase 使用独立提交，提交信息包含阶段号，例如：
 
@@ -842,8 +845,10 @@ reconciliation、Graph/scheduler/worktree/promotion、bounded worker takeover、
 Phase20 / M11已于2026-08-11收口：20A–20E的exact delegation/decision/authority attenuation、typed ContextCapsule、独立model/tool/capability/budget/workspace envelope、sealed Node child与start barrier、isolated session shard、Host-built receipt、max2 deterministic admission、CLI/TUI/replay/Outcome和packed foreground/background flow均已接通。proven pre-effect failure可在exact cleanup、zero-effect terminal和budget settlement后生成fresh attempt 2；start barrier后的IPC loss继续unknown-effect fail closed。exact candidate `6e1fe9481434c68fcb5611c33d19323df81ac3a8`的Linux与GitHub Windows full均为211文件/1008测试通过，default 11个built-path skip由Linux 9文件/14测试和Windows 8文件/13测试的required opt-in步骤实际解除；两平台pack smoke、ignored-cancel child+grandchild process-tree、two-child coordinator kill/takeover、active-child exit与Pages build/deploy/report均通过。packed flow由前台和独立Phase19 worker各启动两个offline child，共接纳四个verified receipts并证明barrier/claims与worker OS进程收口；精确run与失败修复历史记录在Phase20 implementation evidence。
 真实远程provider、credential、Ollama、Docker和full model eval仍为`not_run_by_policy`，不能解释为remote/live quality pass。
 
-Phase21 / M12 spec已于2026-08-12完成，21A于2026-08-13通过本地gate：Host-local principal/control identity、strict action/query registry、repository/session catalog、prepared-action/idempotency/operation journal、opaque session head/projection/delivery、seq0 materialization，以及Goal/Plan/Graph/Delegation/run/session/worktree/promotion的typed CLI/TUI路径均已接通；multi-process CAS、cross-store crash、legacy、zero-network、real PTY与installed tarball gate通过。精确计数和失败修复见[`Phase 21A Closure Evidence`](spec/12-m12-product-surfaces-remote/phase21a-closure-evidence.md)。当前候选仍需形成exact commit并通过对应CI；21B–21E已Deferred，M12不再是当前个人开源项目目标。后续不创建Phase22，转入[`Personal Open-Source Maintenance Roadmap`](spec/personal-open-source-maintenance-roadmap.md)定义的usage-driven维护路线。
+Phase21 / M12 spec已于2026-08-12完成，21A于2026-08-13通过本地gate：Host-local principal/control identity、strict action/query registry、repository/session catalog、prepared-action/idempotency/operation journal、opaque session head/projection/delivery、seq0 materialization，以及Goal/Plan/Graph/Delegation/run/session/worktree/promotion的typed CLI/TUI路径均已接通；multi-process CAS、cross-store crash、legacy、zero-network、real PTY与installed tarball gate通过。精确计数和失败修复见[`Phase 21A Closure Evidence`](spec/12-m12-product-surfaces-remote/phase21a-closure-evidence.md)。exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`随后在本地Windows/Linux与远端CI再次通过165项required Phase21A gate、0 required skip；21B–21E已Deferred，M12不再是当前个人开源项目目标。后续不创建Phase22，转入[`Personal Open-Source Maintenance Roadmap`](spec/personal-open-source-maintenance-roadmap.md)定义的usage-driven维护路线。
 
-2026-08-23 Architecture Simplification已本地实施到AS5.2：在AS0–AS5.1既有evidence、recovery、Host、session、product/TUI和terminal ownership基础上，TaskExecution现在复用已投影TaskGraph，V2 writer保留append-owned post-commit projection，scheduler每个mutation只做一次初始session reconstruction；Delegation child启动前与active阶段共享strict append-only tail cursor，idle轮询不再拿独占全量snapshot，一次cursor歧义可exact-prefix恢复，typed durable cancellation authority不变。当前manifest为106项（default 55、metric 38、built paths 12、pack 1），其中default新增Linux `pnpm`保留单个参数分隔符的跨平台CLI约束；AS5.2 metric 38/38及receipt回读通过，`pnpm check`为279文件/1277测试通过（8文件/16测试为既有opt-in skip），characterization v3 canonical SHA-256仍为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。AS0.1–AS5.2均为`local_gate_passed`，仍等待同一exact commit的Linux/Windows CI receipts；AS6保持`not_started`。
+2026-08-24 Architecture Simplification AS0.1–AS5.2已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`完成本地与远端Linux/Windows closure：在AS0–AS5.1既有evidence、recovery、Host、session、product/TUI和terminal ownership基础上，TaskExecution复用已投影TaskGraph，V2 writer保留append-owned post-commit projection，scheduler每个mutation只做一次初始session reconstruction；Delegation child启动前与active阶段共享strict append-only tail cursor，idle轮询不再拿独占全量snapshot，一次cursor歧义可exact-prefix恢复，typed durable cancellation authority不变。architecture characterization v3 canonical SHA-256仍为`7e362f1a05856f504947e8e678bd202aa6578dc77550db7025061ad53e80db91`。AS6保持`not_started`。
 
-2026-08-23 Agent Memory AM1已本地实现：production默认仍为`off`，显式`shadow/working`路径新增exact-prefix suffix reducer；memory-owned working sidecar使用strict canonical schema、signed session head、per-session cross-process lock、immutable snapshot objects与current/previous atomic pointer，missing/corrupt/future sidecar一律cold replay且删除working root不改变session truth。`AM-E002-WORKING-STATE`在全部36个AM0 seeded cases比较cold/incremental state、ContextPlan与provider bytes，no-op work为0且append work不超过suffix；独立10k paired benchmark达到预设30%门，短历史不超过1.10x。Windows本地完整集合按非PTY并发加7个真实PTY单worker覆盖1291 passed，16项为既有条件skip；lint、typecheck与clean build通过。AM1为`local_gate_passed`并等待exact-commit Linux/Windows CI receipts；AM2保持`not_started`。
+2026-08-24 Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`完成本地Windows/Linux与远端CI closure：production默认仍为`off`，显式`shadow/working`路径提供exact-prefix suffix reducer；memory-owned working sidecar使用strict canonical schema、signed session head、per-session cross-process lock、immutable snapshot objects与current/previous atomic pointer，missing/corrupt/future sidecar一律cold replay且删除working root不改变session truth。`AM-E002-WORKING-STATE`在全部36个AM0 seeded cases比较cold/incremental state、ContextPlan与provider bytes，no-op work为0且append work不超过suffix；独立10k paired benchmark达到预设30%门，短历史不超过1.10x。该结果只证明working-state组件，不表示production已启用，也不表示存在跨session长期记忆。
+
+Agent Memory自2026-08-24起不再以一次实现exhaustive AM0–AM6 draft为目标，改按[`Agent Memory学习与交付路线`](docs/agent-memory/learning-and-delivery-track.md)推进；实时切片与exact验收见[`Lightweight Memory Core and Frontier Adapters Spec`](spec/agent-memory-lightweight-core-and-adapters.md)。ML1先证明“completed Session A产生source-bound episode，进程重启后可由`born memory list/show`解释读取”；每个切片同时交付产品行为、测试证据、源码学习记录与真实时间账。前沿memory/context技术以isolated experiment进入，未超过简单baseline时保留学习结论而不进入production。
