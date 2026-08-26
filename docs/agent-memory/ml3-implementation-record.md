@@ -3,7 +3,7 @@
 > Slice: safe local Agent use of bounded historical excerpts
 > Started: 2026-08-26 (Asia/Tokyo)
 > Local result: `local_product_verified`; product, full repository, and installed-pack evidence passed
-> Release boundary: not yet `preview_usable`; same-exact-commit Linux/Windows CI is pending
+> Release closure: covered by ML5 `preview_usable` exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`
 
 ## Product result
 

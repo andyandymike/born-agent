@@ -1,7 +1,7 @@
 # ML4 — Explicit lifecycle and operability
 
 > Local status: `local_product_verified` on Windows, 2026-08-26
-> Release status: uncommitted candidate; ML5 exact-commit Linux/Windows closure is still required
+> Release status: covered by ML5 `preview_usable` exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`
 > Scope: local single-user, exact repository, explicit mutation only
 
 ## 我想理解的问题
@@ -121,4 +121,4 @@ tracked fixture `fixtures/agent-memory/ml4/lifecycle.json`通过真实CLI证明�
 
 ## 下一步
 
-ML5只做cross-platform product closure：提交当前候选，在同一exact commit执行Linux/Windows repository gate、pack smoke和完整新进程唯一发布演示，然后才判断`preview_usable`。不在ML5插入embedding、graph、automatic chat extraction或企业治理。
+ML5已完成cross-platform product closure；专用Linux/Windows jobs在同一exact commit执行focused contract、pack smoke和完整新进程唯一发布演示。后续frontier adapter仍以单张isolated experiment card推进，不把embedding、graph、automatic chat extraction或企业治理倒灌进Memory v1 core。

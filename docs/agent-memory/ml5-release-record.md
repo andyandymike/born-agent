@@ -1,7 +1,8 @@
 # ML5 — Cross-platform product closure
 
-> Status: preview candidate; dedicated exact-commit Linux/Windows evidence pending
+> Status: `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`
 > Started: 2026-08-26 about 14:13 JST
+> Release evidence completed: 2026-08-26 16:58 JST
 > Scope: release evidence and open-source handoff only
 
 ## 我想理解的问题
@@ -71,17 +72,17 @@ CLI的`list/show/search/remember/retract/rebuild`全部通过解压后`dist/cli.
 ## 测试与证据
 
 - Phase21A second-repository focused regression：7/7 tests通过；
-- ML5 evidence + second-repository focused：2 files / 9 tests通过；
+- ML5 evidence + second-repository focused：2 files / 10 tests通过；
 - 全部`agent-memory`：17 files / 56 tests通过；
 - full repository gate：non-PTY 289 files / 1,326 tests通过，6 files / 12 tests按平台预期跳过；PTY 5 suites通过、2 suites按平台预期跳过；clean build通过；
 - ML5 11-step extracted-tarball demo：本地通过；
 - ML5 evidence contract：`tests/evidence/agent-memory-ml5-v1.json`；
-- dedicated Linux/Windows same-exact-commit focused contract与pack jobs：等待当前candidate执行；
-- 只有两个required jobs与exact `GITHUB_SHA` receipt都通过后，才把Memory Lite core标记为`preview_usable`。
+- exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`的[`memory-v1-linux`](https://github.com/andyandymike/born-agent/actions/runs/32945010830/job/98103803776)与[`memory-v1-windows`](https://github.com/andyandymike/born-agent/actions/runs/32945010830/job/98103803973)均通过focused contract和packed demo；两项成功路径都要求输出绑定`GITHUB_SHA`的`memory_v1_release_demo_passed` receipt；
+- [Pages run 32945009663](https://github.com/andyandymike/born-agent/actions/runs/32945009663)通过；Memory Lite core据此标记为`preview_usable`，不是`stable`。
 
 ## 工程时间账
 
-原spec预算为4–8 focused hours；开始前按ML2–ML4实测校准为约1–3 Agent wall-clock hours。最终结束时间在exact-commit CI和public handoff完成后填写；wall-clock包含CI等待，不等于连续人工编码时间。
+原spec预算为4–8 focused hours；开始前按ML2–ML4实测校准为约1–3 Agent wall-clock hours。exact release evidence从约14:13到16:58 JST，约2小时45分，位于校准预算内；wall-clock包含CI等待，不等于连续人工编码时间。
 
 | Category | Estimated | Actual window | Notes |
 |---|---:|---:|---|
@@ -89,8 +90,8 @@ CLI的`list/show/search/remember/retract/rebuild`全部通过解压后`dist/cli.
 | release demo/evidence | 0.3–0.8h | ~0.35h | 11-step fixture、child、receipt、manifest |
 | product regression | 0.2–0.6h | ~0.2h so far | second-repository complete-head fix |
 | local/full validation | 0.3–0.8h | ~0.45h | focused、289/1,326 repository gate、final pack |
-| exact-commit CI/handoff | 0.3–1.0h | >1h so far | 两轮整仓CI诊断、stop-rule收窄、专用Linux/Windows jobs |
+| exact-commit CI/handoff | 0.3–1.0h | ~1.6h | 两轮整仓CI诊断、stop-rule收窄、专用Linux/Windows jobs与public handoff |
 
 ## 下一步
 
-等待同一SHA的`memory-v1-linux`/`memory-v1-windows`与两份`memory_v1_release_demo_passed` receipt；通过后只更新公开maturity、exact evidence与实际时间，不继续增加memory功能或追逐无关整仓时序。
+Memory v1 core已闭环。下一步只从Frontier Adapter Lab选择一个学习问题并写isolated experiment card；在baseline、corpus、quality/token/latency与promotion/delete条件冻结前，不开始实现，也不继续追逐无关整仓时序。

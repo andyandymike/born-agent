@@ -133,15 +133,17 @@ projection. Ordinary chat is still not model-extracted into active memory:
 explicit records require the local user command, while automatic writes remain
 deterministic completed-task episodes.
 
-Memory v1 is currently a local `preview_candidate`, not yet a stable feature.
-`corepack pnpm pack:smoke` runs its single 11-step release demo from an extracted
-tarball in fresh Node processes and emits `memory_v1_release_demo_passed:` with
-the restart, scope, retract, rebuild, mode-off, and zero-remote-request receipt.
-The candidate becomes `preview_usable` only after the same exact commit passes
-the dedicated GitHub `memory-v1-linux` and `memory-v1-windows` release jobs.
-The broader `quality` and `windows-phase20` jobs remain repository-health
-signals, but unrelated legacy or Phase 20 timing failures are not Memory v1
-release evidence. Remote/live model quality remains explicitly untested.
+Memory v1 core is now `preview_usable`, not stable. Exact commit
+`e329a4b4aad968870505e36ba0bfc1b4d7e00511` passed the dedicated GitHub
+`memory-v1-linux` and `memory-v1-windows` release jobs in
+[CI run 32945010830](https://github.com/andyandymike/born-agent/actions/runs/32945010830).
+Both jobs ran the focused release contract and the same extracted-tarball
+11-step demo in fresh Node processes. Its `memory_v1_release_demo_passed:`
+receipt covers restart, scope, retract, rebuild, mode-off equivalence, and zero
+remote requests. The broader `quality` and `windows-phase20` jobs remain
+repository-health signals, but unrelated legacy or Phase 20 timing failures are
+not Memory v1 maturity evidence. Remote/live model quality remains explicitly
+untested.
 
 ## Local capability platform
 

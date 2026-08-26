@@ -1,8 +1,8 @@
 # BornAgent Agent Memory 学习与交付路线
 
 > 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-26）
-> 当前基线：AM0/AM1与ML1–ML3已在exact commit `311c3cc`通过GitHub Linux/Windows repository与packed-artifact CI；production Agent默认仍为`off`
-> 当前切片：ML5本地11步new-process release candidate已通过，等待同一exact commit的专用`memory-v1-linux`/`memory-v1-windows` pack receipts；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
+> 当前基线：Memory v1 core已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused-contract + packed-artifact release jobs并达到`preview_usable`；production Agent默认仍为`off`
+> 当前切片：ML5闭环完成；下一步只选择一张Frontier Adapter experiment card，不把实验能力直接升为production；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
 
 ## 1. 为什么做这条路线
 
@@ -27,9 +27,10 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - schema 1 episode会原字节迁移到schema 2 revision + operation；10,000 revision/64 MiB record cap停止新写入，独立operation reserve仍允许retract。
 - 尚无普通chat的模型自动提炼、remote disclosure、frontier adapter、secure erase或跨repository/global memory。
 - `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d` 的 Windows/Linux repository gate、AM1、built paths、pack smoke 与 Pages 已通过。
-- `311c3ccc1a9374a961d116881a774ca4c41cc7ff` 的GitHub `quality`与`windows-phase20` jobs、两平台pack smoke和Pages均已通过，证明ML1–ML3 exact commit，不证明当前未提交ML4。
+- `311c3ccc1a9374a961d116881a774ca4c41cc7ff` 的GitHub `quality`与`windows-phase20` jobs、两平台pack smoke和Pages均已通过；它只证明当时的ML1–ML3切片，后续ML4/ML5由下一个exact commit单独闭环。
+- `e329a4b4aad968870505e36ba0bfc1b4d7e00511` 的专用`memory-v1-linux`与`memory-v1-windows` jobs均通过focused contract和同一个11步packed demo；Pages也通过。它证明Memory v1 core release合同，不证明remote/live model quality。
 
-这意味着ML1–ML5的真实本地长期记忆纵向路径和唯一发布演示已成立；当前仍是`preview_candidate`，因为专用Linux/Windows release jobs还没有对包含ML4/ML5的同一exact commit留下required receipts。整仓`quality/windows-phase20`继续报告全项目健康，但不再让无关Phase9/16/20时序替代Memory v1验收。
+这意味着ML1–ML5的真实本地长期记忆纵向路径和唯一发布演示已成立，Memory v1 core现在是`preview_usable`。整仓`quality/windows-phase20`继续报告全项目健康，但不让无关Phase9/16/20时序替代Memory v1验收。
 
 ## 3. 学习型交付规则
 
@@ -89,8 +90,8 @@ Actual engineering time
 | ML1 | Session A 产生一条 source-bound episode；进程重启后 `born memory list/show` 可读 | episodic memory、durable record、provenance、schema evolution | 8–16h | `exact_commit_verified` at `311c3cc` |
 | ML2 | Session B 可按同仓 current query 做 bounded exact/lexical/temporal recall | retrieval baseline、scope filter、ranking、abstention | 8–16h initial human budget; ~0.7h observed Agent wall-clock | `exact_commit_verified` at `311c3cc` |
 | ML3 | Agent 获得最多3条有界Host-rendered historical excerpts | prompt injection boundary、authority attenuation、context budgeting | 8–16h initial human budget; 1–3h calibrated; ~1.3h observed Agent wall-clock | `exact_commit_verified` at `311c3cc` |
-| ML4 | `remember/retract/rebuild/doctor`、hard bounds、source missing 与 mode-off fallback | lifecycle、derived index、privacy、failure recovery | 8–16h initial human budget; 2–5h calibrated Agent budget; ~1h33m actual | `local_product_verified`; included in ML5 candidate |
-| ML5 | Windows/Linux exact-commit、pack smoke、真实新进程演示与文档 | release evidence、operability、open-source handoff | 4–8h initial human budget; 1–3h calibrated Agent budget | `preview_candidate`; dedicated exact-commit CI pending |
+| ML4 | `remember/retract/rebuild/doctor`、hard bounds、source missing 与 mode-off fallback | lifecycle、derived index、privacy、failure recovery | 8–16h initial human budget; 2–5h calibrated Agent budget; ~1h33m actual | `local_product_verified`; covered by ML5 release closure |
+| ML5 | Windows/Linux exact-commit、pack smoke、真实新进程演示与文档 | release evidence、operability、open-source handoff | 4–8h initial human budget; 1–3h calibrated Agent budget; ~2h45m evidence window | `preview_usable` at `e329a4b` |
 
 Memory v1 的总预算目标为约 36–72 小时，而不是把 exhaustive research draft 的所有扩展一次实现，也不是一次连续工作承诺。预算不是完成证据；只有下述真实行为成立才能发布。
 
@@ -169,13 +170,6 @@ Memory v1 不承诺：
 
 ## 9. 下一步
 
-ML5按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)只做当前Memory v1候选的product closure：
+ML5已按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)完成product closure。下一步不是继续扩张core，而是从embedding、graph、consolidation、procedure或reflection中只选择一个明确学习问题，先写一张isolated experiment card：固定baseline、corpus、quality/token/latency指标、promotion条件与删除条件。未超过简单baseline的实验只保留学习结论，不进入production。
 
-1. 固定包含ML4/ML5和release evidence的exact commit；
-2. 在该commit上取得专用Linux/Windows focused contract与pack smoke；
-3. 用完全退出后的Session A/Session B执行唯一发布演示；
-4. 证明same-repository recall、wrong-repository 0、retract后0、rebuild等价与mode-off不变；
-5. 更新public handoff和准确的支持/不支持边界；
-6. 仅在两份`memory_v1_release_demo_passed`与上述证据同属一个exact commit时判断`preview_usable`。
-
-ML5不增加embedding、graph、automatic chat extraction、TUI、daemon或企业治理；它收口已实现纵向链路，不借发布阶段继续堆功能。
+Memory v1 core仍不增加普通chat自动提炼、remote disclosure、TUI、daemon或企业治理；`preview_usable`也不等于`stable`。

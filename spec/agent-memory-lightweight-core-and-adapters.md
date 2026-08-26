@@ -1,9 +1,9 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
 > Status: Active implementation contract（updated 2026-08-26）
-> Current slice: ML5 local 11-step new-process release candidate passed; ML2/ML3 commit `311c3cc` is pushed and its GitHub Linux/Windows repository/pack CI passed, Agent default remains `off`, remote provider injection remains zero; `preview_usable`等待专用`memory-v1-linux`/`memory-v1-windows`同一exact commit receipts
+> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511` after dedicated Linux/Windows focused-contract + packed-demo jobs passed; Agent default remains `off`, remote provider injection remains zero
 > Product boundary: local, single-user, repository-scoped, cross-session memory
-> Explicit non-claim: local ML5 evidence does not substitute for pending same-exact-commit Linux/Windows receipts, remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
+> Explicit non-claim: `preview_usable` does not mean stable or prove remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
 ## 0. 文档地位
 
@@ -692,7 +692,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 给出8–16小时估算分解和stop condition；
 - [x] 本spec已明确ML1完成后仍没有search/automatic recall/remember/retract。
 
-本地实现仍不得扩张到embedding、graph、TUI、procedure、sync或Application registry全量迁移。ML1已随`311c3cc`获得exact-commit跨平台证据，但Memory v1仍须等待ML5唯一演示后才可标记`preview_usable`。
+本地实现仍不得扩张到embedding、graph、TUI、procedure、sync或Application registry全量迁移。ML1已随`311c3cc`获得exact-commit跨平台证据，Memory v1 core随后由ML5唯一演示与专用跨平台jobs闭环为`preview_usable`。
 
 ## 16. ML2 implementation evidence
 
@@ -703,7 +703,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] wrong-scope 0、stale 0、100 candidate cap、recency tie、删除/损坏projection重建与canonical-change rebuild通过focused tests；
 - [x] extracted tarball正向读取exact source、搜索available episode，并在删除retrieval projection后恢复相同logical hits；
 - [x] 当前工作树lint/typecheck、1,310项non-PTY tests、适用PTY与clean build通过；
-- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；Memory v1整体仍不标`preview_usable`。
+- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；该切片当时不单独标`preview_usable`，现已由ML5闭环覆盖。
 
 ## 17. ML3 implementation evidence
 
@@ -715,7 +715,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 新进程Session B通过真实product path使用Session A episode；off和provider-network均为0条注入，remote路径不创建FTS projection；
 - [x] installed tarball直接加载ML3模块并通过bounded historical-only preparation probe；
 - [x] 当前工作树lint/typecheck、1,315项non-PTY tests、适用PTY与clean build通过；
-- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；Memory v1整体仍不标`preview_usable`。
+- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；该切片当时不单独标`preview_usable`，现已由ML5闭环覆盖。
 
 ## 18. ML4 implementation evidence
 
@@ -729,7 +729,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] `fts5-v2`绑定record/revision identity；删除整个retrieval后canonical logical hash不变，显式rebuild恢复active search；
 - [x] 本地全部16个`agent-memory`文件/54测试通过；完整repository gate的non-PTY 288 files/1,323 tests、适用PTY与clean build通过；
 - [x] final extracted-tarball smoke真实执行ML1 close/reopen、ML2 search/rebuild、ML3 bounded historical context与ML4完整lifecycle；
-- [x] ML4已进入已提交的ML5 local release candidate并通过唯一发布演示；专用同一exact commit Linux/Windows receipts仍待完成，因此仍不标`preview_usable`。
+- [x] ML4已进入ML5 exact release commit并通过唯一发布演示及专用同一SHA Linux/Windows jobs；Memory v1 core标为`preview_usable`。
 
 ## 19. ML5 release evidence
 
@@ -740,4 +740,4 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 演示暴露的第二repository non-zero catalog-head binding已修复，并由Phase21A顺序双仓库回归覆盖；
 - [x] 本地17个`agent-memory`文件/56测试、non-PTY 289 files/1,326 tests、适用PTY、clean build与final extracted-tarball 11/11 demo通过；
 - [x] 整仓`quality/windows-phase20`的无关Phase9/16/20 timing在两轮candidate CI中触发stop rule；ML5验收已收窄为专用`memory-v1-linux`/`memory-v1-windows` focused contract + pack jobs，不删除或伪装原整仓失败。
-- [ ] 必须等待同一`GITHUB_SHA`的两份专用job与`memory_v1_release_demo_passed` receipt后才标`preview_usable`。
+- [x] exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`的`memory-v1-linux`与`memory-v1-windows`均通过focused contract和packed demo；两项成功路径要求绑定同一`GITHUB_SHA`的`memory_v1_release_demo_passed` receipt，因此Memory v1 core标为`preview_usable`。
