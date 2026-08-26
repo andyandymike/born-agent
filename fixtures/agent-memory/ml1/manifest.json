@@ -1,0 +1,238 @@
+{
+  "expectedCanonicalBytes": 1583,
+  "expectedCanonicalJson": "{\"completion\":{\"evidenceSha256\":\"285977840ffe8e117a4638353af034e25482b5c2319e7e8859d0c1a6144e06da\",\"mode\":\"verified_finish_task\",\"reportSha256\":\"9a01a2343b42d175f8686267ef5fb63b24a1bb967de6d7e06bb53629791b4581\",\"steps\":3,\"toolCalls\":3},\"kind\":\"episode\",\"occurredAt\":\"2026-08-24T00:00:00.000Z\",\"origin\":\"deterministic_episode\",\"recordId\":\"episode_7ca1d1fca34ff6b942238cf409847190585ca71ea3ef203151c1d93af536d374\",\"recordSha256\":\"1d7f0ed8aacc50707ad07a9b7b9d53edf413345a40bd811e5ede83a74a941d95\",\"schemaVersion\":1,\"scope\":{\"applicationRepositoryId\":\"00000000-0000-4000-8000-000000000103\",\"canonicalRootIdentitySha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"ownerPrincipalId\":\"local_owner\"},\"source\":{\"endEventId\":\"00000000-0000-4000-8000-000000001033\",\"endRawSha256\":\"ae954d7e1bc4a642347a71fec00bbac245f74f1504ed8168c4c7a08d6666aaad\",\"endSequence\":33,\"kind\":\"session_run_range\",\"rangeSha256\":\"a7f5a3abb48b51224ce9515535034ccd9b6846db2a1dd2df94bd4abe34a5fb98\",\"runId\":\"00000000-0000-4000-8000-000000000102\",\"sessionId\":\"00000000-0000-4000-8000-000000000101\",\"startEventId\":\"00000000-0000-4000-8000-000000001001\",\"startRawSha256\":\"668accf748bf6f4149029f20ee9df9f6e5e23f7e28a1f00abc43bc5204363ce0\",\"startSequence\":1},\"taskInputSha256\":\"02b47db3369667150616c57f249e83bbeb3988c82f8d1c694a7f69a491bfb01a\",\"taskPreview\":\"Update README and run pnpm check\",\"text\":\"Task: Update README and run pnpm check\\nOutcome: completed\\nCompletion mode: verified_finish_task\\nSteps: 3\\nTool calls: 3\\nEvidence: 285977840ffe8e117a4638353af034e25482b5c2319e7e8859d0c1a6144e06da\"}",
+  "expectedRecord": {
+    "completion": {
+      "evidenceSha256": "285977840ffe8e117a4638353af034e25482b5c2319e7e8859d0c1a6144e06da",
+      "mode": "verified_finish_task",
+      "reportSha256": "9a01a2343b42d175f8686267ef5fb63b24a1bb967de6d7e06bb53629791b4581",
+      "steps": 3,
+      "toolCalls": 3
+    },
+    "kind": "episode",
+    "occurredAt": "2026-08-24T00:00:00.000Z",
+    "origin": "deterministic_episode",
+    "recordId": "episode_7ca1d1fca34ff6b942238cf409847190585ca71ea3ef203151c1d93af536d374",
+    "schemaVersion": 1,
+    "scope": {
+      "applicationRepositoryId": "00000000-0000-4000-8000-000000000103",
+      "canonicalRootIdentitySha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "ownerPrincipalId": "local_owner"
+    },
+    "source": {
+      "endEventId": "00000000-0000-4000-8000-000000001033",
+      "endRawSha256": "ae954d7e1bc4a642347a71fec00bbac245f74f1504ed8168c4c7a08d6666aaad",
+      "endSequence": 33,
+      "kind": "session_run_range",
+      "rangeSha256": "a7f5a3abb48b51224ce9515535034ccd9b6846db2a1dd2df94bd4abe34a5fb98",
+      "runId": "00000000-0000-4000-8000-000000000102",
+      "sessionId": "00000000-0000-4000-8000-000000000101",
+      "startEventId": "00000000-0000-4000-8000-000000001001",
+      "startRawSha256": "668accf748bf6f4149029f20ee9df9f6e5e23f7e28a1f00abc43bc5204363ce0",
+      "startSequence": 1
+    },
+    "taskInputSha256": "02b47db3369667150616c57f249e83bbeb3988c82f8d1c694a7f69a491bfb01a",
+    "taskPreview": "Update README and run pnpm check",
+    "text": "Task: Update README and run pnpm check\nOutcome: completed\nCompletion mode: verified_finish_task\nSteps: 3\nTool calls: 3\nEvidence: 285977840ffe8e117a4638353af034e25482b5c2319e7e8859d0c1a6144e06da",
+    "recordSha256": "1d7f0ed8aacc50707ad07a9b7b9d53edf413345a40bd811e5ede83a74a941d95"
+  },
+  "fixtureId": "agent-memory-ml1-golden-v1",
+  "mutations": [
+    {
+      "expected": "already_present",
+      "id": "duplicate_ingest"
+    },
+    {
+      "expected": "not_visible",
+      "id": "wrong_scope"
+    },
+    {
+      "expected": "stale",
+      "id": "missing_line"
+    },
+    {
+      "expected": "stale",
+      "id": "changed_raw_byte"
+    },
+    {
+      "expected": "memory_store_corrupt",
+      "id": "future_schema"
+    },
+    {
+      "expected": "not_admitted",
+      "id": "incomplete_run"
+    },
+    {
+      "expected": "no_store",
+      "id": "mode_off"
+    }
+  ],
+  "rawLines": [
+    {
+      "eventId": "00000000-0000-4000-8000-000000001001",
+      "rawSha256": "668accf748bf6f4149029f20ee9df9f6e5e23f7e28a1f00abc43bc5204363ce0",
+      "sessionSequence": 1
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001002",
+      "rawSha256": "5bfcf66e12700e30530220110d4ae50f8b1dbfc43127249285cf3e262b65f2cd",
+      "sessionSequence": 2
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001003",
+      "rawSha256": "9f3a7ec57c91b5dab12524ca18f2f2cded3d51e5201d61003a6f2c165801a0e9",
+      "sessionSequence": 3
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001004",
+      "rawSha256": "ca3191d998ce5baf7c1c9c7f51c0c9d10b6d5902a58b5aa7f24fb065f52cc967",
+      "sessionSequence": 4
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001005",
+      "rawSha256": "f50a8bebe3a4746937ace8e95d82833ae7ec4fcc27b1f3a9ae4f659dd75b7c91",
+      "sessionSequence": 5
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001006",
+      "rawSha256": "6d99fe50de6e8b537b770e6c431196c6fe42e6a9aeb81b573532c3ba0b68ca82",
+      "sessionSequence": 6
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001007",
+      "rawSha256": "6dd159b1a3cfe4f38df74650257cdddb5fb9663011d75208b3c0ac5ea5f22568",
+      "sessionSequence": 7
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001008",
+      "rawSha256": "eeb74445c8ef058e7bca97ff0d39410c62c1fc0edab1c4762dc7b90898583e85",
+      "sessionSequence": 8
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001009",
+      "rawSha256": "65b4b193273a5dc0db995d0aa165e703f1469e4dffcfe3049785578fe29e2b2b",
+      "sessionSequence": 9
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001010",
+      "rawSha256": "e3480300053af245f0c9052dd0922171fbc815c3e3106459eb847c9af9f05fe1",
+      "sessionSequence": 10
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001011",
+      "rawSha256": "71edccc14e78a2a0e2096315fe2228164307a2b9c782fad93d40094949803c5b",
+      "sessionSequence": 11
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001012",
+      "rawSha256": "e1580c5d6efef10d5e61130ea854760ca8fe2ad6d391318ce9e2216c126bd38b",
+      "sessionSequence": 12
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001013",
+      "rawSha256": "062b00ee16b7166cd308664c2713fbffca7fa4fcb8f8a428fe7a37902dd9db70",
+      "sessionSequence": 13
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001014",
+      "rawSha256": "17c7c2402da3b65e7bc4dbb997695b9a69e1532c1acd229a3515d6ad099cf2a6",
+      "sessionSequence": 14
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001015",
+      "rawSha256": "759a3162c1e0c362204c0dfa935cec9ec5c9e98017c5a03bfa81ee8401cc3194",
+      "sessionSequence": 15
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001016",
+      "rawSha256": "1b902982ebb69dd8a5a937fefccffe5f25d15034520520f24f6d681cd950a5b1",
+      "sessionSequence": 16
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001017",
+      "rawSha256": "3b6ce5cb298d71691c55d1e4a932982c7579e9a64a91244d9d638dd34dd6ea70",
+      "sessionSequence": 17
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001018",
+      "rawSha256": "901c07a7c153d6a76b6dd5512d2658946ca45cb180fda7d863589b971bcad9e5",
+      "sessionSequence": 18
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001019",
+      "rawSha256": "c1198834da3e2059649468b179cfd9da62da1b71e8415326f59f546be68ad181",
+      "sessionSequence": 19
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001020",
+      "rawSha256": "2355f1159d29f8689a7d7593fb6393c11169086ced1c219e4d510e1e1e26ab19",
+      "sessionSequence": 20
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001021",
+      "rawSha256": "50454de45c6a8175f717e66ba0ddb8471159cfb4e6117b8c9818031b40ecf1fb",
+      "sessionSequence": 21
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001022",
+      "rawSha256": "04d42a2f397393b7b7059b0258dc80066461bfc0c24aa0802ae68cef193fb8b0",
+      "sessionSequence": 22
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001023",
+      "rawSha256": "054de6608e59f705ef828959be7fdb1b2a6e676b3da5d01d767a002d082cf965",
+      "sessionSequence": 23
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001024",
+      "rawSha256": "c7f1ef10d29d0e685ddecad61a4d660eb0c131009493d19f2670ffec1fb4e484",
+      "sessionSequence": 24
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001025",
+      "rawSha256": "ce1d4fa6df8cd3667d89fb2911138e323dd553daf14c22feee3edb0b69d4ca85",
+      "sessionSequence": 25
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001026",
+      "rawSha256": "e4a89738db54762a89233ca58e2784339e4107789253a404425eb0a154e01c9c",
+      "sessionSequence": 26
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001027",
+      "rawSha256": "301761e4fcf2cd0f548e8100957462e95b5489f1fe52a4429caf0b5010513932",
+      "sessionSequence": 27
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001028",
+      "rawSha256": "e3f6690b7c88d701d69a9046786c1e59e7df4b94c83ad731445292002f878977",
+      "sessionSequence": 28
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001029",
+      "rawSha256": "ef1ece0363bb3a7ef6a98919f924e70958ca622ce2c4bd23658a083d2f5264a4",
+      "sessionSequence": 29
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001030",
+      "rawSha256": "4929f435b827f793dd373985cfe950f8e801a1d0fe186c9c5bd030cdae1ef769",
+      "sessionSequence": 30
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001031",
+      "rawSha256": "48048e1ac589feb919ca4a67f183ba41d1afeccff54ea02b0a2f132dfda8ffdb",
+      "sessionSequence": 31
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001032",
+      "rawSha256": "3a6952a73eb135aa11b7314c730e911512e06c2bde7c8da8eac0ca5a4c4ba2b5",
+      "sessionSequence": 32
+    },
+    {
+      "eventId": "00000000-0000-4000-8000-000000001033",
+      "rawSha256": "ae954d7e1bc4a642347a71fec00bbac245f74f1504ed8168c4c7a08d6666aaad",
+      "sessionSequence": 33
+    }
+  ],
+  "schemaVersion": 1
+}

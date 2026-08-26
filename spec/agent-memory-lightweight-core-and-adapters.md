@@ -1,7 +1,7 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
-> Status: Active implementation contract（2026-08-24）
-> Current slice: ML1 `preflight_ready`; code `not_started`; production memory remains `off`
+> Status: Active implementation contract（updated 2026-08-26）
+> Current slice: ML1 code `implemented` and Windows local product/pack gates passed; production default remains `off`; `preview_usable`仍等待同一exact commit的Linux/Windows CI evidence
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: this document does not complete AM2–AM6, Memory v1, retrieval, or automatic recall
 
@@ -601,33 +601,37 @@ Tests只证明它们覆盖的行为。没有 live provider 请求也可以完成
 src/memory/core/
   ml1-episode-record.ts
   ml1-episode-codec.ts
+  ml1-memory-error.ts
 src/memory/store/
+  memory-state-paths.ts
   sqlite-episode-store.ts
 src/memory/episodes/
   deterministic-episode-builder.ts
+  memory-admission.ts
 src/memory/product/
   memory-service.ts
-  memory-cli-projection.ts
+src/commands/memory.ts
 src/memory/retrieval/        # ML2才创建
 src/memory/use/              # ML3才创建
 src/memory/adapters/         # ML5 preview后且第二个真实实现出现时才创建
-tests/unit/memory-*.test.ts
-tests/integration/memory-*.test.ts
+tests/unit/agent-memory-ml1-*.test.ts
+tests/integration/agent-memory-ml1-*.test.ts
 docs/agent-memory/ml1-*.md
 ```
 
 关键边界用 `// MEMORY-MLx:` 中文 why/invariant 注释，沿真实调用链可搜索。每个切片结束时必须更新 learning track 状态，并同时报告“现在能做什么”和“仍然不能做什么”。
 
-## 15. ML1 implementation start checklist
+## 15. ML1 implementation evidence
 
-ML1处于`preflight_ready`。开始feature code前只完成以下窄preflight，不再补企业平台设计：
+ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现与尚未发生的exact-commit跨平台发布证明：
 
-- [ ] 运行并记录Windows/Linux `node:sqlite` open/transaction/reopen与pack probe；FTS5留给ML2；
-- [ ] 确认exact private state root、local principal和canonical root identity读取路径；
+- [x] Windows `node:sqlite` open/transaction/reopen与真实tarball `memory status/show` probe通过；FTS5留给ML2；
+- [ ] 同一exact commit的Linux与Windows CI重新执行focused tests和pack probe；在此之前不标`preview_usable`；
+- [x] 确认exact private state root、local principal和canonical root identity读取路径；
 - [x] 本spec已冻结`Ml1EpisodeRecordV1`、exact range、builder template与episode-only store port；
-- [ ] 把第4.5节golden contract落为tracked fixture与manifest；
-- [ ] 冻结 `MEM-L01`–`MEM-L06` 的 focused manifest；
-- [ ] 给出8–16小时估算分解和stop condition；
+- [x] 把第4.5节golden contract落为tracked fixture与manifest；
+- [x] 冻结 `MEM-L01`–`MEM-L06` 的 focused manifest；
+- [x] 给出8–16小时估算分解和stop condition；
 - [x] 本spec已明确ML1完成后仍没有search/automatic recall/remember/retract。
 
-清单完成后直接进入ML1 vertical slice；不得先实现embedding、graph、TUI、procedure、sync或Application registry全量迁移。
+本地实现仍不得扩张到embedding、graph、TUI、procedure、sync或Application registry全量迁移。跨平台证据收口后才进入ML2。

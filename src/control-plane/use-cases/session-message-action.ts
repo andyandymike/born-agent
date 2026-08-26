@@ -63,6 +63,7 @@ export const agentSessionMessagePayloadV1Schema = z.object({
   maxSteps: boundedOption,
   maxTokens: boundedOption,
   maxToolOutputBytes: boundedOption,
+  memoryMode: z.enum(["off", "local"]).optional(),
   mcpPromptArgumentsJson: z.string().max(64 * 1024).optional(),
   mcpPromptSelection: boundedOption,
   mcpServerIds: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u)).max(32).optional(),
@@ -121,6 +122,8 @@ export interface SessionMessageLaunchPortV1 {
     authenticatedMutation: AuthenticatedTaskMutationBindingV1;
     onRunStarted: (event: Extract<RunEvent, { type: "run.started" }>) => Promise<void>;
     payload: AgentSessionMessagePayloadV1;
+    canonicalRootIdentitySha256: string;
+    repositoryId: string;
     repositoryRoot: string;
     requestId: string;
     runId: string;
@@ -583,6 +586,8 @@ export function createSessionMessageAction(input: {
                 }),
                 onRunStarted,
                 payload,
+                canonicalRootIdentitySha256: repository.canonicalRootIdentitySha256,
+                repositoryId: repository.repositoryId,
                 repositoryRoot,
                 requestId: context.requestId,
                 runId: context.operationId,

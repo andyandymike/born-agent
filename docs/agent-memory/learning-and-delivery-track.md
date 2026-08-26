@@ -1,8 +1,8 @@
 # BornAgent Agent Memory 学习与交付路线
 
-> 状态：Active / Learning goals and slice sequencing authority（2026-08-24）
-> 当前基线：AM0/AM1 组件与 exact-commit CI 已通过；production memory 仍为 `off`，尚无跨 session 长期记忆
-> 当前切片：ML1 — 可观察的跨 session episodic memory；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
+> 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-26）
+> 当前基线：AM0/AM1 exact-commit CI已通过；ML1本地Windows product/full gate与installed-pack probe已通过，production默认仍为`off`
+> 当前切片：ML1实现已完成，等待同一exact commit的Linux/Windows CI后再晋级`preview_usable`；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
 
 ## 1. 为什么做这条路线
 
@@ -20,7 +20,8 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - AM0 已交付 deterministic corpus、benchmark 和 evidence receipt；它不改变 production behavior。
 - AM1 已交付 exact-prefix incremental projector、bounded working snapshot/sidecar 和 cold-equivalence evidence。
 - production `AgentContextRuntime` 尚未启用 AM1；默认仍为 `off`。
-- 当前 session 能保存并恢复对话，但没有跨 session ledger、retrieval、automatic recall 或 memory product surface。
+- 当前session仍保存完整对话；显式`--memory local`现在可在成功终态后另存一条跨进程episode，并由`memory status/list/show`检查。
+- 尚无memory search、automatic recall、provider context注入、普通chat提炼或用户`remember/retract` lifecycle。
 - `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d` 的 Windows/Linux repository gate、AM1、built paths、pack smoke 与 Pages 已通过。
 
 这意味着 AM0/AM1 是已验证的工程组件，不是用户可用长期记忆的完成声明。
@@ -80,7 +81,7 @@ Actual engineering time
 | Slice | 产品结果 | 主要学习目标 | 初始预算 | 完成状态 |
 |---|---|---|---:|---|
 | ML0 | AM0/AM1 baseline 与 working-state component | event sourcing、cold replay、suffix projection、cache invalidation | 已发生 | `component_verified` |
-| ML1 | Session A 产生一条 source-bound episode；进程重启后 `born memory list/show` 可读 | episodic memory、durable record、provenance、schema evolution | 8–16h | `preflight_ready` |
+| ML1 | Session A 产生一条 source-bound episode；进程重启后 `born memory list/show` 可读 | episodic memory、durable record、provenance、schema evolution | 8–16h | `local_product_verified`; exact-commit CI pending |
 | ML2 | Session B 可按同仓 current query 做 bounded exact/lexical/temporal recall | retrieval baseline、scope filter、ranking、abstention | 8–16h | `not_started` |
 | ML3 | Agent 获得最多3条有界Host-rendered historical excerpts | prompt injection boundary、authority attenuation、context budgeting | 8–16h | `not_started` |
 | ML4 | `remember/retract/rebuild/doctor`、hard bounds、source missing 与 mode-off fallback | lifecycle、derived index、privacy、failure recovery | 8–16h | `not_started` |

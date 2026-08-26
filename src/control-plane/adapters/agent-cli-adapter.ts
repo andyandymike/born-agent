@@ -433,6 +433,40 @@ async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promis
               applicationCommit: input.applicationCommit,
               applicationCancellation: input.applicationCancellation,
               authenticatedMutation: input.authenticatedMutation,
+              ...(input.payload.memoryMode === "local"
+                ? {
+                    afterTerminalPersisted: async () => {
+                      const [
+                        { Ml1MemoryService },
+                        { SqliteEpisodeStore },
+                      ] = await Promise.all([
+                        // MEMORY-ML1: off 路径连 node:sqlite 模块都不加载；local 仅在 durable terminal 后加载。
+                        import("../../memory/product/memory-service.js"),
+                        import("../../memory/store/sqlite-episode-store.js"),
+                      ]);
+                      const store = await SqliteEpisodeStore.create({
+                        stateRoot: runtime.controlPlaneStateRoot!,
+                      });
+                      try {
+                        const result = await new Ml1MemoryService({
+                          repositoryId: input.repositoryId,
+                          scope: Object.freeze({
+                            applicationRepositoryId: input.repositoryId,
+                            canonicalRootIdentitySha256: input.canonicalRootIdentitySha256,
+                            ownerPrincipalId: input.applicationCommit.principalId,
+                          }),
+                          store,
+                          workspace: input.repositoryRoot,
+                        }).ingestCompletedRun(input.sessionId, input.runId);
+                        if (result.status === "not_admitted") {
+                          io.stderr.write(`memory_episode_not_admitted: ${result.reason}\n`);
+                        }
+                      } finally {
+                        store.close();
+                      }
+                    },
+                  }
+                : {}),
               modelTask: input.payload.task,
               onRunStarted: input.onRunStarted,
               runId: input.runId,

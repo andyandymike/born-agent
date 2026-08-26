@@ -435,6 +435,112 @@ try {
     );
   }
 
+  // ML1: exercise the installed tarball's actual codec/store, close every
+  // handle, reopen in a fresh store instance, then inspect it through the
+  // packed CLI. CI runs this same path on Windows and Linux.
+  const ml1RepositoryRoot = join(temporaryRoot, "ml1-repository");
+  const ml1StateRoot = join(temporaryRoot, "ml1-state");
+  await mkdir(ml1RepositoryRoot, { recursive: true });
+  const [
+    { sha256Canonical: packedSha256Canonical },
+    { ControlArtifactStore: PackedControlArtifactStore },
+    { loadOrCreateHostControlAuthority: loadPackedMl1Authority },
+    { RepositoryRegistry: PackedRepositoryRegistry },
+    { createMl1EpisodeRecordV1: createPackedMl1Episode },
+    { SqliteEpisodeStore: PackedSqliteEpisodeStore },
+  ] = await Promise.all([
+    import(pathToFileURL(join(packageRoot, "dist", "completion", "canonical-json.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "control-artifact-store.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "host-control-identity.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "control-plane", "repository-registry.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "core", "ml1-episode-record.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "store", "sqlite-episode-store.js")).href),
+  ]);
+  const ml1Authority = await loadPackedMl1Authority({ root: ml1StateRoot });
+  const ml1Repositories = new PackedRepositoryRegistry(
+    new PackedControlArtifactStore(ml1Authority.paths, ml1Authority.integrityKey),
+    ml1Authority.identity,
+    ml1Authority.paths,
+  );
+  const ml1Registration = (await ml1Repositories.register({
+    expectedHead: await ml1Repositories.head(),
+    operationId: randomUUID(),
+    root: ml1RepositoryRoot,
+  })).registration;
+  const ml1Scope = {
+    applicationRepositoryId: ml1Registration.repositoryId,
+    canonicalRootIdentitySha256: ml1Registration.canonicalRootIdentitySha256,
+    ownerPrincipalId: ml1Authority.localOwner.principalId,
+  };
+  const ml1Source = {
+    endEventId: "pack-probe-end",
+    endRawSha256: "b".repeat(64),
+    endSequence: 2,
+    kind: "session_run_range",
+    rangeSha256: "c".repeat(64),
+    runId: "pack-probe-run",
+    sessionId: "pack-probe-session",
+    startEventId: "pack-probe-start",
+    startRawSha256: "a".repeat(64),
+    startSequence: 1,
+  };
+  const ml1Completion = {
+    evidenceSha256: null,
+    mode: "model_final",
+    reportSha256: null,
+    steps: 1,
+    toolCalls: 0,
+  };
+  const ml1Task = "installed package SQLite reopen probe";
+  const ml1Record = createPackedMl1Episode({
+    completion: ml1Completion,
+    kind: "episode",
+    occurredAt: "2026-08-26T00:00:00.000Z",
+    origin: "deterministic_episode",
+    recordId: `episode_${packedSha256Canonical({ schema_version: 1, scope: ml1Scope, source: ml1Source })}`,
+    schemaVersion: 1,
+    scope: ml1Scope,
+    source: ml1Source,
+    taskInputSha256: sha256(ml1Task),
+    taskPreview: ml1Task,
+    text: [
+      `Task: ${ml1Task}`,
+      "Outcome: completed",
+      "Completion mode: model_final",
+      "Steps: 1",
+      "Tool calls: 0",
+      "Evidence: none",
+    ].join("\n"),
+  });
+  const ml1FirstStore = await PackedSqliteEpisodeStore.create({ stateRoot: ml1StateRoot });
+  const ml1Ingest = await ml1FirstStore.ingestEpisode(ml1Record);
+  ml1FirstStore.close();
+  const ml1SecondStore = await PackedSqliteEpisodeStore.create({ stateRoot: ml1StateRoot });
+  const ml1Readback = await ml1SecondStore.getEpisode({ recordId: ml1Record.recordId, scope: ml1Scope });
+  ml1SecondStore.close();
+  if (ml1Ingest.status !== "inserted" || ml1Readback?.recordSha256 !== ml1Record.recordSha256) {
+    throw new Error("installed ML1 SQLite close/reopen probe changed its logical episode");
+  }
+  const ml1Environment = { ...process.env, BORN_CONTROL_STATE_ROOT: ml1StateRoot };
+  const ml1Status = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "status", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  const ml1Show = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "show", ml1Record.recordId, "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml1Status.episodeCount !== 1 || ml1Status.logicalSha256 === undefined ||
+    ml1Show.record?.recordSha256 !== ml1Record.recordSha256 || ml1Show.sourceStatus !== "stale"
+  ) {
+    throw new Error("installed ML1 memory CLI did not inspect the reopened logical episode");
+  }
+
   // RIC4: exercise the real binary from the extracted tarball. This is kept in
   // the ordinary pack smoke too, so the release path cannot silently omit the
   // selected v2 cache implementation.
@@ -1607,7 +1713,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; passed the installed ML1 SQLite close/reopen and memory status/show probe, ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, {
     force: true,

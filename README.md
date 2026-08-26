@@ -77,6 +77,30 @@ written to session evidence. Do not put secrets in prompts.
 validated literal-loopback Ollama `/api/tags` endpoint. It never follows
 redirects, downloads a model, or turns discovery into live-verification evidence.
 
+## Experimental local episodic memory
+
+ML1 adds an opt-in, repository-scoped episode after an Agent run reaches a
+durable successful terminal. Memory remains `off` by default; the off path does
+not load SQLite, open a memory database, retrieve history, or alter model
+context.
+
+```powershell
+corepack pnpm dev agent "Inspect and verify this repository" --memory local
+corepack pnpm dev memory status --json
+corepack pnpm dev memory list --json
+corepack pnpm dev memory show <episode-id> --json
+```
+
+Each episode is deterministically rebuilt from exact session JSONL hashes,
+bound to the local owner plus one active repository/canonical-root identity,
+screened before persistence, and capped by record and logical-byte limits.
+`list` exposes only source-available records; `show` marks missing or changed
+source evidence as stale. Inspection commands never auto-register a repository.
+
+ML1 is storage and inspection, not recall: it does not search memory, inject it
+into later prompts, extract facts from ordinary chat, or implement
+`remember`/`retract`. Those remain separate later slices.
+
 ## Local capability platform
 
 Phase 18 now has local Skills, stdio MCP resources/user prompts, declarative

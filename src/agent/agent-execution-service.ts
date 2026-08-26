@@ -223,6 +223,8 @@ export interface FreshTaskExecution {
   readonly capabilitySnapshot?: CapabilitySnapshotV1;
   readonly delegatedCapabilityIds?: readonly string[];
   readonly modelTask: string;
+  /** Host-owned derived-memory hook; invoked only after a completed terminal is durable. */
+  readonly afterTerminalPersisted?: () => Promise<void>;
   readonly onTaskNodeStarted?: () => void;
   readonly onRunStarted?: (event: Extract<RunEvent, { type: "run.started" }>) => Promise<void> | void;
   readonly runId: string;
@@ -2271,6 +2273,21 @@ export async function executeAgentExecution(
       userController.signal,
     );
     await terminator.terminate(outcome.terminal, outcome.terminalEvent);
+    if (
+      outcome.terminal.type === "completed" &&
+      freshTaskExecution?.afterTerminalPersisted !== undefined
+    ) {
+      try {
+        await freshTaskExecution.afterTerminalPersisted();
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error &&
+            typeof error.code === "string" && /^memory_[a-z0-9_]+$/u.test(error.code)
+          ? error.code
+          : "memory_ingest_failed";
+        // MEMORY-ML1: derived memory 失败不能改写已落盘 terminal 或原始 exit code。
+        renderer.renderDiagnostic(`memory_ingest_failed: ${code}`);
+      }
+    }
     // PHASE16: the Goal-level OutcomeReport is the only product report for
     // tracked runs. Legacy runs retain the Phase7 RunReport surface.
     if (phase16Binding === undefined && outcome.completionReport !== undefined) {

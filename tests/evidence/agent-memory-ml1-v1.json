@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "agent-memory-ml1-v1",
+  "cases": [
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml1-cli.test.ts",
+      "fullName": "ML1 product path keeps memory mode off storage-free and behavior-neutral",
+      "id": "MEM-L01",
+      "invariant": "The default and explicit off paths do not create or open the memory database and do not change the ordinary Agent result.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml1-episode.test.ts",
+      "fullName": "ML1 deterministic episode builder matches the frozen verified run golden",
+      "id": "MEM-L02",
+      "invariant": "One exact completed Agent run produces one byte-stable source-bound episode and unsafe or incomplete runs produce none.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml1-cli.test.ts",
+      "fullName": "ML1 packed-style CLI reads the same logical episode after a full process restart",
+      "id": "MEM-L03",
+      "invariant": "A second Node process lists and shows the exact canonical record and record hash written by the first process.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml1-store.test.ts",
+      "fullName": "ML1 SQLite episode store applies exact scope predicates to every get and list",
+      "id": "MEM-L04",
+      "invariant": "A different principal, repository id, or canonical root identity observes zero records and cannot reuse a foreign cursor.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml1-store.test.ts",
+      "fullName": "ML1 SQLite episode store makes duplicate ingest idempotent and conflicting bytes corrupt",
+      "id": "MEM-L05",
+      "invariant": "Ten identical ingests leave one row while the same record id with a different hash is rejected without overwrite.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml1-cli.test.ts",
+      "fullName": "ML1 show marks missing or tampered exact session evidence stale",
+      "id": "MEM-L06",
+      "invariant": "Missing lines or changed raw bytes never produce an available source view or a source excerpt.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    }
+  ]
+}

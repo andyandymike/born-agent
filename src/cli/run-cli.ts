@@ -1,4 +1,4 @@
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, Option } from "commander";
 
 import { executeAgentThroughApplicationService } from "../control-plane/adapters/agent-cli-adapter.js";
 import { executeChatThroughApplicationService } from "../control-plane/adapters/chat-application-cli-adapter.js";
@@ -120,6 +120,37 @@ export async function runCli(
     });
 
   let commandExitCode = 0;
+
+  const memory = program
+    .command("memory")
+    .description("Inspect exact-source local ML1 memory episodes.");
+
+  memory
+    .command("status")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean }) => {
+      const { executeMemoryStatus } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryStatus(options, runtime, io);
+    });
+
+  memory
+    .command("list")
+    .option("--limit <count>", "page size from 1 to 100")
+    .option("--cursor <cursor>", "scope-bound continuation cursor")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { cursor?: string; json: boolean; limit?: string }) => {
+      const { executeMemoryList } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryList(options, runtime, io);
+    });
+
+  memory
+    .command("show")
+    .argument("<record-id>", "exact episode record ID")
+    .option("--json", "write versioned JSON", false)
+    .action(async (recordId: string, options: { json: boolean }) => {
+      const { executeMemoryShow } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryShow(recordId, options, runtime, io);
+    });
 
   const internal = program.command("internal", { hidden: true });
   internal
@@ -540,6 +571,11 @@ export async function runCli(
       "timeout for each provider request",
     )
     .option("--max-tokens <tokens>", "maximum reported total tokens")
+    .addOption(
+      new Option("--memory <mode>", "terminal episode memory: off or local")
+        .choices(["off", "local"])
+        .default("off"),
+    )
     .option(
       "--edit-approval <mode>",
       "file edit approval: ask or deny",
@@ -616,6 +652,7 @@ export async function runCli(
           maxSteps?: string;
           maxTokens?: string;
           maxToolOutputBytes?: string;
+          memory: "local" | "off";
           mcp: string[];
           mcpPrompt?: string;
           mcpPromptArgs?: string;
@@ -654,6 +691,7 @@ export async function runCli(
             maxSteps: options.maxSteps,
             maxTokens: options.maxTokens,
             maxToolOutputBytes: options.maxToolOutputBytes,
+            memoryMode: options.memory,
             mcpServerIds: options.mcp,
             mcpPromptArgumentsJson: options.mcpPromptArgs,
             mcpPromptSelection: options.mcpPrompt,
