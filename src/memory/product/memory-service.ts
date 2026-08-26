@@ -69,7 +69,7 @@ export class Ml1MemoryService {
       ...input,
       scope: this.input.scope,
     });
-    const views = await Promise.all(page.items.map((record) => this.inspectSource(record)));
+    const views = await Promise.all(page.items.map((record) => this.inspectEpisodeSource(record)));
     return Object.freeze({
       items: Object.freeze(views.filter((view) => view.sourceStatus === "available")),
       nextCursor: page.nextCursor,
@@ -78,10 +78,11 @@ export class Ml1MemoryService {
 
   async show(recordId: string): Promise<Ml1EpisodeViewV1 | null> {
     const record = await this.input.store.getEpisode({ recordId, scope: this.input.scope });
-    return record === null ? null : this.inspectSource(record);
+    return record === null ? null : this.inspectEpisodeSource(record);
   }
 
-  private async inspectSource(record: Ml1EpisodeRecordV1): Promise<Ml1EpisodeViewV1> {
+  /** ML2 reuses the exact ML1 source check before exposing any ranked hit. */
+  async inspectEpisodeSource(record: Ml1EpisodeRecordV1): Promise<Ml1EpisodeViewV1> {
     let evidence: ExactSessionEvidenceV1;
     try {
       evidence = await this.reader().read({

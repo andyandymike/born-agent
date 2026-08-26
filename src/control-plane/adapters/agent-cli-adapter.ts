@@ -435,12 +435,19 @@ async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promis
               authenticatedMutation: input.authenticatedMutation,
               ...(input.payload.memoryMode === "local"
                 ? {
+                    localMemory: {
+                      canonicalRootIdentitySha256: input.canonicalRootIdentitySha256,
+                      ownerPrincipalId: input.applicationCommit.principalId,
+                      repositoryId: input.repositoryId,
+                      stateRoot: runtime.controlPlaneStateRoot!,
+                      workspace: input.repositoryRoot,
+                    },
                     afterTerminalPersisted: async () => {
                       const [
                         { Ml1MemoryService },
                         { SqliteEpisodeStore },
                       ] = await Promise.all([
-                        // MEMORY-ML1: off 路径连 node:sqlite 模块都不加载；local 仅在 durable terminal 后加载。
+                        // MEMORY-ML1: off 路径不加载 node:sqlite；ML3 local read发生在request前，write仍只在durable terminal后。
                         import("../../memory/product/memory-service.js"),
                         import("../../memory/store/sqlite-episode-store.js"),
                       ]);

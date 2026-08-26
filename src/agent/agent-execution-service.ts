@@ -45,6 +45,7 @@ import type {
 } from "../model/model-backend.js";
 import type { BackendCreationRequest } from "../model/backend-factory.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
+import type { SqliteEpisodeStore } from "../memory/store/sqlite-episode-store.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
@@ -64,6 +65,7 @@ import {
 } from "../context/agent-context-runtime.js";
 import {
   AgentContextController,
+  type AgentContextControllerOptions,
   type ContextEventAppender,
 } from "../context/agent-context-controller.js";
 import type {
@@ -223,6 +225,14 @@ export interface FreshTaskExecution {
   readonly capabilitySnapshot?: CapabilitySnapshotV1;
   readonly delegatedCapabilityIds?: readonly string[];
   readonly modelTask: string;
+  /** Exact Host-owned scope for opt-in local recall; absent keeps request planning storage-free. */
+  readonly localMemory?: Readonly<{
+    readonly canonicalRootIdentitySha256: string;
+    readonly ownerPrincipalId: string;
+    readonly repositoryId: string;
+    readonly stateRoot: string;
+    readonly workspace: string;
+  }>;
   /** Host-owned derived-memory hook; invoked only after a completed terminal is durable. */
   readonly afterTerminalPersisted?: () => Promise<void>;
   readonly onTaskNodeStarted?: () => void;
@@ -850,6 +860,85 @@ export async function executeAgentExecution(
     await writer.close().catch(() => undefined);
     return 2;
   }
+  const historicalContext =
+    options.memoryMode === "local" &&
+    freshTaskExecution?.localMemory !== undefined &&
+    policyRequest.source !== "provider_network"
+      ? async (request: Parameters<NonNullable<AgentContextControllerOptions["historicalContext"]>>[0]) => {
+          const localMemory = freshTaskExecution.localMemory!;
+          let store: SqliteEpisodeStore | undefined;
+          try {
+            const [
+              { AutomaticMemoryRecallService },
+              { Ml1MemoryService },
+              { Fts5EpisodeProjection },
+              { LexicalMemorySearchService },
+              { SqliteEpisodeStore },
+            ] = await Promise.all([
+              import("../memory/recall/automatic-memory-recall-service.js"),
+              import("../memory/product/memory-service.js"),
+              import("../memory/retrieval/fts5-episode-projection.js"),
+              import("../memory/retrieval/lexical-memory-search-service.js"),
+              // MEMORY-ML3: off and remote-provider paths do not load node:sqlite.
+              import("../memory/store/sqlite-episode-store.js"),
+            ]);
+            const scope = Object.freeze({
+              applicationRepositoryId: localMemory.repositoryId,
+              canonicalRootIdentitySha256: localMemory.canonicalRootIdentitySha256,
+              ownerPrincipalId: localMemory.ownerPrincipalId,
+            });
+            store = await SqliteEpisodeStore.create({ stateRoot: localMemory.stateRoot });
+            const memory = new Ml1MemoryService({
+              repositoryId: localMemory.repositoryId,
+              scope,
+              store,
+              workspace: localMemory.workspace,
+            });
+            const projection = await Fts5EpisodeProjection.create({
+              scope,
+              stateRoot: localMemory.stateRoot,
+            });
+            const search = new LexicalMemorySearchService({
+              inspectSource: (record) => memory.inspectEpisodeSource(record),
+              projection,
+              scope,
+              store,
+              tokenEstimator: contextRuntimeResult.value.estimator,
+            });
+            const prepared = await new AutomaticMemoryRecallService({
+              inspectSource: (record) => memory.inspectEpisodeSource(record),
+              scope,
+              search,
+              store,
+              tokenEstimator: contextRuntimeResult.value.estimator,
+            }).prepare({
+              contextTargetTokens: contextRuntimeResult.value.budget.compactionTargetTokens,
+              inputKind: request.input.kind,
+              query: resumedExecution?.modelTask ?? freshTaskExecution.modelTask,
+              runId,
+              sessionId,
+              step: request.step,
+            });
+            if (config.verbose) {
+              renderer.renderVerbose(
+                `memory_recall selection=${prepared.selection.selectionSha256} selected=${String(prepared.items.length)} tokens=${String(prepared.selection.budget.estimatedTokensUsed)}/${String(prepared.selection.budget.injectedTokenLimit)} status=${prepared.selection.status}\n`,
+              );
+            }
+            return prepared.items;
+          } catch (error) {
+            const code = typeof error === "object" && error !== null && "code" in error &&
+                typeof error.code === "string" && /^memory_[a-z0-9_]+$/u.test(error.code)
+              ? error.code
+              : "memory_recall_failed";
+            // MEMORY-ML3: unavailable optional memory means zero injected records,
+            // never a partially trusted excerpt and never a changed Agent terminal.
+            renderer.renderDiagnostic(`memory_recall_unavailable: ${code}`);
+            return Object.freeze([]);
+          } finally {
+            store?.close();
+          }
+        }
+      : undefined;
   let workspaceResumeFingerprint = resumedExecution?.fingerprint;
   if (workspaceResumeFingerprint === undefined) {
     try {
@@ -1714,6 +1803,7 @@ export async function executeAgentExecution(
           }),
       eventAppender: contextEvents,
       events: decodedEvents,
+      ...(historicalContext === undefined ? {} : { historicalContext }),
       initialEpoch: initialContextEpoch,
       runtime: new AgentContextRuntime({
         budget: contextRuntimeResult.value.budget,

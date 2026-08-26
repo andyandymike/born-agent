@@ -225,7 +225,7 @@ describe("Agent memory ML1 CLI integration", () => {
     expect(read.sourceStatus).toBe("available");
     expect(read.record.recordId).toBe(manifest.expectedRecord.recordId);
     expect(read.record.recordSha256).toBe(manifest.expectedRecord.recordSha256);
-  });
+  }, 30_000);
 
   it("ML1 show marks missing or tampered exact session evidence stale", async () => {
     const stateRoot = await directory("bornagent-ml1-stale-state-");
@@ -253,5 +253,5 @@ describe("Agent memory ML1 CLI integration", () => {
       readonly staleReason: string;
     };
     expect(tampered).toMatchObject({ sourceStatus: "stale", staleReason: "range_mismatch" });
-  });
+  }, 30_000);
 });

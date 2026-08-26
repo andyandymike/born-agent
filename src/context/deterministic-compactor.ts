@@ -111,6 +111,8 @@ function outputLayer(item: ContextItem): number {
     case "mutation_fact":
     case "state_fact":
       return 3;
+    case "historical_memory":
+      return 4;
     case "archived_tool_observation":
       return 5;
     default:

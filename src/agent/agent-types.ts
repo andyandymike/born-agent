@@ -36,7 +36,7 @@ export interface AgentCommandOptions {
   readonly maxSteps: string | undefined;
   readonly maxTokens: string | undefined;
   readonly maxToolOutputBytes: string | undefined;
-  /** ML1 is opt-in; omitted and off both preserve the storage-free legacy path. */
+  /** Memory remains opt-in; omitted and off preserve the storage-free, zero-recall path. */
   readonly memoryMode?: "local" | "off" | undefined;
   readonly mcpServerIds?: readonly string[] | undefined;
   /** Explicit user-only prompt selection from a frozen MCP catalog. */

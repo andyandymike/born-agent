@@ -1,8 +1,8 @@
 # BornAgent Agent Memory 学习与交付路线
 
 > 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-26）
-> 当前基线：AM0/AM1 exact-commit CI已通过；ML1本地Windows product/full gate与installed-pack probe已通过，production默认仍为`off`
-> 当前切片：ML1实现已完成，等待同一exact commit的Linux/Windows CI后再晋级`preview_usable`；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
+> 当前基线：AM0/AM1 exact-commit CI已通过；ML1已提交为`43d80b2`且`origin/main`一致，但该提交没有CI run，production Agent默认仍为`off`
+> 当前切片：ML3 local-backend bounded historical recall本地product/full/installed-pack gate已通过；等待提交后的Linux/Windows exact-commit CI；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
 
 ## 1. 为什么做这条路线
 
@@ -20,8 +20,10 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - AM0 已交付 deterministic corpus、benchmark 和 evidence receipt；它不改变 production behavior。
 - AM1 已交付 exact-prefix incremental projector、bounded working snapshot/sidecar 和 cold-equivalence evidence。
 - production `AgentContextRuntime` 尚未启用 AM1；默认仍为 `off`。
-- 当前session仍保存完整对话；显式`--memory local`现在可在成功终态后另存一条跨进程episode，并由`memory status/list/show`检查。
-- 尚无memory search、automatic recall、provider context注入、普通chat提炼或用户`remember/retract` lifecycle。
+- 当前session仍保存完整对话；显式`--memory local`可在成功终态后另存一条跨进程episode，并由`memory status/list/show`检查。
+- `memory search <query> --explain`现可手动执行scope-bound exact/quoted/FTS5 lexical/recency retrieval；stale source不会成为hit，derived projection可删除重建。
+- 显式`--memory local`现在会在每个local Ollama/in-process request前重新检索并source-revalidate，最多加入3条`historical_only` excerpt；remote provider与mode off注入均为0。
+- 尚无普通chat提炼、用户`remember/retract` lifecycle、remote disclosure或frontier adapter。
 - `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d` 的 Windows/Linux repository gate、AM1、built paths、pack smoke 与 Pages 已通过。
 
 这意味着 AM0/AM1 是已验证的工程组件，不是用户可用长期记忆的完成声明。
@@ -82,8 +84,8 @@ Actual engineering time
 |---|---|---|---:|---|
 | ML0 | AM0/AM1 baseline 与 working-state component | event sourcing、cold replay、suffix projection、cache invalidation | 已发生 | `component_verified` |
 | ML1 | Session A 产生一条 source-bound episode；进程重启后 `born memory list/show` 可读 | episodic memory、durable record、provenance、schema evolution | 8–16h | `local_product_verified`; exact-commit CI pending |
-| ML2 | Session B 可按同仓 current query 做 bounded exact/lexical/temporal recall | retrieval baseline、scope filter、ranking、abstention | 8–16h | `not_started` |
-| ML3 | Agent 获得最多3条有界Host-rendered historical excerpts | prompt injection boundary、authority attenuation、context budgeting | 8–16h | `not_started` |
+| ML2 | Session B 可按同仓 current query 做 bounded exact/lexical/temporal recall | retrieval baseline、scope filter、ranking、abstention | 8–16h initial human budget; ~0.7h observed Agent wall-clock | `local_product_verified`; exact-commit CI pending |
+| ML3 | Agent 获得最多3条有界Host-rendered historical excerpts | prompt injection boundary、authority attenuation、context budgeting | 8–16h initial human budget; 1–3h calibrated; ~1.3h observed Agent wall-clock | `local_product_verified`; exact-commit CI pending |
 | ML4 | `remember/retract/rebuild/doctor`、hard bounds、source missing 与 mode-off fallback | lifecycle、derived index、privacy、failure recovery | 8–16h | `not_started` |
 | ML5 | Windows/Linux exact-commit、pack smoke、真实新进程演示与文档 | release evidence、operability、open-source handoff | 4–8h | `not_started` |
 

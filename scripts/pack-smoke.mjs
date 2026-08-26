@@ -442,18 +442,24 @@ try {
   const ml1StateRoot = join(temporaryRoot, "ml1-state");
   await mkdir(ml1RepositoryRoot, { recursive: true });
   const [
-    { sha256Canonical: packedSha256Canonical },
     { ControlArtifactStore: PackedControlArtifactStore },
     { loadOrCreateHostControlAuthority: loadPackedMl1Authority },
     { RepositoryRegistry: PackedRepositoryRegistry },
-    { createMl1EpisodeRecordV1: createPackedMl1Episode },
+    { DeterministicTokenEstimator: PackedTokenEstimator },
+    { Ml1MemoryService: PackedMl1MemoryService },
+    { AutomaticMemoryRecallService: PackedAutomaticMemoryRecallService },
+    { Fts5EpisodeProjection: PackedFts5EpisodeProjection },
+    { LexicalMemorySearchService: PackedLexicalMemorySearchService },
     { SqliteEpisodeStore: PackedSqliteEpisodeStore },
   ] = await Promise.all([
-    import(pathToFileURL(join(packageRoot, "dist", "completion", "canonical-json.js")).href),
     import(pathToFileURL(join(packageRoot, "dist", "control-plane", "control-artifact-store.js")).href),
     import(pathToFileURL(join(packageRoot, "dist", "control-plane", "host-control-identity.js")).href),
     import(pathToFileURL(join(packageRoot, "dist", "control-plane", "repository-registry.js")).href),
-    import(pathToFileURL(join(packageRoot, "dist", "memory", "core", "ml1-episode-record.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "context", "token-estimator.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "product", "memory-service.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "recall", "automatic-memory-recall-service.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "retrieval", "fts5-episode-projection.js")).href),
+    import(pathToFileURL(join(packageRoot, "dist", "memory", "retrieval", "lexical-memory-search-service.js")).href),
     import(pathToFileURL(join(packageRoot, "dist", "memory", "store", "sqlite-episode-store.js")).href),
   ]);
   const ml1Authority = await loadPackedMl1Authority({ root: ml1StateRoot });
@@ -472,53 +478,38 @@ try {
     canonicalRootIdentitySha256: ml1Registration.canonicalRootIdentitySha256,
     ownerPrincipalId: ml1Authority.localOwner.principalId,
   };
-  const ml1Source = {
-    endEventId: "pack-probe-end",
-    endRawSha256: "b".repeat(64),
-    endSequence: 2,
-    kind: "session_run_range",
-    rangeSha256: "c".repeat(64),
-    runId: "pack-probe-run",
-    sessionId: "pack-probe-session",
-    startEventId: "pack-probe-start",
-    startRawSha256: "a".repeat(64),
-    startSequence: 1,
-  };
-  const ml1Completion = {
-    evidenceSha256: null,
-    mode: "model_final",
-    reportSha256: null,
-    steps: 1,
-    toolCalls: 0,
-  };
-  const ml1Task = "installed package SQLite reopen probe";
-  const ml1Record = createPackedMl1Episode({
-    completion: ml1Completion,
-    kind: "episode",
-    occurredAt: "2026-08-26T00:00:00.000Z",
-    origin: "deterministic_episode",
-    recordId: `episode_${packedSha256Canonical({ schema_version: 1, scope: ml1Scope, source: ml1Source })}`,
-    schemaVersion: 1,
-    scope: ml1Scope,
-    source: ml1Source,
-    taskInputSha256: sha256(ml1Task),
-    taskPreview: ml1Task,
-    text: [
-      `Task: ${ml1Task}`,
-      "Outcome: completed",
-      "Completion mode: model_final",
-      "Steps: 1",
-      "Tool calls: 0",
-      "Evidence: none",
-    ].join("\n"),
-  });
+  const ml1FixtureManifest = JSON.parse(await readFile(
+    join(workspaceRoot, "fixtures", "agent-memory", "ml1", "manifest.json"),
+    "utf8",
+  ));
+  const ml1FixtureSessionId = ml1FixtureManifest.expectedRecord?.source?.sessionId;
+  const ml1FixtureRunId = ml1FixtureManifest.expectedRecord?.source?.runId;
+  if (typeof ml1FixtureSessionId !== "string" || typeof ml1FixtureRunId !== "string") {
+    throw new Error("ML1 pack probe fixture lacks exact session/run identity");
+  }
+  const ml1SessionRoot = join(ml1RepositoryRoot, ".bornagent", "sessions");
+  await mkdir(ml1SessionRoot, { recursive: true });
+  await cp(
+    join(workspaceRoot, "fixtures", "agent-memory", "ml1", "session.jsonl"),
+    join(ml1SessionRoot, `${ml1FixtureSessionId}.jsonl`),
+  );
   const ml1FirstStore = await PackedSqliteEpisodeStore.create({ stateRoot: ml1StateRoot });
-  const ml1Ingest = await ml1FirstStore.ingestEpisode(ml1Record);
+  const ml1Ingest = await new PackedMl1MemoryService({
+    repositoryId: ml1Scope.applicationRepositoryId,
+    scope: ml1Scope,
+    store: ml1FirstStore,
+    workspace: ml1RepositoryRoot,
+  }).ingestCompletedRun(ml1FixtureSessionId, ml1FixtureRunId);
+  if (ml1Ingest.status !== "stored") {
+    ml1FirstStore.close();
+    throw new Error(`installed ML1 exact fixture was not admitted: ${ml1Ingest.reason}`);
+  }
+  const ml1Record = ml1Ingest.record;
   ml1FirstStore.close();
   const ml1SecondStore = await PackedSqliteEpisodeStore.create({ stateRoot: ml1StateRoot });
   const ml1Readback = await ml1SecondStore.getEpisode({ recordId: ml1Record.recordId, scope: ml1Scope });
   ml1SecondStore.close();
-  if (ml1Ingest.status !== "inserted" || ml1Readback?.recordSha256 !== ml1Record.recordSha256) {
+  if (ml1Ingest.result.status !== "inserted" || ml1Readback?.recordSha256 !== ml1Record.recordSha256) {
     throw new Error("installed ML1 SQLite close/reopen probe changed its logical episode");
   }
   const ml1Environment = { ...process.env, BORN_CONTROL_STATE_ROOT: ml1StateRoot };
@@ -536,9 +527,89 @@ try {
   ));
   if (
     ml1Status.episodeCount !== 1 || ml1Status.logicalSha256 === undefined ||
-    ml1Show.record?.recordSha256 !== ml1Record.recordSha256 || ml1Show.sourceStatus !== "stale"
+    ml1Show.record?.recordSha256 !== ml1Record.recordSha256 || ml1Show.sourceStatus !== "available"
   ) {
     throw new Error("installed ML1 memory CLI did not inspect the reopened logical episode");
+  }
+  const ml2Search = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "Update README", "--explain", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml2Search.status !== "matched" || ml2Search.projection?.action !== "rebuilt" ||
+    ml2Search.hits?.[0]?.record?.recordId !== ml1Record.recordId ||
+    ml2Search.hits?.[0]?.reason !== "lexical_bm25" || ml2Search.hits?.[0]?.sourceStatus !== "available"
+  ) {
+    throw new Error("installed ML2 search did not return the exact available episode");
+  }
+  await rm(join(ml1StateRoot, "memory", "v1", "retrieval"), { force: true, recursive: true });
+  const ml2Rebuilt = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "Update README", "--explain", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml2Rebuilt.projection?.action !== "rebuilt" ||
+    JSON.stringify(ml2Rebuilt.hits) !== JSON.stringify(ml2Search.hits)
+  ) {
+    throw new Error("installed ML2 deleted projection did not rebuild to identical logical hits");
+  }
+  const ml3Store = await PackedSqliteEpisodeStore.create({ stateRoot: ml1StateRoot });
+  try {
+    const ml3Memory = new PackedMl1MemoryService({
+      repositoryId: ml1Scope.applicationRepositoryId,
+      scope: ml1Scope,
+      store: ml3Store,
+      workspace: ml1RepositoryRoot,
+    });
+    const ml3Projection = await PackedFts5EpisodeProjection.create({
+      scope: ml1Scope,
+      stateRoot: ml1StateRoot,
+    });
+    const ml3Estimator = new PackedTokenEstimator({
+      bytesPerToken: 3,
+      itemOverheadTokens: 8,
+      model: "pack-smoke",
+      provider: "offline-fixture",
+      tokenizer: "utf8-conservative",
+      version: "ml3-pack-v1",
+    });
+    const ml3Search = new PackedLexicalMemorySearchService({
+      inspectSource: (record) => ml3Memory.inspectEpisodeSource(record),
+      projection: ml3Projection,
+      scope: ml1Scope,
+      store: ml3Store,
+      tokenEstimator: ml3Estimator,
+    });
+    const ml3Prepared = await new PackedAutomaticMemoryRecallService({
+      inspectSource: (record) => ml3Memory.inspectEpisodeSource(record),
+      scope: ml1Scope,
+      search: ml3Search,
+      store: ml3Store,
+      tokenEstimator: ml3Estimator,
+    }).prepare({
+      contextTargetTokens: 20_000,
+      inputKind: "user_prompt",
+      query: "Update README",
+      runId: "pack-run-current",
+      sessionId: "pack-session-current",
+      step: 1,
+    });
+    if (
+      ml3Prepared.items.length !== 1 ||
+      ml3Prepared.items[0]?.authority !== "historical_only" ||
+      ml3Prepared.items[0]?.kind !== "historical_memory" ||
+      ml3Prepared.selection.selectedRecords[0]?.recordId !== ml1Record.recordId ||
+      ml3Prepared.selection.budget.estimatedTokensUsed > ml3Prepared.selection.budget.injectedTokenLimit ||
+      !ml3Prepared.items[0]?.content.includes("historical evidence only")
+    ) {
+      throw new Error("installed ML3 bounded historical context did not preserve source and authority");
+    }
+  } finally {
+    ml3Store.close();
   }
 
   // RIC4: exercise the real binary from the extracted tarball. This is kept in
@@ -1713,7 +1784,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; passed the installed ML1 SQLite close/reopen and memory status/show probe, ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; passed the installed ML1 exact-source SQLite close/reopen and memory status/show probe, ML2 search/deleted-projection rebuild, and ML3 bounded historical-only context preparation, ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, {
     force: true,

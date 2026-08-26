@@ -9,6 +9,7 @@ export type ContextItemKind =
   | "assistant_message"
   | "completion_candidate"
   | "completion_decision"
+  | "historical_memory"
   | "mutation_fact"
   | "repository_rules"
   | "state_fact"

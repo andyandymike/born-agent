@@ -15,7 +15,7 @@ import type { ProjectableContextEvent } from "./context-projector.js";
 import {
   ContextCompactionError,
 } from "./deterministic-compactor.js";
-import type { ProtectedFactCategory } from "./context-item.js";
+import type { ContextItem, ProtectedFactCategory } from "./context-item.js";
 import { ContextPlanError } from "./context-planner.js";
 import {
   modelCanonicalContextPayload,
@@ -54,6 +54,9 @@ export interface AgentContextControllerOptions {
   readonly beforePlan?: () => Promise<void>;
   readonly eventAppender: ContextEventAppender;
   readonly events: () => readonly (ProjectableContextEvent | RunEvent)[];
+  readonly historicalContext?: (
+    input: ContextRequestInput,
+  ) => Promise<readonly ContextItem[]>;
   readonly initialEpoch?: number;
   readonly runtime: AgentContextRuntime;
 }
@@ -77,11 +80,47 @@ function categoryEntries(
     }));
 }
 
+function metadataRecord(item: ContextItem): Readonly<Record<string, unknown>> {
+  return item.metadata !== null &&
+      typeof item.metadata === "object" &&
+      !Array.isArray(item.metadata)
+    ? item.metadata as Readonly<Record<string, unknown>>
+    : {};
+}
+
+function assertBoundedHistoricalContext(
+  items: readonly ContextItem[],
+  contextTargetTokens: number,
+): void {
+  const tokenLimit = Math.min(1_024, Math.floor(contextTargetTokens * 0.08));
+  const totalTokens = items.reduce((total, item) => total + item.estimatedTokens, 0);
+  if (items.length > 3 || totalTokens > tokenLimit) {
+    throw new TypeError("historical context exceeds the ML3 request bound");
+  }
+  for (const item of items) {
+    const metadata = metadataRecord(item);
+    if (
+      item.kind !== "historical_memory" ||
+      !["historical_only", "untrusted_content"].includes(item.authority) ||
+      item.priority !== "low" ||
+      item.protectedCategory !== null ||
+      item.pairing !== null ||
+      item.visibility !== "provider_context" ||
+      item.role !== "system" ||
+      typeof metadata.recall_selection_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(metadata.recall_selection_sha256)
+    ) {
+      throw new TypeError("historical context attempted to exceed its ML3 authority");
+    }
+  }
+}
+
 export class AgentContextController {
   readonly #backend: ModelBackend;
   readonly #beforePlan: (() => Promise<void>) | undefined;
   readonly #eventAppender: ContextEventAppender;
   readonly #events: AgentContextControllerOptions["events"];
+  readonly #historicalContext: AgentContextControllerOptions["historicalContext"];
   readonly #runtime: AgentContextRuntime;
   #epoch: number;
 
@@ -90,6 +129,7 @@ export class AgentContextController {
     this.#beforePlan = options.beforePlan;
     this.#eventAppender = options.eventAppender;
     this.#events = options.events;
+    this.#historicalContext = options.historicalContext;
     this.#runtime = options.runtime;
     this.#epoch = options.initialEpoch ?? 0;
     if (!Number.isSafeInteger(this.#epoch) || this.#epoch < 0) {
@@ -103,7 +143,17 @@ export class AgentContextController {
 
   public async prepare(input: ContextRequestInput): Promise<ModelTurnRequest> {
     await this.#beforePlan?.();
+    const historicalItems = Object.freeze(
+      [...(await this.#historicalContext?.(input) ?? [])],
+    );
+    assertBoundedHistoricalContext(
+      historicalItems,
+      this.#runtime.budget.compactionTargetTokens,
+    );
     const planningInput: AgentContextPlanningInput = {
+      ...(historicalItems.length === 0
+        ? {}
+        : { additionalItems: historicalItems }),
       epoch: this.#epoch,
       events: this.#events(),
     };

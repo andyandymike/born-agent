@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "agent-memory-ml2-coding-v1",
+  "scope": {
+    "applicationRepositoryId": "00000000-0000-4000-8000-000000000203",
+    "canonicalRootIdentitySha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ownerPrincipalId": "local_owner"
+  },
+  "documents": [
+    {
+      "key": "cache-renames",
+      "occurredAt": "2026-01-01T00:00:00.000Z",
+      "taskPreview": "Fix TypeScript incremental cache invalidation for renamed source files"
+    },
+    {
+      "key": "sqlite-wal",
+      "occurredAt": "2026-01-02T00:00:00.000Z",
+      "taskPreview": "Document SQLite WAL checkpoint and crash recovery procedure"
+    },
+    {
+      "key": "scope-filter",
+      "occurredAt": "2026-01-03T00:00:00.000Z",
+      "taskPreview": "Add repository scope filtering to local memory search"
+    },
+    {
+      "key": "godot-audio",
+      "occurredAt": "2026-01-04T00:00:00.000Z",
+      "taskPreview": "Repair Godot audio cue playback routing for UI events"
+    },
+    {
+      "key": "climate-reconnect",
+      "occurredAt": "2026-01-05T00:00:00.000Z",
+      "taskPreview": "Update Home Assistant climate reconnect automation"
+    },
+    {
+      "key": "visual-regression",
+      "occurredAt": "2026-01-06T00:00:00.000Z",
+      "taskPreview": "Optimize Playwright screenshot visual regression checks"
+    },
+    {
+      "key": "package-cache",
+      "occurredAt": "2026-01-07T00:00:00.000Z",
+      "taskPreview": "Add pnpm package cache cleanup diagnostics"
+    },
+    {
+      "key": "fts-ranking",
+      "occurredAt": "2026-01-08T00:00:00.000Z",
+      "taskPreview": "Implement FTS5 lexical ranking with deterministic recency"
+    },
+    {
+      "key": "session-tamper",
+      "occurredAt": "2026-01-09T00:00:00.000Z",
+      "taskPreview": "Fix exact session JSONL tamper detection"
+    },
+    {
+      "key": "docker-memory",
+      "occurredAt": "2026-01-10T00:00:00.000Z",
+      "taskPreview": "Review Docker sandbox memory limit validation"
+    },
+    {
+      "key": "pty-retry-old",
+      "occurredAt": "2026-01-11T00:00:00.000Z",
+      "taskPreview": "Fix flaky Windows PTY terminal retry"
+    },
+    {
+      "key": "pty-retry-new",
+      "occurredAt": "2026-01-12T00:00:00.000Z",
+      "taskPreview": "Fix flaky Windows PTY terminal retry"
+    }
+  ],
+  "queries": [
+    { "id": "cache", "query": "incremental cache renamed files", "relevant": ["cache-renames"], "expectedFirst": "cache-renames" },
+    { "id": "sqlite", "query": "SQLite WAL recovery", "relevant": ["sqlite-wal"], "expectedFirst": "sqlite-wal" },
+    { "id": "scope-phrase", "query": "\"repository scope filtering\"", "relevant": ["scope-filter"], "expectedFirst": "scope-filter" },
+    { "id": "godot", "query": "Godot audio playback", "relevant": ["godot-audio"], "expectedFirst": "godot-audio" },
+    { "id": "climate", "query": "climate reconnect", "relevant": ["climate-reconnect"], "expectedFirst": "climate-reconnect" },
+    { "id": "visual", "query": "visual regression screenshot", "relevant": ["visual-regression"], "expectedFirst": "visual-regression" },
+    { "id": "package", "query": "pnpm package cache cleanup", "relevant": ["package-cache"], "expectedFirst": "package-cache" },
+    { "id": "fts", "query": "FTS5 lexical ranking", "relevant": ["fts-ranking"], "expectedFirst": "fts-ranking" },
+    { "id": "tamper", "query": "session JSONL tamper detection", "relevant": ["session-tamper"], "expectedFirst": "session-tamper" },
+    { "id": "docker", "query": "Docker sandbox memory limit", "relevant": ["docker-memory"], "expectedFirst": "docker-memory" },
+    { "id": "recency", "query": "Windows PTY terminal retry", "relevant": ["pty-retry-new", "pty-retry-old"], "expectedFirst": "pty-retry-new" },
+    { "id": "exact-id", "queryKind": "exact_id", "target": "scope-filter", "relevant": ["scope-filter"], "expectedFirst": "scope-filter" }
+  ],
+  "abstentionQueries": [
+    { "id": "no-match", "query": "quantum banana telescope", "reason": "no_available_match" },
+    { "id": "no-terms", "query": "!!!", "reason": "no_searchable_terms" }
+  ],
+  "thresholds": {
+    "recallAt5": 1.0,
+    "mrr": 0.9,
+    "abstentionAccuracy": 1.0
+  }
+}

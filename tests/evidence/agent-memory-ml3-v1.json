@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "agent-memory-ml3-v1",
+  "cases": [
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml3-recall.test.ts",
+      "fullName": "ML3 renders at most three poisoned records as bounded historical-only context",
+      "id": "MEM-ML3-01",
+      "invariant": "Host rendering labels recalled bytes as historical evidence and enforces three-record and 1024-token or eight-percent bounds.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml3-recall.test.ts",
+      "fullName": "ML3 removes a source that becomes stale after ranking and before context use",
+      "id": "MEM-L06",
+      "invariant": "A ranked record is refetched from canonical storage and source-revalidated immediately before ContextPlan use.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml3-recall.test.ts",
+      "fullName": "ML3 historical context cannot displace protected facts or mutate model tools",
+      "id": "MEM-L08",
+      "invariant": "Historical records stay low priority and outside the protected ledger while the exact Host tool schema is preserved.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml3-agent-use.test.ts",
+      "fullName": "ML3 Session B uses a relevant Session A episode in a new process",
+      "id": "MEM-ML3-02",
+      "invariant": "An explicit local-memory Agent request in a new process contains the source-available prior episode and its selection explanation.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml3-agent-use.test.ts",
+      "fullName": "ML3 off and remote-provider paths inject zero memory records",
+      "id": "MEM-L05",
+      "invariant": "Default or explicit off is behavior-neutral and provider-network requests never open a retrieval projection or receive memory records.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    }
+  ]
+}

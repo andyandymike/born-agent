@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "agent-memory-ml2-v1",
+  "cases": [
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml2-retrieval.test.ts",
+      "fullName": "ML2 fixed coding-memory corpus meets frozen Recall@5 MRR and abstention thresholds",
+      "id": "MEM-ML2-01",
+      "invariant": "The deterministic exact lexical temporal baseline clears the frozen corpus thresholds without embeddings graph or model reranking.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml2-retrieval.test.ts",
+      "fullName": "ML2 bounded search never exceeds candidate result text or token caps",
+      "id": "MEM-L07",
+      "invariant": "Search considers at most 100 candidates and returns at most 20 available records within 16 KiB and 4096 conservative tokens.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml2-retrieval.test.ts",
+      "fullName": "ML2 scope filtering happens before FTS scoring and foreign scope returns zero hits",
+      "id": "MEM-L04",
+      "invariant": "Every projection contains one exact principal repository and canonical root scope and a foreign scope observes no candidate.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml2-cli.test.ts",
+      "fullName": "ML2 stale source candidates are removed before search output",
+      "id": "MEM-L06",
+      "invariant": "Missing or tampered source evidence yields zero search hits even when the FTS projection still matches.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml2-retrieval.test.ts",
+      "fullName": "ML2 deleted or corrupt FTS projection rebuilds with identical logical hit order",
+      "id": "MEM-L10",
+      "invariant": "Derived projection loss or corruption never changes canonical dump and deterministic rebuild restores the same ordered hits.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml2-cli.test.ts",
+      "fullName": "ML2 packed-style search explain survives a full process restart",
+      "id": "MEM-ML2-02",
+      "invariant": "A new process returns the same source-available record order reasons and quantized scores through the product command.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    }
+  ]
+}

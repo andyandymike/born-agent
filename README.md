@@ -80,14 +80,17 @@ redirects, downloads a model, or turns discovery into live-verification evidence
 ## Experimental local episodic memory
 
 ML1 adds an opt-in, repository-scoped episode after an Agent run reaches a
-durable successful terminal. Memory remains `off` by default; the off path does
-not load SQLite, open a memory database, retrieve history, or alter model
-context.
+durable successful terminal. ML2 adds manual exact, quoted-phrase, and lexical
+search with deterministic recency tie-breaking. ML3 lets an explicitly local
+Agent request use bounded historical excerpts. Memory remains `off` by default;
+the Agent off path does not load SQLite, open a memory database, retrieve
+history, or alter model context.
 
 ```powershell
 corepack pnpm dev agent "Inspect and verify this repository" --memory local
 corepack pnpm dev memory status --json
 corepack pnpm dev memory list --json
+corepack pnpm dev memory search "cache invalidation" --explain
 corepack pnpm dev memory show <episode-id> --json
 ```
 
@@ -95,11 +98,21 @@ Each episode is deterministically rebuilt from exact session JSONL hashes,
 bound to the local owner plus one active repository/canonical-root identity,
 screened before persistence, and capped by record and logical-byte limits.
 `list` exposes only source-available records; `show` marks missing or changed
-source evidence as stale. Inspection commands never auto-register a repository.
+source evidence as stale. `search` uses one deletable FTS5 projection per exact
+principal/repository/root scope, considers at most 100 candidates, and returns
+only source-revalidated records within result, text-byte, and conservative-token
+bounds. Inspection commands never auto-register a repository.
 
-ML1 is storage and inspection, not recall: it does not search memory, inject it
-into later prompts, extract facts from ordinary chat, or implement
-`remember`/`retract`. Those remain separate later slices.
+With `--memory local`, every local-Ollama or in-process model request reruns the
+same scoped search, refetches canonical rows, and revalidates exact source bytes
+before adding at most three low-priority `historical_only` items. Their combined
+planner estimate cannot exceed 1,024 tokens or 8% of the compaction target.
+Historical bytes are explicitly delimited as past evidence, never current
+instructions, approvals, permissions, policy, or verified current state.
+
+Provider-network requests receive zero memory records and do not open the FTS
+projection. ML3 still does not extract facts from ordinary chat or implement
+`remember`/`retract`; those user lifecycle operations remain ML4.
 
 ## Local capability platform
 

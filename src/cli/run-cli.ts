@@ -123,7 +123,7 @@ export async function runCli(
 
   const memory = program
     .command("memory")
-    .description("Inspect exact-source local ML1 memory episodes.");
+    .description("Inspect repository-scoped exact-source local memory.");
 
   memory
     .command("status")
@@ -141,6 +141,17 @@ export async function runCli(
     .action(async (options: { cursor?: string; json: boolean; limit?: string }) => {
       const { executeMemoryList } = await import("../commands/memory.js");
       commandExitCode = await executeMemoryList(options, runtime, io);
+    });
+
+  memory
+    .command("search")
+    .argument("<query>", "exact episode ID, quoted phrase, or lexical terms")
+    .option("--limit <count>", "result count from 1 to 20")
+    .option("--explain", "show deterministic rank components", false)
+    .option("--json", "write versioned JSON", false)
+    .action(async (query: string, options: { explain: boolean; json: boolean; limit?: string }) => {
+      const { executeMemorySearch } = await import("../commands/memory.js");
+      commandExitCode = await executeMemorySearch(query, options, runtime, io);
     });
 
   memory
@@ -572,7 +583,7 @@ export async function runCli(
     )
     .option("--max-tokens <tokens>", "maximum reported total tokens")
     .addOption(
-      new Option("--memory <mode>", "terminal episode memory: off or local")
+      new Option("--memory <mode>", "episodic memory and safe recall: off or local")
         .choices(["off", "local"])
         .default("off"),
     )

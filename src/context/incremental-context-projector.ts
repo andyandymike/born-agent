@@ -75,6 +75,7 @@ function itemLayer(item: ContextItem): number {
     case "mcp_resource":
       return 5;
     case "approval_history":
+    case "historical_memory":
     case "mutation_fact":
     case "state_fact":
       return 6;

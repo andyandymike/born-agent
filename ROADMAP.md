@@ -1,7 +1,7 @@
 # BornAgent 学习型开发路线图
 
 > 状态：Phase 0–20 Implemented；M11 Passed；21A exact-commit CI Passed；21B–21E Deferred；M12 Not Pursued in Current Scope（2026-08-24）
-> 当前路线：Personal Open-Source Maintenance；Architecture Simplification AS5.2与Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`通过Linux/Windows CI；ML1本地实现与Windows product/full/pack gate已通过，production默认仍为`off`，跨平台exact-commit evidence尚未发生；当前合同为[`Lightweight Memory Core and Frontier Adapters`](spec/agent-memory-lightweight-core-and-adapters.md)的ML1
+> 当前路线：Personal Open-Source Maintenance；Architecture Simplification AS5.2与Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`通过Linux/Windows CI；ML1已提交为`43d80b2`但该提交没有CI run；ML2 manual search与ML3 local-backend bounded historical recall已通过本地product/full/pack gate，Agent默认仍为`off`且remote provider注入为0；当前合同为[`Lightweight Memory Core and Frontier Adapters`](spec/agent-memory-lightweight-core-and-adapters.md)的ML3
 > 目标：一边构建一个类似 Claude Code / OpenCode 的本地编码 Agent，一边亲手实现与复现前沿Agent技术，系统积累模型调用、工具执行、权限、上下文、会话、记忆、评测和真实工程时间经验。
 
 > 历史状态说明：Phase 0–15章节中保留的未勾选checkbox是早期archival planning原貌，不是当前未完成gate；当前状态以本页顶部、对应milestone spec/learning evidence和后续已通过gate记录为准。没有可复核证据时不得据此补勾或重写历史。
