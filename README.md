@@ -138,8 +138,10 @@ Memory v1 is currently a local `preview_candidate`, not yet a stable feature.
 tarball in fresh Node processes and emits `memory_v1_release_demo_passed:` with
 the restart, scope, retract, rebuild, mode-off, and zero-remote-request receipt.
 The candidate becomes `preview_usable` only after the same exact commit passes
-both GitHub `quality` and `windows-phase20`; remote/live model quality remains
-explicitly untested.
+the dedicated GitHub `memory-v1-linux` and `memory-v1-windows` release jobs.
+The broader `quality` and `windows-phase20` jobs remain repository-health
+signals, but unrelated legacy or Phase 20 timing failures are not Memory v1
+release evidence. Remote/live model quality remains explicitly untested.
 
 ## Local capability platform
 

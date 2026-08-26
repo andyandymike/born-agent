@@ -1,6 +1,6 @@
 # ML5 — Cross-platform product closure
 
-> Status: local release candidate; exact-commit Linux/Windows evidence pending
+> Status: preview candidate; dedicated exact-commit Linux/Windows evidence pending
 > Started: 2026-08-26 about 14:13 JST
 > Scope: release evidence and open-source handoff only
 
@@ -35,7 +35,7 @@ CLI的`list/show/search/remember/retract/rebuild`全部通过解压后`dist/cli.
 - 一个4-case blocking evidence manifest；
 - pack日志中的`memory_v1_release_demo_passed:` JSON receipt。
 
-CI已有Linux `quality`和Windows `windows-phase20` jobs，两者都执行`pnpm check`与`pnpm pack:smoke`，所以不新增workflow。CI中receipt读取`GITHUB_SHA`，使演示结果自然绑定当前exact commit；本地运行时该字段为`null`，不能冒充远端exact-commit证明。
+最初尝试复用Linux `quality`和Windows `windows-phase20`整仓jobs；两轮candidate证明它们会被无关Phase9/16/20 hosted timing阻塞。按本spec stop rule，最终增加一个薄的`memory-v1-release` matrix：`memory-v1-linux`与`memory-v1-windows`只跑ML5 evidence、second-repository regression和同一个`pnpm pack:smoke`。原整仓jobs继续存在并如实报告，不再冒充Memory v1 maturity authority。CI中receipt读取`GITHUB_SHA`，使演示结果自然绑定当前exact commit；本地运行时该字段为`null`，不能冒充远端exact-commit证明。
 
 ## 实际唯一发布演示
 
@@ -60,7 +60,9 @@ CI已有Linux `quality`和Windows `windows-phase20` jobs，两者都执行`pnpm 
 1. 初版harness按不存在的`record.task`找episode；真实字段是`taskPreview`。诊断证明episode已正确持久化，只修验收字段。
 2. 第二仓库首次注册真实失败：`repository.register` action把非零catalog head的`lastRecordId/lastRecordSha256`错误重建为`null`，导致dispatch后的CAS失败并进入`control_operation_busy`。产品修复改为读取完整head，并核对其revision/hash仍等于prepared target后再执行registry CAS；新增顺序注册两个repository的回归测试。
 3. Windows回归测试最初比较临时目录的8.3短路径与canonical长路径；把期望路径也`realpath`后通过。
-4. ML5不运行remote provider、真实Ollama质量评估、secure erase、sync、automatic chat extraction或frontier adapter。它们不能从release receipt推断出来。
+4. 第一轮candidate Windows full gate暴露ML3/Phase17 hosted timing；15秒bounded writer wait与独立cross-process test deadline修复后，本地full/pack通过。
+5. 后续整仓CI又在无关Phase9/16/20测试上出现不同timeout和Phase20 post-dispatch fail-closed。对已复现的hosted测试预算做有界修正后，同类问题仍在另一Phase20路径复现，因此触发stop rule并改用feature-specific release jobs，而不是继续扩大ML5。
+6. ML5不运行remote provider、真实Ollama质量评估、secure erase、sync、automatic chat extraction或frontier adapter。它们不能从release receipt推断出来。
 
 ## 我现在如何解释这个概念
 
@@ -74,7 +76,7 @@ CI已有Linux `quality`和Windows `windows-phase20` jobs，两者都执行`pnpm 
 - full repository gate：non-PTY 289 files / 1,326 tests通过，6 files / 12 tests按平台预期跳过；PTY 5 suites通过、2 suites按平台预期跳过；clean build通过；
 - ML5 11-step extracted-tarball demo：本地通过；
 - ML5 evidence contract：`tests/evidence/agent-memory-ml5-v1.json`；
-- Linux/Windows same-exact-commit repository与pack jobs：等待candidate push后执行；
+- dedicated Linux/Windows same-exact-commit focused contract与pack jobs：等待当前candidate执行；
 - 只有两个required jobs与exact `GITHUB_SHA` receipt都通过后，才把Memory Lite core标记为`preview_usable`。
 
 ## 工程时间账
@@ -87,8 +89,8 @@ CI已有Linux `quality`和Windows `windows-phase20` jobs，两者都执行`pnpm 
 | release demo/evidence | 0.3–0.8h | ~0.35h | 11-step fixture、child、receipt、manifest |
 | product regression | 0.2–0.6h | ~0.2h so far | second-repository complete-head fix |
 | local/full validation | 0.3–0.8h | ~0.45h | focused、289/1,326 repository gate、final pack |
-| exact-commit CI/handoff | 0.3–1.0h | pending | push、Linux/Windows、public status |
+| exact-commit CI/handoff | 0.3–1.0h | >1h so far | 两轮整仓CI诊断、stop-rule收窄、专用Linux/Windows jobs |
 
 ## 下一步
 
-完成本地full gate后提交candidate并推送。等待同一SHA的Linux/Windows jobs与两份`memory_v1_release_demo_passed` receipt；通过后只更新公开maturity与exact evidence，不继续增加memory功能。
+等待同一SHA的`memory-v1-linux`/`memory-v1-windows`与两份`memory_v1_release_demo_passed` receipt；通过后只更新公开maturity、exact evidence与实际时间，不继续增加memory功能或追逐无关整仓时序。

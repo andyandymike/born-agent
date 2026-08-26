@@ -46,7 +46,7 @@ describe("Agent memory ML5 release evidence", () => {
 
     expect(manifest).toMatchObject({
       manifestId: "agent-memory-ml5-v1",
-      requiredCiJobs: ["quality", "windows-phase20"],
+      requiredCiJobs: ["memory-v1-linux", "memory-v1-windows"],
       requiredLogMarker: "memory_v1_release_demo_passed:",
       schemaVersion: 1,
     });
@@ -89,5 +89,24 @@ describe("Agent memory ML5 release evidence", () => {
     expect(child).toContain("remoteBillableRequests: 0");
     expect(child).toContain("disposeApplicationHostForStateRoot(stateRoot)");
     expect(child).toContain("delete process.env[key]");
+  });
+
+  it("keeps Memory v1 release evidence independent from unrelated monolithic gates", async () => {
+    const workflow = (await readFile(resolve(workspaceRoot, ".github/workflows/ci.yml"), "utf8"))
+      .replaceAll("\r\n", "\n");
+    const start = workflow.indexOf("  memory-v1-release:\n");
+    const end = workflow.indexOf("  quality:\n", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const releaseJob = workflow.slice(start, end);
+
+    expect(releaseJob).toContain("name: memory-v1-${{ matrix.platform }}");
+    expect(releaseJob).toContain("platform: linux");
+    expect(releaseJob).toContain("platform: windows");
+    expect(releaseJob).toContain("tests/unit/agent-memory-ml5-evidence.test.ts");
+    expect(releaseJob).toContain("tests/integration/phase21a-application-service.test.ts");
+    expect(releaseJob).toContain("name: Smoke packed Memory v1 release artifact");
+    expect(releaseJob).toContain("run: pnpm pack:smoke");
+    expect(releaseJob).not.toContain("pnpm check");
   });
 });

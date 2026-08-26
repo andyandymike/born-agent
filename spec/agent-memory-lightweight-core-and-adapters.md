@@ -1,7 +1,7 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
 > Status: Active implementation contract（updated 2026-08-26）
-> Current slice: ML5 local 11-step new-process release candidate passed; ML2/ML3 commit `311c3cc` is pushed and its GitHub Linux/Windows repository/pack CI passed, Agent default remains `off`, remote provider injection remains zero; `preview_usable`等待当前candidate的同一exact commit receipts
+> Current slice: ML5 local 11-step new-process release candidate passed; ML2/ML3 commit `311c3cc` is pushed and its GitHub Linux/Windows repository/pack CI passed, Agent default remains `off`, remote provider injection remains zero; `preview_usable`等待专用`memory-v1-linux`/`memory-v1-windows`同一exact commit receipts
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: local ML5 evidence does not substitute for pending same-exact-commit Linux/Windows receipts, remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
@@ -729,7 +729,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] `fts5-v2`绑定record/revision identity；删除整个retrieval后canonical logical hash不变，显式rebuild恢复active search；
 - [x] 本地全部16个`agent-memory`文件/54测试通过；完整repository gate的non-PTY 288 files/1,323 tests、适用PTY与clean build通过；
 - [x] final extracted-tarball smoke真实执行ML1 close/reopen、ML2 search/rebuild、ML3 bounded historical context与ML4完整lifecycle；
-- [x] ML4已进入当前ML5 local release candidate并通过唯一发布演示；candidate尚未提交，同一exact commit Linux/Windows CI尚未发生，因此仍不标`preview_usable`。
+- [x] ML4已进入已提交的ML5 local release candidate并通过唯一发布演示；专用同一exact commit Linux/Windows receipts仍待完成，因此仍不标`preview_usable`。
 
 ## 19. ML5 release evidence
 
@@ -739,4 +739,5 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 删除整个derived retrieval后canonical logical hash和active hit order不变；前后mode-off stable non-memory request shape相同；
 - [x] 演示暴露的第二repository non-zero catalog-head binding已修复，并由Phase21A顺序双仓库回归覆盖；
 - [x] 本地17个`agent-memory`文件/56测试、non-PTY 289 files/1,326 tests、适用PTY、clean build与final extracted-tarball 11/11 demo通过；
-- [ ] candidate尚未提交；必须等待同一`GITHUB_SHA`的Linux `quality`、Windows `windows-phase20`与两份`memory_v1_release_demo_passed` receipt后才标`preview_usable`。
+- [x] 整仓`quality/windows-phase20`的无关Phase9/16/20 timing在两轮candidate CI中触发stop rule；ML5验收已收窄为专用`memory-v1-linux`/`memory-v1-windows` focused contract + pack jobs，不删除或伪装原整仓失败。
+- [ ] 必须等待同一`GITHUB_SHA`的两份专用job与`memory_v1_release_demo_passed` receipt后才标`preview_usable`。

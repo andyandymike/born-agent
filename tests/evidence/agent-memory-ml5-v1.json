@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "manifestId": "agent-memory-ml5-v1",
   "releaseDemoFixture": "fixtures/agent-memory/ml5/release-demo.json",
-  "requiredCiJobs": ["quality", "windows-phase20"],
+  "requiredCiJobs": ["memory-v1-linux", "memory-v1-windows"],
   "requiredLogMarker": "memory_v1_release_demo_passed:",
   "cases": [
     {

@@ -2,7 +2,7 @@
 
 > 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-26）
 > 当前基线：AM0/AM1与ML1–ML3已在exact commit `311c3cc`通过GitHub Linux/Windows repository与packed-artifact CI；production Agent默认仍为`off`
-> 当前切片：ML5本地11步new-process release candidate已通过，等待提交后同一exact commit的Linux/Windows repository与pack receipts；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
+> 当前切片：ML5本地11步new-process release candidate已通过，等待同一exact commit的专用`memory-v1-linux`/`memory-v1-windows` pack receipts；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
 
 ## 1. 为什么做这条路线
 
@@ -29,7 +29,7 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d` 的 Windows/Linux repository gate、AM1、built paths、pack smoke 与 Pages 已通过。
 - `311c3ccc1a9374a961d116881a774ca4c41cc7ff` 的GitHub `quality`与`windows-phase20` jobs、两平台pack smoke和Pages均已通过，证明ML1–ML3 exact commit，不证明当前未提交ML4。
 
-这意味着ML1–ML5的真实本地长期记忆纵向路径和唯一发布演示已成立；当前仍是`preview_candidate`，因为Linux/Windows还没有对包含ML4/ML5的同一exact commit留下required receipts。
+这意味着ML1–ML5的真实本地长期记忆纵向路径和唯一发布演示已成立；当前仍是`preview_candidate`，因为专用Linux/Windows release jobs还没有对包含ML4/ML5的同一exact commit留下required receipts。整仓`quality/windows-phase20`继续报告全项目健康，但不再让无关Phase9/16/20时序替代Memory v1验收。
 
 ## 3. 学习型交付规则
 
@@ -90,7 +90,7 @@ Actual engineering time
 | ML2 | Session B 可按同仓 current query 做 bounded exact/lexical/temporal recall | retrieval baseline、scope filter、ranking、abstention | 8–16h initial human budget; ~0.7h observed Agent wall-clock | `exact_commit_verified` at `311c3cc` |
 | ML3 | Agent 获得最多3条有界Host-rendered historical excerpts | prompt injection boundary、authority attenuation、context budgeting | 8–16h initial human budget; 1–3h calibrated; ~1.3h observed Agent wall-clock | `exact_commit_verified` at `311c3cc` |
 | ML4 | `remember/retract/rebuild/doctor`、hard bounds、source missing 与 mode-off fallback | lifecycle、derived index、privacy、failure recovery | 8–16h initial human budget; 2–5h calibrated Agent budget; ~1h33m actual | `local_product_verified`; included in ML5 candidate |
-| ML5 | Windows/Linux exact-commit、pack smoke、真实新进程演示与文档 | release evidence、operability、open-source handoff | 4–8h initial human budget; 1–3h calibrated Agent budget | `local_release_candidate`; exact-commit CI pending |
+| ML5 | Windows/Linux exact-commit、pack smoke、真实新进程演示与文档 | release evidence、operability、open-source handoff | 4–8h initial human budget; 1–3h calibrated Agent budget | `preview_candidate`; dedicated exact-commit CI pending |
 
 Memory v1 的总预算目标为约 36–72 小时，而不是把 exhaustive research draft 的所有扩展一次实现，也不是一次连续工作承诺。预算不是完成证据；只有下述真实行为成立才能发布。
 
@@ -171,11 +171,11 @@ Memory v1 不承诺：
 
 ML5按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)只做当前Memory v1候选的product closure：
 
-1. 提交当前ML4候选，固定一个exact commit；
-2. 在该commit上取得Linux/Windows repository gate与pack smoke；
+1. 固定包含ML4/ML5和release evidence的exact commit；
+2. 在该commit上取得专用Linux/Windows focused contract与pack smoke；
 3. 用完全退出后的Session A/Session B执行唯一发布演示；
 4. 证明same-repository recall、wrong-repository 0、retract后0、rebuild等价与mode-off不变；
 5. 更新public handoff和准确的支持/不支持边界；
-6. 仅在上述证据同属一个exact commit时判断`preview_usable`。
+6. 仅在两份`memory_v1_release_demo_passed`与上述证据同属一个exact commit时判断`preview_usable`。
 
 ML5不增加embedding、graph、automatic chat extraction、TUI、daemon或企业治理；它收口已实现纵向链路，不借发布阶段继续堆功能。

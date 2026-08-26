@@ -14,6 +14,89 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  memory-v1-release:
+    name: memory-v1-${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.13.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install pinned ripgrep on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz"
+          download="$RUNNER_TEMP/$archive"
+          install_root="$RUNNER_TEMP/ripgrep"
+          curl --fail --location --retry 3 \
+            --output "$download" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$archive"
+          echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $download" | sha256sum --check
+          mkdir -p "$install_root"
+          tar --extract --gzip --file "$download" --directory "$install_root" --strip-components=1
+          echo "$install_root" >> "$GITHUB_PATH"
+          "$install_root/rg" --version
+
+      - name: Install pinned ripgrep on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"
+          $download = Join-Path $env:RUNNER_TEMP $archive
+          $installRoot = Join-Path $env:RUNNER_TEMP "ripgrep"
+          $assetUrl = "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$archive"
+          Invoke-WebRequest -Uri $assetUrl -OutFile $download
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash.ToLowerInvariant()
+          $expectedSha256 = "124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a"
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "ripgrep archive SHA-256 mismatch: $actualSha256"
+          }
+          Expand-Archive -LiteralPath $download -DestinationPath $installRoot -Force
+          $binaryRoot = Join-Path $installRoot "ripgrep-15.1.0-x86_64-pc-windows-msvc"
+          $binary = Join-Path $binaryRoot "rg.exe"
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "ripgrep archive did not contain the expected rg.exe"
+          }
+          $binaryRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $binary --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Memory v1 release contract
+        run: >-
+          pnpm test
+          tests/unit/agent-memory-ml5-evidence.test.ts
+          tests/integration/phase21a-application-service.test.ts
+          --maxWorkers=1
+
+      - name: Smoke packed Memory v1 release artifact
+        run: pnpm pack:smoke
+
   quality:
     name: quality
     runs-on: ubuntu-latest
