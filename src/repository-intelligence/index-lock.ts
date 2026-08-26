@@ -16,6 +16,10 @@ import { parseStrictJson } from "../system/strict-json.js";
 import { RepositoryIntelligenceError } from "./repository-intelligence-error.js";
 
 const MAX_LOCK_BYTES = 16 * 1024;
+// PHASE17: 高负载Windows runner上的cold build可能持锁超过5秒；这里仍保持
+// 60秒hard cap和AbortSignal取消，但给一次正常跨进程发布留下足够余量，避免
+// 第二个CLI在exact generation即将完成时误报repository_index_busy。
+const DEFAULT_WRITER_WAIT_MS = 15_000;
 
 const indexLockRecordSchema = z
   .object({
@@ -127,7 +131,7 @@ export class RepositoryIndexLock {
     const hostFingerprint = options.hostFingerprint ?? currentHostFingerprint();
     const ownerProbe = options.ownerProbe ?? new NodeProcessIdentityProbe(ownIdentity);
     const signal = options.signal ?? new AbortController().signal;
-    const waitMs = options.waitMs ?? 5_000;
+    const waitMs = options.waitMs ?? DEFAULT_WRITER_WAIT_MS;
     const pollIntervalMs = options.pollIntervalMs ?? 50;
     const minimumRecoveryAgeMs = options.minimumRecoveryAgeMs ?? 30_000;
     for (const [name, value, max] of [["waitMs", waitMs, 60_000], ["pollIntervalMs", pollIntervalMs, 1_000], ["minimumRecoveryAgeMs", minimumRecoveryAgeMs, 24 * 60 * 60 * 1000]] as const) {

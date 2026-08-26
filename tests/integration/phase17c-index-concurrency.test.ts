@@ -11,6 +11,8 @@ import { RepositoryIndexV2Store } from "../../src/repository-intelligence/index-
 
 const execFileAsync = promisify(execFile);
 const temporary: string[] = [];
+const INDEX_PROCESS_TIMEOUT_MS = 60_000;
+const CONCURRENCY_TEST_TIMEOUT_MS = 90_000;
 
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((path) => rm(path, { force: true, recursive: true })));
@@ -28,7 +30,9 @@ async function runIndexProcess(workspace: string): Promise<{
       cwd: workspace,
       encoding: "utf8",
       env: { ...process.env },
-      timeout: 30_000,
+      // PHASE17: product lock提供更短的contention bound；这里的较长timeout只
+      // 用于终止真正卡死的Node子进程，不能反过来改变产品锁语义。
+      timeout: INDEX_PROCESS_TIMEOUT_MS,
       windowsHide: true,
     },
   );
@@ -71,5 +75,5 @@ describe("Phase 17C cross-process index concurrency", () => {
     expect(await readdir(store!.paths.rootsRoot)).toHaveLength(1);
     expect(await readdir(store!.paths.locksRoot)).toEqual([]);
     expect(await readdir(store!.paths.temporaryRoot)).toEqual([]);
-  }, 40_000);
+  }, CONCURRENCY_TEST_TIMEOUT_MS);
 });

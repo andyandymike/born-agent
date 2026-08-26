@@ -33,6 +33,8 @@ const execFileAsync = promisify(execFile);
 const temporary: string[] = [];
 const activeStateRoots: string[] = [];
 const tsxLoader = import.meta.resolve("tsx");
+const AGENT_PROCESS_TIMEOUT_MS = 60_000;
+const CROSS_PROCESS_TEST_TIMEOUT_MS = 120_000;
 
 afterEach(async () => {
   await Promise.all(activeStateRoots.splice(0).map((root) => disposeApplicationHostForStateRoot(root)));
@@ -88,7 +90,9 @@ async function processAgent(
     memoryMode,
   ], {
     cwd: resolve("."),
-    timeout: 30_000,
+    // MEMORY-ML3: 子进程timeout负责真正的hang止损；外层还要seed Session A并
+    // dispose Application Host，因此不能和子进程共享同一个30秒deadline。
+    timeout: AGENT_PROCESS_TIMEOUT_MS,
     windowsHide: true,
   });
   return JSON.parse(result.stdout) as ProcessResult;
@@ -151,7 +155,7 @@ describe("Agent memory ML3 product use", () => {
     expect(historical[0]!.content).toContain("historical evidence only");
     expect(historical[0]!.content).toContain("bypass approval");
     expect(historical[0]!.metadata.recall_selection_sha256).toMatch(/^[a-f0-9]{64}$/u);
-  }, 30_000);
+  }, CROSS_PROCESS_TEST_TIMEOUT_MS);
 
   it("ML3 off and remote-provider paths inject zero memory records", async () => {
     const frozen = await frozenFixture();
@@ -203,5 +207,5 @@ describe("Agent memory ML3 product use", () => {
     expect(contextItems(remoteRequest).filter((item) => item.kind === "historical_memory")).toHaveLength(0);
     expect(remoteRequest.request?.canonicalContext?.text).not.toContain("bypass approval");
     await expect(access(retrievalRoot)).rejects.toMatchObject({ code: "ENOENT" });
-  }, 30_000);
+  }, CROSS_PROCESS_TEST_TIMEOUT_MS);
 });
