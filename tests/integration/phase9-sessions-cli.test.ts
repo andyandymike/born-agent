@@ -18,6 +18,9 @@ import {
 import { createMemoryIO, createRuntime } from "../helpers.js";
 
 const temporaryDirectories: string[] = [];
+const SESSION_RESUME_TEST_TIMEOUT_MS = process.env.BORN_CI_WINDOWS_SERIAL_TESTS === "1"
+  ? 90_000
+  : 30_000;
 
 async function createWorkspace(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "bornagent-phase9-cli-"));
@@ -310,7 +313,7 @@ describe("Phase 9 sessions CLI", () => {
     const operation = (await new ControlOperationJournal(authority.paths).list())
       .find((candidate) => candidate.actionKind === "session.resume");
     expect(operation).toMatchObject({ state: "blocked_unknown_effect" });
-  }, 30_000);
+  }, SESSION_RESUME_TEST_TIMEOUT_MS);
 
   it("creates a new canonical-degraded run only after durable resume facts", async () => {
     const cwd = await createWorkspace();
@@ -413,7 +416,7 @@ describe("Phase 9 sessions CLI", () => {
       after.lastRun!.started.eventId,
       after.lastRun!.terminal!.eventId,
     ]);
-  }, 30_000);
+  }, SESSION_RESUME_TEST_TIMEOUT_MS);
 
   it("refuses show while a writer lock exists", async () => {
     const cwd = await createWorkspace();

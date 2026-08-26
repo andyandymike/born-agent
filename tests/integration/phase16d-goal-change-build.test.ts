@@ -21,6 +21,9 @@ import { createMemoryIO } from "../helpers.js";
 
 const workspaces: string[] = [];
 const execFileAsync = promisify(execFile);
+const GOAL_CHANGE_TEST_TIMEOUT_MS = process.env.BORN_CI_WINDOWS_SERIAL_TESTS === "1"
+  ? 60_000
+  : 15_000;
 
 const patch = [
   "diff --git a/src/value.ts b/src/value.ts",
@@ -188,5 +191,5 @@ describe("Phase 16D Build Goal change integration", () => {
       sourceRunIds: [start.runId],
     });
     expect(projection?.records).toHaveLength(1);
-  }, 15_000);
+  }, GOAL_CHANGE_TEST_TIMEOUT_MS);
 });

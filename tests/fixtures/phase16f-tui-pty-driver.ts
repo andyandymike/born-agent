@@ -381,7 +381,10 @@ async function main(): Promise<void> {
     let noProgressBeforeConfirm = review.noProgressBeforeConfirm;
     let confirmedPreparedActionId = review.preparedActionId;
     const header = `HOST PREPARED ACTION | ${actionKind}`;
-    const deadline = Date.now() + 20_000;
+    // PHASE20: hosted/built workers can finish the exact cancellation append
+    // slightly after the projection becomes visible. Keep waiting bounded, but
+    // do not mistake that safe handoff for a missing Application operation.
+    const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
       if (await hostOperationCount(actionKind) > baseline) {
         return Object.freeze({ noProgressBeforeConfirm });
@@ -405,7 +408,9 @@ async function main(): Promise<void> {
       }
       await delay(50);
     }
-    throw new Error(`${label}: confirmed Host action never created a durable operation`);
+    throw new Error(
+      `${label}: confirmed Host action never created a durable operation; tail=${visibleText(raw).slice(-40_000)}`,
+    );
   };
 
   const confirmPreparedActionAfterCatalogBootstrap = async (
