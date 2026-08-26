@@ -105,6 +105,9 @@ describe("Agent memory ML5 release evidence", () => {
     expect(releaseJob).toContain("platform: windows");
     expect(releaseJob).toContain("tests/unit/agent-memory-ml5-evidence.test.ts");
     expect(releaseJob).toContain("tests/integration/phase21a-application-service.test.ts");
+    expect(releaseJob).toContain(
+      "--testNamePattern=\"registers a second repository against the complete non-zero catalog head\"",
+    );
     expect(releaseJob).toContain("name: Smoke packed Memory v1 release artifact");
     expect(releaseJob).toContain("run: pnpm pack:smoke");
     expect(releaseJob).not.toContain("pnpm check");

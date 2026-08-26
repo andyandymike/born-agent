@@ -64,6 +64,7 @@ CLI的`list/show/search/remember/retract/rebuild`全部通过解压后`dist/cli.
 4. 第一轮candidate Windows full gate暴露ML3/Phase17 hosted timing；15秒bounded writer wait与独立cross-process test deadline修复后，本地full/pack通过。
 5. 后续整仓CI又在无关Phase9/16/20测试上出现不同timeout和Phase20 post-dispatch fail-closed。对已复现的hosted测试预算做有界修正后，同类问题仍在另一Phase20路径复现，因此触发stop rule并改用feature-specific release jobs，而不是继续扩大ML5。
 6. ML5不运行remote provider、真实Ollama质量评估、secure erase、sync、automatic chat extraction或frontier adapter。它们不能从release receipt推断出来。
+7. public handoff提交后的Windows专用job暴露“focused”命令仍执行整个Phase21A文件，并被无关response-loss测试的5秒timeout阻塞。最终job拆成3项ML5 evidence contract与带exact test-name filter的双仓库回归；没有放宽产品合同或超时。
 
 ## 我现在如何解释这个概念
 

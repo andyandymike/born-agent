@@ -87,12 +87,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify Memory v1 release contract
+      - name: Verify Memory v1 evidence contract
+        run: pnpm test tests/unit/agent-memory-ml5-evidence.test.ts --maxWorkers=1
+
+      - name: Verify Memory v1 repository isolation regression
         run: >-
           pnpm test
-          tests/unit/agent-memory-ml5-evidence.test.ts
           tests/integration/phase21a-application-service.test.ts
           --maxWorkers=1
+          --testNamePattern="registers a second repository against the complete non-zero catalog head"
 
       - name: Smoke packed Memory v1 release artifact
         run: pnpm pack:smoke
