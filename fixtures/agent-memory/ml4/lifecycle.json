@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "agent-memory-ml4-lifecycle-v1",
+  "add": {
+    "kind": "preference",
+    "text": "Prefer legacyquasar focused checks before broad validation.",
+    "query": "legacyquasar"
+  },
+  "supersede": {
+    "kind": "preference",
+    "text": "Prefer currentnebula targeted checks before the full repository gate.",
+    "query": "currentnebula"
+  },
+  "rejectedSecret": "Authorization: Bearer ml4-fixture-secret-value",
+  "expected": {
+    "operations": ["ADD", "SUPERSEDE", "RETRACT"],
+    "activeAfterSupersede": 1,
+    "activeAfterRetract": 0,
+    "revisionCount": 2,
+    "retractRemainsAvailableAtRecordCap": true,
+    "secretCanonicalRows": 0,
+    "secretFtsRows": 0
+  }
+}

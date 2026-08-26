@@ -77,12 +77,14 @@ written to session evidence. Do not put secrets in prompts.
 validated literal-loopback Ollama `/api/tags` endpoint. It never follows
 redirects, downloads a model, or turns discovery into live-verification evidence.
 
-## Experimental local episodic memory
+## Experimental local memory
 
 ML1 adds an opt-in, repository-scoped episode after an Agent run reaches a
 durable successful terminal. ML2 adds manual exact, quoted-phrase, and lexical
 search with deterministic recency tie-breaking. ML3 lets an explicitly local
-Agent request use bounded historical excerpts. Memory remains `off` by default;
+Agent request use bounded historical excerpts. ML4 adds explicit
+fact/preference/decision/constraint revisions, retract, rebuild, and diagnostics.
+Memory remains `off` by default;
 the Agent off path does not load SQLite, open a memory database, retrieve
 history, or alter model context.
 
@@ -91,17 +93,33 @@ corepack pnpm dev agent "Inspect and verify this repository" --memory local
 corepack pnpm dev memory status --json
 corepack pnpm dev memory list --json
 corepack pnpm dev memory search "cache invalidation" --explain
-corepack pnpm dev memory show <episode-id> --json
+corepack pnpm dev memory remember preference "Use focused checks first" --json
+corepack pnpm dev memory remember preference "Use focused then full checks" --supersedes <record-id> --json
+corepack pnpm dev memory retract <record-id> --json
+corepack pnpm dev memory rebuild --json
+corepack pnpm dev memory doctor --json
+corepack pnpm dev memory show <record-id> --json
 ```
 
-Each episode is deterministically rebuilt from exact session JSONL hashes,
+Each episode is deterministically built from exact session JSONL hashes,
 bound to the local owner plus one active repository/canonical-root identity,
-screened before persistence, and capped by record and logical-byte limits.
+screened before persistence, and capped by record and logical-byte limits. An
+explicit record has one stable logical ID and immutable revisions; `ADD`,
+`SUPERSEDE`, and `RETRACT` operations determine which revision is active. The
+schema-2 migration preserves existing episode IDs, hashes, and canonical bytes.
 `list` exposes only source-available records; `show` marks missing or changed
-source evidence as stale. `search` uses one deletable FTS5 projection per exact
+episode evidence as stale and can still inspect a retracted latest revision.
+`search` uses one deletable FTS5 projection per exact
 principal/repository/root scope, considers at most 100 candidates, and returns
 only source-revalidated records within result, text-byte, and conservative-token
 bounds. Inspection commands never auto-register a repository.
+
+Known credentials, private keys, raw environment dumps, and explicitly
+non-persistable text are rejected before both the canonical transaction and FTS
+insert. Canonical revisions stop at 10,000 rows or 64 MiB. A separate bounded
+operation reserve keeps one retract available per logical record even when new
+record ingestion has stopped. Retract removes active recall; it is not secure
+erase of the original session or artifact.
 
 With `--memory local`, every local-Ollama or in-process model request reruns the
 same scoped search, refetches canonical rows, and revalidates exact source bytes
@@ -111,8 +129,17 @@ Historical bytes are explicitly delimited as past evidence, never current
 instructions, approvals, permissions, policy, or verified current state.
 
 Provider-network requests receive zero memory records and do not open the FTS
-projection. ML3 still does not extract facts from ordinary chat or implement
-`remember`/`retract`; those user lifecycle operations remain ML4.
+projection. Ordinary chat is still not model-extracted into active memory:
+explicit records require the local user command, while automatic writes remain
+deterministic completed-task episodes.
+
+Memory v1 is currently a local `preview_candidate`, not yet a stable feature.
+`corepack pnpm pack:smoke` runs its single 11-step release demo from an extracted
+tarball in fresh Node processes and emits `memory_v1_release_demo_passed:` with
+the restart, scope, retract, rebuild, mode-off, and zero-remote-request receipt.
+The candidate becomes `preview_usable` only after the same exact commit passes
+both GitHub `quality` and `windows-phase20`; remote/live model quality remains
+explicitly untested.
 
 ## Local capability platform
 

@@ -123,7 +123,7 @@ export async function runCli(
 
   const memory = program
     .command("memory")
-    .description("Inspect repository-scoped exact-source local memory.");
+    .description("Inspect and manage repository-scoped exact-source local memory.");
 
   memory
     .command("status")
@@ -156,11 +156,53 @@ export async function runCli(
 
   memory
     .command("show")
-    .argument("<record-id>", "exact episode record ID")
+    .argument("<record-id>", "exact episode or explicit memory record ID")
     .option("--json", "write versioned JSON", false)
     .action(async (recordId: string, options: { json: boolean }) => {
       const { executeMemoryShow } = await import("../commands/memory.js");
       commandExitCode = await executeMemoryShow(recordId, options, runtime, io);
+    });
+
+  memory
+    .command("remember")
+    .argument("<kind>", "fact, preference, decision, or constraint")
+    .argument("<text>", "bounded explicit memory text")
+    .option("--supersedes <record-id>", "replace one active explicit record with a new revision")
+    .option("--json", "write versioned JSON", false)
+    .action(async (
+      kind: string,
+      text: string,
+      options: { json: boolean; supersedes?: string },
+    ) => {
+      const { executeMemoryRemember } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryRemember(kind, text, options, runtime, io);
+    });
+
+  memory
+    .command("retract")
+    .argument("<record-id>", "exact active episode or explicit memory record ID")
+    .option("--json", "write versioned JSON", false)
+    .action(async (recordId: string, options: { json: boolean }) => {
+      const { executeMemoryRetract } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryRetract(recordId, options, runtime, io);
+    });
+
+  memory
+    .command("rebuild")
+    .description("Delete and rebuild the current scope's derived FTS projection.")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean }) => {
+      const { executeMemoryRebuild } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryRebuild(options, runtime, io);
+    });
+
+  memory
+    .command("doctor")
+    .description("Diagnose canonical SQLite, sources, capacity, permissions, and FTS.")
+    .option("--json", "write versioned JSON", false)
+    .action(async (options: { json: boolean }) => {
+      const { executeMemoryDoctor } = await import("../commands/memory.js");
+      commandExitCode = await executeMemoryDoctor(options, runtime, io);
     });
 
   const internal = program.command("internal", { hidden: true });

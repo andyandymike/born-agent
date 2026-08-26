@@ -108,12 +108,12 @@ describe("Agent memory ML1 SQLite episode store", () => {
     const path = opened.paths.databasePath;
     opened.close();
     const raw = new DatabaseSync(path);
-    raw.prepare("UPDATE metadata SET value = '2' WHERE key = 'schema_version'").run();
+    raw.prepare("UPDATE metadata SET value = '3' WHERE key = 'schema_version'").run();
     raw.close();
     await expect(SqliteEpisodeStore.create({ stateRoot }))
       .rejects.toMatchObject({ code: "memory_store_corrupt" });
     const readback = new DatabaseSync(path, { readOnly: true });
-    expect(readback.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()).toEqual({ value: "2" });
+    expect(readback.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()).toEqual({ value: "3" });
     readback.close();
   });
 

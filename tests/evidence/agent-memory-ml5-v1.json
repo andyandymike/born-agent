@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "agent-memory-ml5-v1",
+  "releaseDemoFixture": "fixtures/agent-memory/ml5/release-demo.json",
+  "requiredCiJobs": ["quality", "windows-phase20"],
+  "requiredLogMarker": "memory_v1_release_demo_passed:",
+  "cases": [
+    {
+      "blocking": true,
+      "file": "scripts/pack-smoke.mjs",
+      "fullName": "runs Session A then Session B in separate Node processes from the extracted tarball",
+      "id": "MEM-ML5-01",
+      "invariant": "A completed local Session A publishes an exact-source episode that a new-process Session B receives only as bounded historical evidence.",
+      "platforms": ["linux", "win32"],
+      "runner": "pnpm pack:smoke"
+    },
+    {
+      "blocking": true,
+      "file": "scripts/pack-smoke.mjs",
+      "fullName": "recalls an explicit preference in a new session and excludes it after retract",
+      "id": "MEM-ML5-02",
+      "invariant": "Explicit active memory crosses a process boundary while its retracted revision is never selected again.",
+      "platforms": ["linux", "win32"],
+      "runner": "pnpm pack:smoke"
+    },
+    {
+      "blocking": true,
+      "file": "scripts/pack-smoke.mjs",
+      "fullName": "proves wrong-repository zero, rebuild equivalence, mode-off equivalence and zero remote billing",
+      "id": "MEM-ML5-03",
+      "invariant": "The release path preserves repository isolation, derived rebuild order, the no-memory request shape and a zero-network deterministic backend boundary.",
+      "platforms": ["linux", "win32"],
+      "runner": "pnpm pack:smoke"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/phase21a-application-service.test.ts",
+      "fullName": "registers a second repository against the complete non-zero catalog head",
+      "id": "MEM-ML5-04",
+      "invariant": "Sequential repository registration preserves the complete catalog head so wrong-scope verification can use two real Host repository identities.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    }
+  ]
+}

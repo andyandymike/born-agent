@@ -165,7 +165,7 @@ describe("Agent memory ML1 CLI integration", () => {
 
     const status = createMemoryIO();
     expect(await runCli(["memory", "status", "--json"], status.io, runtime), status.readStderr()).toBe(0);
-    expect(JSON.parse(status.readStdout())).toMatchObject({ episodeCount: 1, mode: "local", schemaVersion: 1 });
+    expect(JSON.parse(status.readStdout())).toMatchObject({ episodeCount: 1, mode: "local", schemaVersion: 2 });
     const listed = createMemoryIO();
     expect(await runCli(["memory", "list", "--json"], listed.io, runtime), listed.readStderr()).toBe(0);
     const page = JSON.parse(listed.readStdout()) as { readonly items: readonly { readonly record: { readonly recordId: string } }[] };

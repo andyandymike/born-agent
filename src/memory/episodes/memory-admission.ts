@@ -10,7 +10,7 @@ const KNOWN_TOKEN = /(?:\bAKIA[A-Z0-9]{16}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\b
 const SECRET_ASSIGNMENT = /\b(?:authorization|cookie|password|passwd|api[_-]?key|client[_-]?secret|access[_-]?token|credential)\b\s*[:=]\s*\S+/iu;
 const ENV_ASSIGNMENT = /^(?:export\s+)?[A-Z_][A-Z0-9_]{0,127}=\S+/u;
 
-export function inspectMl1MemoryAdmission(values: readonly string[]): Ml1MemoryAdmissionResult {
+export function inspectMemoryAdmission(values: readonly string[]): Ml1MemoryAdmissionResult {
   const joined = values.join("\n");
   if (/\bnon[-_ ]persistable\b/iu.test(joined)) {
     return Object.freeze({ admitted: false, reason: "non_persistable" });
@@ -27,3 +27,6 @@ export function inspectMl1MemoryAdmission(values: readonly string[]): Ml1MemoryA
   }
   return Object.freeze({ admitted: true });
 }
+
+/** Backward-compatible ML1 name; ML4 applies the same scanner to every canonical record. */
+export const inspectMl1MemoryAdmission = inspectMemoryAdmission;

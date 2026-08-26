@@ -115,6 +115,21 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function memoryReleaseEnvironment(overrides = {}) {
+  const sanitized = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !key.startsWith("BORN_") &&
+    !/(?:API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)/iu.test(key)
+  ));
+  return Object.freeze({ ...sanitized, ...overrides });
+}
+
+function historicalMemoryItems(agentResult) {
+  const text = agentResult.request?.canonicalContext?.text;
+  if (typeof text !== "string") return [];
+  const decoded = JSON.parse(text);
+  return (decoded.items ?? []).filter((item) => item.kind === "historical_memory");
+}
+
 try {
   runPnpm(["pack", "--pack-destination", temporaryRoot], workspaceRoot);
   const archiveName = (await readdir(temporaryRoot)).find((name) =>
@@ -578,14 +593,14 @@ try {
       version: "ml3-pack-v1",
     });
     const ml3Search = new PackedLexicalMemorySearchService({
-      inspectSource: (record) => ml3Memory.inspectEpisodeSource(record),
+      inspectSource: (record) => ml3Memory.inspectRecordSource(record),
       projection: ml3Projection,
       scope: ml1Scope,
       store: ml3Store,
       tokenEstimator: ml3Estimator,
     });
     const ml3Prepared = await new PackedAutomaticMemoryRecallService({
-      inspectSource: (record) => ml3Memory.inspectEpisodeSource(record),
+      inspectSource: (record) => ml3Memory.inspectRecordSource(record),
       scope: ml1Scope,
       search: ml3Search,
       store: ml3Store,
@@ -611,6 +626,430 @@ try {
   } finally {
     ml3Store.close();
   }
+
+  // ML4: the extracted binary owns the complete explicit lifecycle. The
+  // derived FTS can disappear, while canonical revisions and operations remain.
+  const ml4Added = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "remember", "preference", "Prefer packquasar focused validation.", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml4Added.status !== "added" || ml4Added.operation?.operation !== "ADD" ||
+    ml4Added.record?.revision !== 1 || ml4Added.derivedCleanup !== "removed"
+  ) {
+    throw new Error("installed ML4 remember did not create one explicit ADD revision");
+  }
+  const ml4InitialSearch = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "packquasar", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (ml4InitialSearch.hits?.[0]?.record?.recordId !== ml4Added.record.recordId) {
+    throw new Error("installed ML4 explicit record was not searchable");
+  }
+  const ml4Secret = "Authorization: Bearer packed-ml4-secret-value";
+  const ml4Rejected = spawnSync(
+    process.execPath,
+    [binaryPath, "memory", "remember", "fact", ml4Secret, "--json"],
+    { cwd: ml1RepositoryRoot, encoding: "utf8", env: ml1Environment, shell: false },
+  );
+  if (
+    ml4Rejected.status !== 2 || !ml4Rejected.stderr.includes("memory_record_not_admitted") ||
+    ml4Rejected.stderr.includes("packed-ml4-secret-value") || ml4Rejected.stdout.length !== 0
+  ) {
+    throw new Error("installed ML4 secret admission did not fail closed without reflection");
+  }
+  const ml4Superseded = JSON.parse(runCommand(
+    process.execPath,
+    [
+      binaryPath,
+      "memory",
+      "remember",
+      "preference",
+      "Prefer packnebula targeted validation before the full gate.",
+      "--supersedes",
+      ml4Added.record.recordId,
+      "--json",
+    ],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml4Superseded.status !== "superseded" || ml4Superseded.operation?.operation !== "SUPERSEDE" ||
+    ml4Superseded.record?.recordId !== ml4Added.record.recordId || ml4Superseded.record?.revision !== 2
+  ) {
+    throw new Error("installed ML4 supersede did not advance one stable logical record");
+  }
+  const ml4OldSearch = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "packquasar", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  const ml4NewSearch = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "packnebula", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml4OldSearch.status !== "abstained" ||
+    ml4NewSearch.hits?.[0]?.record?.revisionId !== ml4Superseded.record.revisionId
+  ) {
+    throw new Error("installed ML4 search exposed a superseded revision");
+  }
+  const ml4Doctor = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "doctor", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (ml4Doctor.status !== "ok" || ml4Doctor.checks?.fts?.status !== "ok") {
+    throw new Error("installed ML4 doctor did not verify SQLite, source, capacity and FTS");
+  }
+  const ml4BeforeRebuild = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "status", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  await rm(join(ml1StateRoot, "memory", "v1", "retrieval"), { force: true, recursive: true });
+  const ml4Rebuilt = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "rebuild", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml4Rebuilt.beforeLogicalSha256 !== ml4BeforeRebuild.logicalSha256 ||
+    ml4Rebuilt.afterLogicalSha256 !== ml4BeforeRebuild.logicalSha256 ||
+    ml4Rebuilt.status !== "rebuilt"
+  ) {
+    throw new Error("installed ML4 derived rebuild changed canonical logical memory");
+  }
+  const ml4Retracted = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "retract", ml4Added.record.recordId, "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  const ml4AfterRetract = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", "packnebula", "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  const ml4RetractedShow = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "show", ml4Added.record.recordId, "--json"],
+    ml1RepositoryRoot,
+    ml1Environment,
+  ));
+  if (
+    ml4Retracted.status !== "retracted" || ml4Retracted.operation?.operation !== "RETRACT" ||
+    ml4AfterRetract.status !== "abstained" || ml4RetractedShow.lifecycleStatus !== "retracted"
+  ) {
+    throw new Error("installed ML4 retract remained visible to active retrieval");
+  }
+
+  // ML5: execute the spec's one release demo through separate Node processes
+  // that load only the extracted tarball. The deterministic backend is local,
+  // credential-free and captured before each process exits; it is not provider
+  // quality evidence.
+  const ml5Fixture = JSON.parse(await readFile(
+    join(workspaceRoot, "fixtures", "agent-memory", "ml5", "release-demo.json"),
+    "utf8",
+  ));
+  if (ml5Fixture.schemaVersion !== 1 || ml5Fixture.expected?.steps !== 11) {
+    throw new Error("ML5 release fixture does not freeze the unique 11-step demo");
+  }
+  const ml5StateRoot = join(temporaryRoot, "ml5-state");
+  const ml5RepositoryRoot = join(temporaryRoot, "ml5-repository");
+  const ml5WrongRepositoryRoot = join(temporaryRoot, "ml5-wrong-repository");
+  await Promise.all([
+    mkdir(ml5RepositoryRoot, { recursive: true }),
+    mkdir(ml5WrongRepositoryRoot, { recursive: true }),
+  ]);
+  const ml5Environment = memoryReleaseEnvironment({
+    BORN_CONTROL_STATE_ROOT: ml5StateRoot,
+    BORN_HOOK_SUPPRESSED: "1",
+  });
+  const ml5ProcessPath = join(
+    workspaceRoot,
+    "scripts",
+    "fixtures",
+    "memory-v1-release-agent-process.mjs",
+  );
+  const ml5AgentResults = [];
+  const runMl5Agent = (repositoryRoot, task, mode) => {
+    const result = JSON.parse(runCommand(
+      process.execPath,
+      [ml5ProcessPath, packageRoot, ml5StateRoot, repositoryRoot, task, mode],
+      repositoryRoot,
+      ml5Environment,
+    ));
+    if (
+      result.exitCode !== 0 || result.fakeModelRequestCount !== 1 ||
+      result.remoteBillableRequests !== 0 || result.request === null
+    ) {
+      throw new Error(
+        `ML5 release Agent process failed closed: ${JSON.stringify({
+          exitCode: result.exitCode,
+          fakeModelRequestCount: result.fakeModelRequestCount,
+          mode,
+          remoteBillableRequests: result.remoteBillableRequests,
+          stderr: result.stderr,
+        })}`,
+      );
+    }
+    ml5AgentResults.push(result);
+    return result;
+  };
+  const stableOffRequest = (result) => {
+    const context = JSON.parse(result.request.canonicalContext.text);
+    return Object.freeze({
+      input: result.request.input,
+      instructions: result.request.instructions,
+      items: (context.items ?? [])
+        .filter((item) => item.kind !== "historical_memory")
+        .map((item) => Object.freeze({
+          authority: item.authority,
+          content: item.content,
+          kind: item.kind,
+          priority: item.priority,
+          protectedCategory: item.protected_category ?? null,
+          role: item.role,
+          visibility: item.visibility,
+        })),
+      toolNames: result.request.toolNames,
+    });
+  };
+
+  const ml5OffBaseline = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.episodeRecallQuery,
+    "off",
+  );
+  if (historicalMemoryItems(ml5OffBaseline).length !== 0) {
+    throw new Error("ML5 mode-off baseline injected historical memory");
+  }
+
+  const ml5SessionA = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.sessionATask,
+    "local",
+  );
+  if (historicalMemoryItems(ml5SessionA).length !== 0) {
+    throw new Error("ML5 empty Session A unexpectedly recalled historical memory");
+  }
+  const ml5List = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "list", "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  const ml5Episode = ml5List.items?.find((item) =>
+    item.record?.kind === "episode" &&
+    item.record?.taskPreview?.includes("releaseorbit")
+  );
+  if (ml5Episode === undefined) {
+    throw new Error(
+      `ML5 Session A did not publish one source-bound episode: ${JSON.stringify(ml5List)}`,
+    );
+  }
+  const ml5EpisodeShow = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "show", ml5Episode.record.recordId, "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  if (
+    ml5EpisodeShow.lifecycleStatus !== "active" ||
+    ml5EpisodeShow.sourceStatus !== "available" ||
+    ml5EpisodeShow.record?.recordSha256 !== ml5Episode.record.recordSha256
+  ) {
+    throw new Error("ML5 list/show did not preserve the Session A scope and exact source");
+  }
+
+  const ml5SessionB = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.episodeRecallQuery,
+    "local",
+  );
+  const ml5EpisodeHistorical = historicalMemoryItems(ml5SessionB);
+  const ml5EpisodeItem = ml5EpisodeHistorical.find((item) =>
+    item.metadata?.record_id === ml5Episode.record.recordId
+  );
+  if (
+    ml5EpisodeItem?.authority !== ml5Fixture.expected.memoryAuthority ||
+    ml5EpisodeItem.metadata?.source_status !== "available" ||
+    ml5EpisodeItem.metadata?.active_status !== "available" ||
+    ml5EpisodeHistorical.length > ml5Fixture.expected.maximumHistoricalRecords
+  ) {
+    throw new Error("ML5 Session B did not receive the bounded historical-only Session A episode");
+  }
+  const ml5EpisodeExplain = JSON.parse(runCommand(
+    process.execPath,
+    [
+      binaryPath,
+      "memory",
+      "search",
+      ml5Fixture.episodeRecallQuery,
+      "--explain",
+      "--json",
+    ],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  if (
+    !ml5EpisodeExplain.hits?.some((hit) =>
+      hit.record?.recordId === ml5Episode.record.recordId &&
+      hit.reason === "lexical_bm25" && hit.sourceStatus === "available"
+    )
+  ) {
+    throw new Error("ML5 search --explain did not expose why/source for the Session A episode");
+  }
+
+  const ml5Remembered = JSON.parse(runCommand(
+    process.execPath,
+    [
+      binaryPath,
+      "memory",
+      "remember",
+      ml5Fixture.explicitKind,
+      ml5Fixture.explicitText,
+      "--json",
+    ],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  if (ml5Remembered.status !== "added" || ml5Remembered.operation?.operation !== "ADD") {
+    throw new Error("ML5 explicit repository preference was not added");
+  }
+  const ml5ExplicitSession = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.explicitRecallQuery,
+    "local",
+  );
+  const ml5ExplicitItem = historicalMemoryItems(ml5ExplicitSession).find((item) =>
+    item.metadata?.record_id === ml5Remembered.record.recordId
+  );
+  if (
+    ml5ExplicitItem?.authority !== "historical_only" ||
+    ml5ExplicitItem.metadata?.revision_id !== ml5Remembered.record.revisionId
+  ) {
+    throw new Error("ML5 new session did not recall the explicit active preference revision");
+  }
+
+  const ml5Retracted = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "retract", ml5Remembered.record.recordId, "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  if (ml5Retracted.status !== "retracted" || ml5Retracted.operation?.operation !== "RETRACT") {
+    throw new Error("ML5 explicit preference was not retracted");
+  }
+  const ml5SessionC = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.explicitRecallQuery,
+    "local",
+  );
+  if (historicalMemoryItems(ml5SessionC).some((item) =>
+    item.metadata?.record_id === ml5Remembered.record.recordId
+  )) {
+    throw new Error("ML5 Session C reused the retracted explicit record");
+  }
+
+  const ml5WrongRepository = runMl5Agent(
+    ml5WrongRepositoryRoot,
+    ml5Fixture.episodeRecallQuery,
+    "local",
+  );
+  if (historicalMemoryItems(ml5WrongRepository).length !== 0) {
+    throw new Error("ML5 wrong repository received memory from the release repository");
+  }
+
+  const ml5BeforeRebuild = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", ml5Fixture.episodeRecallQuery, "--explain", "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  const ml5BeforeStatus = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "status", "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  await rm(join(ml5StateRoot, "memory", "v1", "retrieval"), {
+    force: true,
+    recursive: true,
+  });
+  const ml5Rebuilt = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "rebuild", "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  const ml5AfterRebuild = JSON.parse(runCommand(
+    process.execPath,
+    [binaryPath, "memory", "search", ml5Fixture.episodeRecallQuery, "--explain", "--json"],
+    ml5RepositoryRoot,
+    ml5Environment,
+  ));
+  if (
+    ml5Rebuilt.status !== "rebuilt" ||
+    ml5Rebuilt.beforeLogicalSha256 !== ml5BeforeStatus.logicalSha256 ||
+    ml5Rebuilt.afterLogicalSha256 !== ml5BeforeStatus.logicalSha256 ||
+    JSON.stringify(ml5AfterRebuild.hits) !== JSON.stringify(ml5BeforeRebuild.hits)
+  ) {
+    throw new Error("ML5 derived rebuild changed active logical records or retrieval order");
+  }
+
+  const ml5OffFinal = runMl5Agent(
+    ml5RepositoryRoot,
+    ml5Fixture.episodeRecallQuery,
+    "off",
+  );
+  const ml5OffBaselineShape = stableOffRequest(ml5OffBaseline);
+  const ml5OffFinalShape = stableOffRequest(ml5OffFinal);
+  if (
+    historicalMemoryItems(ml5OffFinal).length !== 0 ||
+    JSON.stringify(ml5OffFinalShape) !== JSON.stringify(ml5OffBaselineShape)
+  ) {
+    throw new Error("ML5 final mode-off request did not restore the no-memory model path");
+  }
+  if (ml5AgentResults.some((item) => item.remoteBillableRequests !== 0)) {
+    throw new Error("ML5 deterministic release demo attempted a billable provider request");
+  }
+
+  const ml5Receipt = Object.freeze({
+    assertions: Object.freeze({
+      activeRebuildEquivalent: true,
+      explicitNewSessionRecall: true,
+      listShowExactSource: true,
+      modeOffEquivalent: true,
+      retractedRecordUses: 0,
+      sameRepositoryEpisodeRecall: true,
+      wrongRepositoryRecords: 0,
+    }),
+    demoId: ml5Fixture.fixtureId,
+    exactCommit: process.env.GITHUB_SHA ?? null,
+    fakeModelRequestCount: ml5AgentResults.reduce(
+      (total, item) => total + item.fakeModelRequestCount,
+      0,
+    ),
+    logicalSha256: ml5BeforeStatus.logicalSha256,
+    offRequestShapeSha256: sha256(JSON.stringify(ml5OffBaselineShape)),
+    remoteBillableRequests: 0,
+    schemaVersion: 1,
+    stepsPassed: ml5Fixture.expected.steps,
+  });
+  process.stdout.write(`memory_v1_release_demo_passed: ${JSON.stringify(ml5Receipt)}\n`);
 
   // RIC4: exercise the real binary from the extracted tarball. This is kept in
   // the ordinary pack smoke too, so the release path cannot silently omit the
@@ -1784,7 +2223,7 @@ try {
     );
   }
 
-  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; passed the installed ML1 exact-source SQLite close/reopen and memory status/show probe, ML2 search/deleted-projection rebuild, and ML3 bounded historical-only context preparation, ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
+  process.stdout.write("pack smoke passed: extracted tarball loaded Phase 15 policy/Docker assets, the exact Phase 17 engine/corpus, the Phase 18A built-in capability index, the exact Phase 18 M9 review pack, the Phase 19 M10 canonical Graph fixture, and the Phase 20 M11 controlled-subagent fixture; passed the installed ML1 exact-source SQLite close/reopen and memory status/show probe, ML2 search/deleted-projection rebuild, ML3 bounded historical-only context preparation, ML4 remember/supersede/secret/doctor/rebuild/retract lifecycle, and the ML5 11-step new-process release demo, ran born/delegations help and the installed repository-cache five-command delete/rebuild replay, executed the packed Hook supervisor, validated the packed Graph hash, passed Graph/worker doctor, launched two foreground and two Phase19-worker-owned offline real delegated child processes through sealed handshakes and isolated session shards, accepted four verified receipts, released every parent barrier and actor/conflict claim, verified the installed Phase 21A delegation mutation against its completed Host journal operation, local principal, authenticated application origin, and primary raw-line SHA-256, inspected the packed Plugin, and validated 20 bundled eval tasks without executing full eval\n");
 } finally {
   await rm(temporaryRoot, {
     force: true,

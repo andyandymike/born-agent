@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "agent-memory-ml4-v1",
+  "cases": [
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-record.test.ts",
+      "fullName": "builds strict stable explicit revisions without rewriting the logical record identity",
+      "id": "MEM-ML4-01",
+      "invariant": "Formal MemoryRecordV1 preserves one logical identity across strict immutable explicit revisions.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-lifecycle.test.ts",
+      "fullName": "atomically migrates the exact ML1 episode bytes into schema 2 revision and ADD operation",
+      "id": "MEM-ML4-02",
+      "invariant": "Schema 1 episode canonical bytes IDs and hashes survive the atomic schema 2 migration unchanged.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-lifecycle.test.ts",
+      "fullName": "exposes only the active superseding revision and makes retract idempotent",
+      "id": "MEM-L09",
+      "invariant": "ADD SUPERSEDE and RETRACT are append only and active readers expose only the current unretracted revision.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-lifecycle.test.ts",
+      "fullName": "keeps one retract operation available after automatic episode ingest reaches record capacity",
+      "id": "MEM-L03",
+      "invariant": "Record capacity stops new ingestion while the independent lifecycle reserve still admits retract.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-lifecycle.test.ts",
+      "fullName": "rejects secret-bearing explicit text before any canonical revision or operation is inserted",
+      "id": "MEM-L02",
+      "invariant": "Known secret patterns fail before the canonical record and operation transaction.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/unit/agent-memory-ml4-recall.test.ts",
+      "fullName": "injects the active revision as historical-only context and selects zero after retract",
+      "id": "MEM-ML4-03",
+      "invariant": "Automatic recall refetches the active revision identity and cannot use a retracted explicit record.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    },
+    {
+      "blocking": true,
+      "file": "tests/integration/agent-memory-ml4-cli.test.ts",
+      "fullName": "adds, supersedes, diagnoses, rebuilds and retracts one explicit record without admitting a secret",
+      "id": "MEM-ML4-04",
+      "invariant": "The product CLI completes the lifecycle secret and deleted-derived rebuild demo while preserving the canonical logical hash.",
+      "platforms": ["linux", "win32"],
+      "runner": "vitest"
+    }
+  ]
+}

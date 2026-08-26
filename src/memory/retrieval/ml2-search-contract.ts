@@ -1,5 +1,5 @@
 import { sha256Canonical } from "../../completion/canonical-json.js";
-import type { Ml1EpisodeRecordV1 } from "../core/ml1-episode-record.js";
+import type { MemoryRecordV1 } from "../core/memory-record-v1.js";
 import { Ml1MemoryError } from "../core/ml1-memory-error.js";
 
 // MEMORY-ML2: query grammar由Host生成，不把用户字符串当成FTS程序执行。
@@ -11,7 +11,7 @@ export const ML2_SEARCH_MAX_RESULTS = 20;
 export const ML2_SEARCH_MAX_TEXT_BYTES = 16 * 1_024;
 export const ML2_SEARCH_MAX_ESTIMATED_TOKENS = 4_096;
 export const ML2_RETRIEVER_ID = "bornagent.lexical-memory-search";
-export const ML2_RETRIEVER_VERSION = "ml2-v1";
+export const ML2_RETRIEVER_VERSION = "ml2-v2";
 
 export type Ml2SearchQueryKindV1 = "exact_id" | "lexical" | "quoted_phrase";
 export type Ml2SearchAbstentionReasonV1 =
@@ -50,7 +50,7 @@ export interface Ml2SearchScoreV1 {
 export interface Ml2SearchHitV1 {
   readonly estimatedTokens: number;
   readonly reason: Ml2SearchSelectionReasonV1;
-  readonly record: Ml1EpisodeRecordV1;
+  readonly record: MemoryRecordV1;
   readonly score: Ml2SearchScoreV1;
   readonly sourceStatus: "available";
   readonly textBytes: number;
@@ -121,7 +121,7 @@ export function parseMl2SearchQuery(input: string): Ml2ParsedSearchQueryV1 {
     throw new Ml1MemoryError("memory_query_invalid", "memory search query exceeds its UTF-8 byte bound");
   }
   const querySha256 = sha256Canonical({ normalized, schema_version: 1 });
-  if (/^episode_[a-f0-9]{64}$/u.test(normalized)) {
+  if (/^(?:episode|memory)_[a-f0-9]{64}$/u.test(normalized)) {
     return Object.freeze({
       exactRecordId: normalized,
       ftsExpression: null,
@@ -151,8 +151,9 @@ export function parseMl2SearchQuery(input: string): Ml2ParsedSearchQueryV1 {
   });
 }
 
-export function normalizedPhraseAppears(record: Ml1EpisodeRecordV1, phrase: string): boolean {
+export function normalizedPhraseAppears(record: MemoryRecordV1, phrase: string): boolean {
   const expected = normalizeSearchText(phrase).toLocaleLowerCase("en-US");
-  return normalizeSearchText(record.taskPreview).toLocaleLowerCase("en-US").includes(expected) ||
+  const title = record.kind === "episode" ? record.taskPreview : `${record.kind}: ${record.text}`;
+  return normalizeSearchText(title).toLocaleLowerCase("en-US").includes(expected) ||
     normalizeSearchText(record.text).toLocaleLowerCase("en-US").includes(expected);
 }

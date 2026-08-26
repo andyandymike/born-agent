@@ -9,7 +9,7 @@ import type {
 export const ML3_MAX_SELECTED_RECORDS = 3;
 export const ML3_MAX_INJECTED_TOKENS = 1_024;
 export const ML3_CONTEXT_TARGET_RATIO = 0.08;
-export const ML3_RECALL_VERSION = "ml3-v1";
+export const ML3_RECALL_VERSION = "ml3-v2";
 
 export type Ml3RecallAbstentionReasonV1 =
   | Ml2SearchAbstentionReasonV1
@@ -30,7 +30,8 @@ export interface Ml3RecallSelectedRecordV1 {
   readonly reason: Ml2SearchSelectionReasonV1;
   readonly recordId: string;
   readonly recordSha256: string;
-  readonly sourceRangeSha256: string;
+  readonly revisionId: string;
+  readonly sourceReferenceSha256: string;
   readonly sourceStatus: "available";
   readonly textBytes: number;
 }
@@ -139,7 +140,8 @@ function selectionCanonicalValue(input: RecallSelectionInputV1) {
       reason: record.reason,
       record_id: record.recordId,
       record_sha256: record.recordSha256,
-      source_range_sha256: record.sourceRangeSha256,
+      revision_id: record.revisionId,
+      source_reference_sha256: record.sourceReferenceSha256,
       source_status: record.sourceStatus,
       text_bytes: record.textBytes,
     })),
@@ -157,6 +159,12 @@ export function createRecallSelectionV1(
   if (
     !SHA256.test(input.query.querySha256) ||
     !SHA256.test(input.request.requestSha256) ||
+    selectedRecords.some((record) =>
+      !/^(?:episode|memory)_[a-f0-9]{64}$/u.test(record.recordId) ||
+      !/^(?:episode|revision)_[a-f0-9]{64}$/u.test(record.revisionId) ||
+      !SHA256.test(record.recordSha256) ||
+      !SHA256.test(record.sourceReferenceSha256) ||
+      !Number.isFinite(Date.parse(record.occurredAt))),
     selectedRecords.length > ML3_MAX_SELECTED_RECORDS ||
     expectedTokens !== input.budget.estimatedTokensUsed ||
     expectedBytes !== input.budget.textBytesUsed ||

@@ -1,10 +1,16 @@
-import { canonicalJson, sha256Canonical } from "../../completion/canonical-json.js";
+import { canonicalJson } from "../../completion/canonical-json.js";
 import { createContextItem, type ContextItem, type ContextJson } from "../../context/context-item.js";
 import type { TokenEstimator } from "../../context/token-estimator.js";
-import type { Ml1EpisodeRecordV1, Ml1MemoryScopeV1 } from "../core/ml1-episode-record.js";
-import type { Ml1EpisodeViewV1 } from "../product/memory-service.js";
+import type { Ml1MemoryScopeV1 } from "../core/ml1-episode-record.js";
+import {
+  memoryRecordRevisionId,
+  memoryRecordSourceEventIds,
+  memoryRecordSourceReferenceSha256,
+  sameMemoryScope,
+  type MemoryRecordV1,
+} from "../core/memory-record-v1.js";
 import type { LexicalMemorySearchService } from "../retrieval/lexical-memory-search-service.js";
-import type { Ml1EpisodeStorePort } from "../store/sqlite-episode-store.js";
+import type { MemoryStorePort } from "../store/sqlite-episode-store.js";
 import {
   ML3_MAX_SELECTED_RECORDS,
   createMl3RequestSha256,
@@ -21,9 +27,13 @@ const SELECTION_HASH_PLACEHOLDER = "0".repeat(64);
 
 interface PreparedCandidate {
   readonly item: ContextItem;
-  readonly record: Ml1EpisodeRecordV1;
+  readonly record: MemoryRecordV1;
   readonly reason: Ml3RecallSelectedRecordV1["reason"];
 }
+
+type MemorySourceInspector = {
+  bivarianceHack(record: MemoryRecordV1): Promise<Readonly<{ readonly sourceStatus: "available" | "stale" }>>;
+}["bivarianceHack"];
 
 function boundedQuery(value: string): string {
   let bytes = 0;
@@ -37,7 +47,7 @@ function boundedQuery(value: string): string {
   return result;
 }
 
-function renderHistoricalExcerpt(record: Ml1EpisodeRecordV1): string {
+function renderHistoricalExcerpt(record: MemoryRecordV1): string {
   const payload = canonicalJson({
     kind: record.kind,
     occurred_at: record.occurredAt,
@@ -56,7 +66,7 @@ function renderHistoricalExcerpt(record: Ml1EpisodeRecordV1): string {
 function contextItemFor(
   candidate: Readonly<{
     readonly reason: Ml3RecallSelectedRecordV1["reason"];
-    readonly record: Ml1EpisodeRecordV1;
+    readonly record: MemoryRecordV1;
     readonly request: Ml3RecallRequestIdentityV1;
     readonly selectionSha256: string;
   }>,
@@ -77,9 +87,10 @@ function contextItemFor(
         recall_selection_sha256: candidate.selectionSha256,
         record_id: record.recordId,
         record_sha256: record.recordSha256,
+        revision_id: memoryRecordRevisionId(record),
         retrieval_reason: candidate.reason,
         schema_version: 1,
-        source_range_sha256: record.source.rangeSha256,
+        source_reference_sha256: memoryRecordSourceReferenceSha256(record),
         source_status: "available",
       } as ContextJson,
       pairing: null,
@@ -87,7 +98,7 @@ function contextItemFor(
       protectedCategory: null,
       recency: 0,
       role: "system",
-      sourceEventIds: [record.source.startEventId, record.source.endEventId],
+      sourceEventIds: memoryRecordSourceEventIds(record),
       turnId: candidate.request.runId,
       visibility: "provider_context",
     },
@@ -95,18 +106,14 @@ function contextItemFor(
   );
 }
 
-function sameScope(left: Ml1MemoryScopeV1, right: Ml1MemoryScopeV1): boolean {
-  return sha256Canonical(left) === sha256Canonical(right);
-}
-
 export class AutomaticMemoryRecallService {
   public constructor(private readonly input: Readonly<{
     /** Test seam used to change source bytes after search and before the use check. */
     readonly beforeUseRevalidation?: () => Promise<void>;
-    readonly inspectSource: (record: Ml1EpisodeRecordV1) => Promise<Ml1EpisodeViewV1>;
+    readonly inspectSource: MemorySourceInspector;
     readonly scope: Ml1MemoryScopeV1;
     readonly search: LexicalMemorySearchService;
-    readonly store: Ml1EpisodeStorePort;
+    readonly store: MemoryStorePort;
     readonly tokenEstimator: TokenEstimator;
   }>) {}
 
@@ -146,14 +153,15 @@ export class AutomaticMemoryRecallService {
     for (const hit of searched.hits) {
       // MEMORY-ML3: ML2 ranking is only a candidate decision. Immediately
       // before ContextPlan construction, refetch canonical bytes and revalidate source.
-      const current = await this.input.store.getEpisode({
+      const current = await this.input.store.getActiveRecord({
         recordId: hit.record.recordId,
         scope: this.input.scope,
       });
       if (
         current === null ||
         current.recordSha256 !== hit.record.recordSha256 ||
-        !sameScope(current.scope, this.input.scope)
+        !sameMemoryScope(current.scope, this.input.scope) ||
+        memoryRecordRevisionId(current) !== memoryRecordRevisionId(hit.record)
       ) {
         sawFailedRevalidation = true;
         continue;
@@ -186,7 +194,8 @@ export class AutomaticMemoryRecallService {
       reason,
       recordId: record.recordId,
       recordSha256: record.recordSha256,
-      sourceRangeSha256: record.source.rangeSha256,
+      revisionId: memoryRecordRevisionId(record),
+      sourceReferenceSha256: memoryRecordSourceReferenceSha256(record),
       sourceStatus: "available" as const,
       textBytes: Buffer.byteLength(item.content, "utf8"),
     })));

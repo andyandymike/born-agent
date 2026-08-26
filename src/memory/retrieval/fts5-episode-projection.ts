@@ -3,9 +3,14 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { canonicalJson, sha256Canonical } from "../../completion/canonical-json.js";
-import type { Ml1LogicalDumpV1 } from "../store/sqlite-episode-store.js";
 import type { Ml1MemoryScopeV1 } from "../core/ml1-episode-record.js";
 import { Ml1MemoryError } from "../core/ml1-memory-error.js";
+import {
+  memoryRecordRevisionId,
+  memoryRecordSearchTitle,
+} from "../core/memory-record-v1.js";
+import { inspectMemoryAdmission } from "../episodes/memory-admission.js";
+import type { MemoryLogicalDumpV1 } from "../store/sqlite-episode-store.js";
 import { ML2_SEARCH_MAX_CANDIDATES } from "./ml2-search-contract.js";
 
 const FTS5_SCHEMA_SQL = `
@@ -13,28 +18,29 @@ CREATE TABLE projection_metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
-CREATE VIRTUAL TABLE episodes_fts USING fts5(
+CREATE VIRTUAL TABLE records_fts USING fts5(
   record_id UNINDEXED,
+  revision_id UNINDEXED,
   occurred_at UNINDEXED,
-  task_preview,
+  title,
   text,
   tokenize = 'unicode61 remove_diacritics 2'
 );
 INSERT INTO projection_metadata(key, value) VALUES
   ('canonical_logical_sha256', ''),
   ('record_count', '0'),
-  ('schema_version', '1'),
+  ('schema_version', '2'),
   ('scope_sha256', '');
 `;
 
 const EXPECTED_TABLES = [
-  "episodes_fts",
-  "episodes_fts_config",
-  "episodes_fts_content",
-  "episodes_fts_data",
-  "episodes_fts_docsize",
-  "episodes_fts_idx",
   "projection_metadata",
+  "records_fts",
+  "records_fts_config",
+  "records_fts_content",
+  "records_fts_data",
+  "records_fts_docsize",
+  "records_fts_idx",
 ] as const;
 
 export interface Ml2Fts5ProjectionPaths {
@@ -49,6 +55,7 @@ export interface Ml2Fts5CandidateV1 {
   readonly lexicalBm25: number;
   readonly occurredAt: string;
   readonly recordId: string;
+  readonly revisionId: string;
 }
 
 export interface Ml2Fts5SearchResultV1 {
@@ -89,8 +96,13 @@ async function createProjectionPaths(
   await ensurePrivateDirectory(requestedRoot);
   const canonicalStateRoot = await realpath(requestedRoot);
   const retrievalRoot = join(canonicalStateRoot, "memory", "v1", "retrieval");
-  const projectionRoot = join(retrievalRoot, "fts5-v1");
-  for (const directory of [join(canonicalStateRoot, "memory"), join(canonicalStateRoot, "memory", "v1"), retrievalRoot, projectionRoot]) {
+  const projectionRoot = join(retrievalRoot, "fts5-v2");
+  for (const directory of [
+    join(canonicalStateRoot, "memory"),
+    join(canonicalStateRoot, "memory", "v1"),
+    retrievalRoot,
+    projectionRoot,
+  ]) {
     if (!contained(canonicalStateRoot, directory)) {
       throw new Ml1MemoryError("memory_projection_failed", "memory projection path escaped its state root");
     }
@@ -152,11 +164,14 @@ function finiteNumberColumn(row: Record<string, unknown>, name: string): number 
 
 function metadataMap(database: DatabaseSync): ReadonlyMap<string, string> {
   const rows = database.prepare("SELECT key, value FROM projection_metadata ORDER BY key ASC").all();
-  const entries = rows.map((row) => [textColumn(row, "key"), textColumn(row, "value")] as const);
-  return new Map(entries);
+  return new Map(rows.map((row) => [textColumn(row, "key"), textColumn(row, "value")] as const));
 }
 
-function validateProjection(database: DatabaseSync, expectedScopeSha256: string): void {
+function validateProjection(
+  database: DatabaseSync,
+  expectedScopeSha256: string,
+  readOnly = false,
+): void {
   const quickCheck = database.prepare("PRAGMA quick_check").get();
   if (quickCheck === undefined || textColumn(quickCheck, "quick_check") !== "ok") {
     throw new Error("projection quick_check failed");
@@ -165,49 +180,64 @@ function validateProjection(database: DatabaseSync, expectedScopeSha256: string)
     "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC",
   ).all().map((row) => textColumn(row, "name"));
   if (canonicalJson(tables) !== canonicalJson(EXPECTED_TABLES)) {
-    throw new Error("projection tables do not match ML2");
+    throw new Error("projection tables do not match ML4");
   }
-  const columns = database.prepare("PRAGMA table_info(episodes_fts)").all().map((row) => [
-    row.cid,
-    row.name,
-    row.type,
-    row.notnull,
-    row.dflt_value,
-    row.pk,
+  const columns = database.prepare("PRAGMA table_info(records_fts)").all().map((row) => [
+    row.cid, row.name, row.type, row.notnull, row.dflt_value, row.pk,
   ]);
   if (canonicalJson(columns) !== canonicalJson([
     [0, "record_id", "", 0, null, 0],
-    [1, "occurred_at", "", 0, null, 0],
-    [2, "task_preview", "", 0, null, 0],
-    [3, "text", "", 0, null, 0],
+    [1, "revision_id", "", 0, null, 0],
+    [2, "occurred_at", "", 0, null, 0],
+    [3, "title", "", 0, null, 0],
+    [4, "text", "", 0, null, 0],
   ])) {
-    throw new Error("projection columns do not match ML2");
+    throw new Error("projection columns do not match ML4");
   }
   const metadata = metadataMap(database);
   if (
-    metadata.size !== 4 || metadata.get("schema_version") !== "1" ||
+    metadata.size !== 4 || metadata.get("schema_version") !== "2" ||
     metadata.get("scope_sha256") !== expectedScopeSha256 ||
     metadata.get("canonical_logical_sha256") === undefined ||
     !/^[0-9]+$/u.test(metadata.get("record_count") ?? "")
   ) {
-    throw new Error("projection metadata does not match ML2");
+    throw new Error("projection metadata does not match ML4");
   }
-  database.prepare("INSERT INTO episodes_fts(episodes_fts) VALUES (?)").run("integrity-check");
+  if (!readOnly) {
+    database.prepare("INSERT INTO records_fts(records_fts) VALUES (?)").run("integrity-check");
+  }
+}
+
+function assertLogicalDump(dump: MemoryLogicalDumpV1, scope: Ml1MemoryScopeV1): void {
+  const expected = sha256Canonical({
+    active_revision_ids: dump.activeRevisionIds,
+    operations: dump.operations,
+    revisions: dump.revisions,
+    schema_version: 2,
+    scope,
+  });
+  if (dump.logicalSha256 !== expected || dump.records.length !== dump.count) {
+    throw new Ml1MemoryError("memory_projection_failed", "canonical logical dump does not match retrieval scope");
+  }
 }
 
 function rebuildProjection(
   database: DatabaseSync,
-  dump: Ml1LogicalDumpV1,
+  dump: MemoryLogicalDumpV1,
   scopeSha256: string,
 ): void {
   database.exec("BEGIN IMMEDIATE;");
   try {
-    database.prepare("DELETE FROM episodes_fts").run();
+    database.prepare("DELETE FROM records_fts").run();
     const insert = database.prepare(
-      "INSERT INTO episodes_fts(record_id, occurred_at, task_preview, text) VALUES (?, ?, ?, ?)",
+      "INSERT INTO records_fts(record_id, revision_id, occurred_at, title, text) VALUES (?, ?, ?, ?, ?)",
     );
     for (const record of dump.records) {
-      insert.run(record.recordId, record.occurredAt, record.taskPreview, record.text);
+      const title = memoryRecordSearchTitle(record);
+      if (!inspectMemoryAdmission([title, record.text]).admitted) {
+        throw new Ml1MemoryError("memory_projection_failed", "canonical memory failed FTS sensitive-content admission");
+      }
+      insert.run(record.recordId, memoryRecordRevisionId(record), record.occurredAt, title, record.text);
     }
     const update = database.prepare("UPDATE projection_metadata SET value = ? WHERE key = ?");
     update.run(dump.logicalSha256, "canonical_logical_sha256");
@@ -218,16 +248,16 @@ function rebuildProjection(
     try { database.exec("ROLLBACK;"); } catch { /* preserve primary failure */ }
     throw error;
   }
-  const count = database.prepare("SELECT COUNT(*) AS count FROM episodes_fts").get();
+  const count = database.prepare("SELECT COUNT(*) AS count FROM records_fts").get();
   if (count === undefined || finiteNumberColumn(count, "count") !== dump.count) {
     throw new Error("projection rebuild record count mismatch");
   }
-  database.prepare("INSERT INTO episodes_fts(episodes_fts) VALUES (?)").run("integrity-check");
+  database.prepare("INSERT INTO records_fts(records_fts) VALUES (?)").run("integrity-check");
 }
 
-async function removeDerivedDatabase(paths: Ml2Fts5ProjectionPaths): Promise<void> {
-  for (const path of [paths.databasePath, `${paths.databasePath}-journal`, `${paths.databasePath}-wal`, `${paths.databasePath}-shm`]) {
-    if (!contained(paths.projectionRoot, path)) {
+async function removeDatabaseFiles(root: string, databasePath: string): Promise<void> {
+  for (const path of [databasePath, `${databasePath}-journal`, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    if (!contained(root, path)) {
       throw new Ml1MemoryError("memory_projection_failed", "derived projection removal escaped its root");
     }
     await rm(path, { force: true });
@@ -246,30 +276,134 @@ export class Fts5EpisodeProjection {
     readonly stateRoot: string;
   }>): Promise<Fts5EpisodeProjection> {
     const paths = await createProjectionPaths(input.stateRoot, input.scope);
-    return new Fts5EpisodeProjection(
-      input.stateRoot,
-      input.scope,
-      paths,
-    );
+    return new Fts5EpisodeProjection(input.stateRoot, input.scope, paths);
   }
 
   async search(input: Readonly<{
     readonly candidateLimit?: number;
-    readonly dump: Ml1LogicalDumpV1;
+    readonly dump: MemoryLogicalDumpV1;
     readonly ftsExpression: string;
   }>): Promise<Ml2Fts5SearchResultV1> {
     const candidateLimit = input.candidateLimit ?? ML2_SEARCH_MAX_CANDIDATES;
     if (!Number.isInteger(candidateLimit) || candidateLimit < 1 || candidateLimit > ML2_SEARCH_MAX_CANDIDATES) {
       throw new Ml1MemoryError("memory_query_invalid", "memory lexical candidate limit is invalid");
     }
-    if (input.dump.logicalSha256 !== sha256Canonical({
-      records: input.dump.records,
-      schema_version: 1,
-      scope: this.scope,
-    })) {
-      throw new Ml1MemoryError("memory_projection_failed", "canonical logical dump does not match retrieval scope");
-    }
+    assertLogicalDump(input.dump, this.scope);
+    return this.withProjection(input.dump, (database, action, paths) => {
+      const rows = database.prepare(`
+        SELECT record_id, revision_id, occurred_at,
+          bm25(records_fts, 0.0, 0.0, 0.0, 3.0, 1.0) AS lexical_score
+        FROM records_fts
+        WHERE records_fts MATCH ?
+        ORDER BY lexical_score ASC, occurred_at DESC, record_id ASC, revision_id ASC
+        LIMIT ?
+      `).all(input.ftsExpression, candidateLimit + 1);
+      const candidates = rows.slice(0, candidateLimit).map((row) => {
+        const recordId = textColumn(row, "record_id");
+        const revisionId = textColumn(row, "revision_id");
+        const occurredAt = textColumn(row, "occurred_at");
+        if (
+          !/^(?:episode|memory)_[a-f0-9]{64}$/u.test(recordId) ||
+          !/^(?:episode|revision)_[a-f0-9]{64}$/u.test(revisionId) ||
+          !Number.isFinite(Date.parse(occurredAt))
+        ) {
+          throw new Error("projection candidate identity is invalid");
+        }
+        return Object.freeze({
+          lexicalBm25: Number(finiteNumberColumn(row, "lexical_score").toFixed(12)),
+          occurredAt,
+          recordId,
+          revisionId,
+        });
+      });
+      return Object.freeze({
+        action,
+        candidates: Object.freeze(candidates),
+        scopeSha256: paths.scopeSha256,
+        truncated: rows.length > candidateLimit,
+      });
+    });
+  }
 
+  async invalidate(): Promise<Readonly<{ readonly removed: boolean }>> {
+    const paths = await createProjectionPaths(this.stateRoot, this.scope);
+    await removeDatabaseFiles(paths.projectionRoot, paths.databasePath);
+    const legacyRoot = join(paths.retrievalRoot, "fts5-v1");
+    const legacyPath = join(legacyRoot, `${paths.scopeSha256}.sqlite3`);
+    if (contained(paths.retrievalRoot, legacyPath)) await removeDatabaseFiles(legacyRoot, legacyPath);
+    this.paths = Object.freeze({ ...paths, databaseExisted: false });
+    return Object.freeze({ removed: paths.databaseExisted });
+  }
+
+  async rebuild(dump: MemoryLogicalDumpV1): Promise<Readonly<{
+    readonly action: "rebuilt";
+    readonly recordCount: number;
+    readonly schemaVersion: 2;
+  }>> {
+    assertLogicalDump(dump, this.scope);
+    await this.invalidate();
+    const materialized = await this.withProjection(dump, (_database, action) => action);
+    if (materialized !== "rebuilt") {
+      throw new Ml1MemoryError("memory_projection_failed", "forced memory projection rebuild was unexpectedly reused");
+    }
+    return Object.freeze({ action: "rebuilt", recordCount: dump.count, schemaVersion: 2 });
+  }
+
+  async doctor(dump: MemoryLogicalDumpV1): Promise<Readonly<{
+    readonly action: "corrupt" | "missing" | "stale" | "verified";
+    readonly recordCount: number;
+    readonly schemaVersion: 2;
+    readonly status: "ok" | "warning";
+  }>> {
+    assertLogicalDump(dump, this.scope);
+    const paths = await createProjectionPaths(this.stateRoot, this.scope);
+    this.paths = paths;
+    if (!paths.databaseExisted) {
+      return Object.freeze({
+        action: "missing",
+        recordCount: dump.count,
+        schemaVersion: 2,
+        status: "warning",
+      });
+    }
+    let database: DatabaseSync | undefined;
+    try {
+      database = new DatabaseSync(paths.databasePath, {
+        allowExtension: false,
+        enableDoubleQuotedStringLiterals: false,
+        readOnly: true,
+        timeout: 1_000,
+      });
+      validateProjection(database, paths.scopeSha256, true);
+      const metadata = metadataMap(database);
+      const current = metadata.get("canonical_logical_sha256") === dump.logicalSha256 &&
+        metadata.get("record_count") === String(dump.count);
+      return Object.freeze({
+        action: current ? "verified" : "stale",
+        recordCount: dump.count,
+        schemaVersion: 2,
+        status: current ? "ok" : "warning",
+      });
+    } catch {
+      return Object.freeze({
+        action: "corrupt",
+        recordCount: dump.count,
+        schemaVersion: 2,
+        status: "warning",
+      });
+    } finally {
+      try { database?.close(); } catch { /* diagnostic is already materialized */ }
+    }
+  }
+
+  private async withProjection<T>(
+    dump: MemoryLogicalDumpV1,
+    execute: (
+      database: DatabaseSync,
+      action: "rebuilt" | "reused",
+      paths: Ml2Fts5ProjectionPaths,
+    ) => T,
+  ): Promise<T> {
     let paths = await createProjectionPaths(this.stateRoot, this.scope);
     this.paths = paths;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -289,46 +423,24 @@ export class Fts5EpisodeProjection {
         }
         validateProjection(database, paths.scopeSha256);
         const metadata = metadataMap(database);
-        const reusable = metadata.get("canonical_logical_sha256") === input.dump.logicalSha256 &&
-          metadata.get("record_count") === String(input.dump.count);
-        if (!reusable) rebuildProjection(database, input.dump, paths.scopeSha256);
-        const rows = database.prepare(`
-          SELECT record_id, occurred_at,
-            bm25(episodes_fts, 0.0, 0.0, 3.0, 1.0) AS lexical_score
-          FROM episodes_fts
-          WHERE episodes_fts MATCH ?
-          ORDER BY lexical_score ASC, occurred_at DESC, record_id ASC
-          LIMIT ?
-        `).all(input.ftsExpression, candidateLimit + 1);
-        const candidates = rows.slice(0, candidateLimit).map((row) => {
-          const recordId = textColumn(row, "record_id");
-          const occurredAt = textColumn(row, "occurred_at");
-          if (!/^episode_[a-f0-9]{64}$/u.test(recordId) || !Number.isFinite(Date.parse(occurredAt))) {
-            throw new Error("projection candidate identity is invalid");
-          }
-          const rawScore = finiteNumberColumn(row, "lexical_score");
-          const lexicalBm25 = Number(rawScore.toFixed(12));
-          return Object.freeze({ lexicalBm25, occurredAt, recordId });
-        });
+        const reusable = metadata.get("canonical_logical_sha256") === dump.logicalSha256 &&
+          metadata.get("record_count") === String(dump.count);
+        if (!reusable) rebuildProjection(database, dump, paths.scopeSha256);
+        const action = reusable ? "reused" as const : "rebuilt" as const;
         if (process.platform !== "win32") await chmod(paths.databasePath, 0o600);
         this.paths = Object.freeze({ ...paths, databaseExisted: true });
-        return Object.freeze({
-          action: reusable ? "reused" : "rebuilt",
-          candidates: Object.freeze(candidates),
-          scopeSha256: paths.scopeSha256,
-          truncated: rows.length > candidateLimit,
-        });
+        return execute(database, action, paths);
       } catch (error) {
         try { database?.close(); } catch { /* preserve primary failure */ }
         database = undefined;
         if (attempt === 0 && paths.databaseExisted) {
-          await removeDerivedDatabase(paths);
+          await removeDatabaseFiles(paths.projectionRoot, paths.databasePath);
           paths = Object.freeze({ ...paths, databaseExisted: false });
           continue;
         }
         return mapProjectionError(error);
       } finally {
-        try { database?.close(); } catch { /* query result is already materialized */ }
+        try { database?.close(); } catch { /* result is already materialized */ }
       }
     }
     throw new Ml1MemoryError("memory_projection_failed", "memory retrieval projection retry was exhausted");

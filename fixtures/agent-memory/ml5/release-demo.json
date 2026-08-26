@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "agent-memory-ml5-unique-release-demo-v1",
+  "sessionATask": "Document the releaseorbit memory boundary with verified read-only evidence.",
+  "episodeRecallQuery": "releaseorbit memory boundary",
+  "explicitKind": "preference",
+  "explicitText": "For this repository, prefer launchnebula focused validation before the full validation gate.",
+  "explicitRecallQuery": "launchnebula focused validation",
+  "expected": {
+    "steps": 11,
+    "maximumHistoricalRecords": 3,
+    "memoryAuthority": "historical_only",
+    "remoteBillableRequests": 0,
+    "wrongRepositoryRecords": 0,
+    "retractedRecordUses": 0
+  }
+}

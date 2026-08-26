@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +103,49 @@ describe("Phase 21A application prepare/commit service", () => {
     expect(replayed.operationId).toBe(committed.operationId);
     expect(replayed.result).toEqual(committed.result);
     expect(await repositories.list()).toHaveLength(1);
+  });
+
+  it("registers a second repository against the complete non-zero catalog head", async () => {
+    const { context, repositories, service } = await fixture();
+    const roots = [
+      await directory("bornagent-phase21a-service-first-repo-"),
+      await directory("bornagent-phase21a-service-second-repo-"),
+    ];
+    for (const [index, root] of roots.entries()) {
+      const head = await repositories.head();
+      const payload = { root };
+      const prepared = await service.prepare(context, {
+        actionKind: "repository.register",
+        payload,
+        payloadSha256: sha256Canonical(payload),
+        prepareIdempotencyKey: `prepare-repository-${String(index + 1)}`,
+        requestId: randomUUID(),
+        schemaVersion: 1,
+        target: {
+          catalogScope: repositories.resourceScope,
+          expectedCatalogVersion: {
+            kind: "revision",
+            revision: head.revision,
+            sha256: head.catalogSha256,
+          },
+          kind: "new_repository",
+        },
+      });
+      expect(prepared.status, prepared.error?.message).toBe("ok");
+      const committed = await service.commit(context, {
+        idempotencyKey: `commit-repository-${String(index + 1)}`,
+        preparedActionId: prepared.result!.prepared.preparedActionId,
+        preparedActionSha256: prepared.result!.prepared.preparedActionSha256,
+        requestId: randomUUID(),
+        schemaVersion: 1,
+      });
+      expect(committed.status, committed.error?.message).toBe("ok");
+    }
+    const registered = await repositories.list();
+    expect(registered).toHaveLength(2);
+    const canonicalRoots = await Promise.all(roots.map((root) => realpath(root)));
+    await expect(Promise.all(registered.map((entry) => repositories.readRoot(entry))))
+      .resolves.toEqual(canonicalRoots);
   });
 
   it("creates a zero-head session without materializing an empty JSONL", async () => {

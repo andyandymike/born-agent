@@ -220,15 +220,22 @@ export function createCatalogActionRegistry(input: {
       if (context.resolvedTarget.resourceVersion.kind !== "revision") {
         throw new ApplicationControlError("control_target_invalid", "repository catalog version is invalid");
       }
+      // MEMORY-ML5: a non-zero catalog head carries the last record binding.
+      // Reconstructing it with nulls makes every second repository registration
+      // fail after dispatch. Read the complete head, then verify it is still the
+      // exact revision/hash frozen by the prepared action before the registry CAS.
+      const expectedHead = await input.repositories.head();
+      if (
+        expectedHead.revision !== context.resolvedTarget.resourceVersion.revision ||
+        expectedHead.catalogSha256 !== context.resolvedTarget.resourceVersion.sha256
+      ) {
+        throw new ApplicationControlError(
+          "control_catalog_conflict",
+          "repository catalog changed after the prepared target was resolved",
+        );
+      }
       const result = await input.repositories.register({
-        expectedHead: {
-          catalogSha256: context.resolvedTarget.resourceVersion.sha256,
-          lastRecordId: null,
-          lastRecordSha256: null,
-          resourceScope: input.repositories.resourceScope,
-          revision: context.resolvedTarget.resourceVersion.revision,
-          schemaVersion: 1,
-        },
+        expectedHead,
         operationId: context.operationId,
         root: parsed.root,
       });

@@ -899,14 +899,14 @@ export async function executeAgentExecution(
               stateRoot: localMemory.stateRoot,
             });
             const search = new LexicalMemorySearchService({
-              inspectSource: (record) => memory.inspectEpisodeSource(record),
+              inspectSource: (record) => memory.inspectRecordSource(record),
               projection,
               scope,
               store,
               tokenEstimator: contextRuntimeResult.value.estimator,
             });
             const prepared = await new AutomaticMemoryRecallService({
-              inspectSource: (record) => memory.inspectEpisodeSource(record),
+              inspectSource: (record) => memory.inspectRecordSource(record),
               scope,
               search,
               store,

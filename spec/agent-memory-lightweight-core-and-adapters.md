@@ -1,9 +1,9 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
 > Status: Active implementation contract（updated 2026-08-26）
-> Current slice: ML3 local-backend safe automatic recall `implemented` and Windows local product/full/pack gates passed; Agent default remains `off`, remote provider injection remains zero; `preview_usable`仍等待同一exact commit的Linux/Windows CI evidence
+> Current slice: ML5 local 11-step new-process release candidate passed; ML2/ML3 commit `311c3cc` is pushed and its GitHub Linux/Windows repository/pack CI passed, Agent default remains `off`, remote provider injection remains zero; `preview_usable`等待当前candidate的同一exact commit receipts
 > Product boundary: local, single-user, repository-scoped, cross-session memory
-> Explicit non-claim: this document does not complete AM2–AM6, Memory v1, user lifecycle, remote disclosure, or frontier adapters
+> Explicit non-claim: local ML5 evidence does not substitute for pending same-exact-commit Linux/Windows receipts, remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
 ## 0. 文档地位
 
@@ -330,13 +330,18 @@ Domain只依赖`Ml1EpisodeStorePort`，不传播`node:sqlite`类型。ML1 prefli
 | manual search estimate | ML2 | 4,096 tokens | UTF-8 conservative estimate; stop before the next hit |
 | selected records | ML3 | 3 | never exceed |
 | injected context | ML3 | min(1,024 tokens, 8%) | current protected context wins |
-| explicit/revision capacity | ML4 | spec delta required | retract reserve must be defined then |
+| canonical record revisions | ML4 | 10,000 rows / 64 MiB | episode与explicit revision共用；ADD/SUPERSEDE达到任一上限即typed拒绝 |
+| lifecycle operations | ML4 | 20,000 rows / 64 MiB | 每个record revision至多产生一个ADD/SUPERSEDE，另为每个logical record保留一次RETRACT |
 
 ML1 capacity只按strict canonical JSON UTF-8 bytes和row count机械执行；SQLite DB、WAL与page bytes只观测并由`status`报告，不能拿不稳定的physical file size充当admission truth。默认值可以在后续spec delta基于真实使用调整，但配置不得超过code hard maximum。
+
+ML4把record cap解释为全部canonical revisions的全局上限，不因supersede或retract回收；这保留append-only provenance。`ADD/SUPERSEDE`同时消耗一条revision和一条operation，达到revision row/byte cap后automatic episode ingest与explicit remember均停止。`RETRACT`不新增revision，也不检查revision cap；operation hard cap固定为revision hard cap的两倍，因此即使10,000条revision已满，仍为每个logical record保留一次retract。重复retract幂等且不继续增长operation ledger。
 
 ### 5.3 Sensitive content admission
 
 首版拒绝已知 token、private key、credential、cookie、raw environment dump 和显式 `non-persistable` content。Redaction不能把“先写入再清洗”变安全：ML1命中时整条episode skip；ML2以后secret scan仍必须发生在canonical transaction和FTS insert之前。
+
+ML4 explicit remember复用同一admission scanner，并在MemoryService builder、SQLite revision transaction和FTS rebuild三处fail closed；错误只返回typed code，不回显被拒绝文本。operation不保存用户文本。这里是已知pattern admission，不声明通用DLP。
 
 Memory Lite 只声明 local private storage，不声明 encryption 或 secure erase。ML3 automatic recall 只支持 loopback/local backend；remote provider 看到的 memory records 必须为 0，直到单独 disclosure spec 存在。
 
@@ -435,6 +440,23 @@ Human output与`--json` projection必须来自同一memory service result。CLI�
 
 ML1只增加进程内`MemoryService`并读取既有principal/workspace identity；不增加Phase21A Application action/query kind、scope或registry。ML4显式mutation是否接入ApplicationService，必须在ML4开始时按当时真实consumer另行冻结，不能由ML1预埋。
 
+#### 7.2.1 ML4 frozen mutation and migration delta
+
+ML4当前只有`born memory ...`这一位本地、同步、单用户consumer；命令先通过既有Host repository registry解析exact principal/repository/canonical-root scope，再直接调用同一个MemoryService。它不接入Phase21 ApplicationService、不新增action registry或session journal，因为memory mutation既不调度Agent/effect，也没有第二位需要统一编排的consumer。未来若出现TUI、daemon或remote writer，再以真实并发/鉴权需求单独迁移。
+
+CLI固定为：
+
+- `memory remember <fact|preference|decision|constraint> <text> [--supersedes <record-id>]`；无`--supersedes`产生logical record revision 1 + `ADD`，有该参数时要求target active、explicit且kind相同，产生同record ID的新revision + `SUPERSEDE`；
+- `memory retract <record-id>`对任意active episode或explicit record追加`RETRACT`；重复调用返回幂等结果而不追加operation；
+- `memory rebuild`删除当前scope的全部FTS derived data，再从canonical logical dump建立`fts5-v2`；前后logical hash必须相同；
+- `memory doctor`只读检查SQLite quick-check/schema、active source、FTS、capacity reserve和private-path mode，不修复canonical state。
+
+canonical SQLite从schema 1原子迁移到schema 2：旧`episode_records`的canonical JSON、record ID和record hash原样进入`memory_records` revision 1，并生成Host-owned deterministic `ADD` operation；迁移后schema固定为`metadata + memory_records + memory_operations`。正式`MemoryRecordV1`是原字节不变的`Ml1EpisodeRecordV1`与新的explicit record strict union。explicit record固定包含stable logical `memory_<sha256>` ID、`revision`、`revision_<sha256>` identity、kind/text/scope/hash，以及Host生成的`local_user_command` source（command ID、timestamp、可选superseded revision）。operation固定为strict canonical `ADD|SUPERSEDE|RETRACT`、全局单调sequence、target/new revision identity、scope、actor与hash。
+
+active state只从ordered operation ledger计算：`ADD/SUPERSEDE`的new revision active，`RETRACT`使logical record不可检索；records从不原地更新。ML2/ML3改为只读取active `MemoryRecordV1`，并在request前同时refetch active head、revision identity、record hash、scope和source。explicit user-command source由canonical command provenance自证；episode仍重验exact session range。`show`可以观察retracted latest revision，但`list/search/automatic recall`只能观察active且source-available revision。
+
+ML4把derived projection升级为`memory/v1/retrieval/fts5-v2/<scope-sha256>.sqlite3`与`records_fts`；candidate同时绑定record/revision identity。任何logical hash变化都会重建，remember/supersede/retract命令还会立即移除当前scope projection。旧`fts5-v1`和整个retrieval目录均可删除，不改变schema 2 logical dump。
+
 ## 8. Maturity model
 
 每个 core capability 和 adapter 独立标记 maturity；不能因 Memory Lite 核心通过就继承等级。
@@ -515,6 +537,8 @@ ML1不实现operation ledger、search、automatic recall、`memory_lookup`、exp
 退出条件：retract后相同 query hit为0；supersede只暴露新 revision；secret never reaches record/FTS；达到cap后automatic ingest停止而retract仍可用；derived tables全删后 logical dump与search结果恢复。
 
 预算：8–16 focused hours。
+
+实现校准：根据ML2约0.7h、ML3约1.3h的Agent实测，ML4 Agent wall-clock暂估2–5h；这不修改原始人工预算，也不替代功能与回归证据。
 
 ### ML5 — Cross-platform product closure
 
@@ -660,7 +684,7 @@ docs/agent-memory/ml1-*.md
 ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现与尚未发生的exact-commit跨平台发布证明：
 
 - [x] Windows `node:sqlite` open/transaction/reopen与真实tarball `memory status/show` probe通过；FTS5留给ML2；
-- [ ] 同一exact commit的Linux与Windows CI重新执行focused tests和pack probe；在此之前不标`preview_usable`；
+- [x] `311c3cc`的GitHub `quality`与`windows-phase20` jobs重新执行repository gate和pack probe并通过；这只证明ML1–ML3候选；
 - [x] 确认exact private state root、local principal和canonical root identity读取路径；
 - [x] 本spec已冻结`Ml1EpisodeRecordV1`、exact range、builder template与episode-only store port；
 - [x] 把第4.5节golden contract落为tracked fixture与manifest；
@@ -668,7 +692,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 给出8–16小时估算分解和stop condition；
 - [x] 本spec已明确ML1完成后仍没有search/automatic recall/remember/retract。
 
-本地实现仍不得扩张到embedding、graph、TUI、procedure、sync或Application registry全量迁移。`43d80b2`没有CI run；用户于2026-08-26明确要求继续ML2，因此允许本地研发继续，但ML1/ML2均不得据此标记`preview_usable`。
+本地实现仍不得扩张到embedding、graph、TUI、procedure、sync或Application registry全量迁移。ML1已随`311c3cc`获得exact-commit跨平台证据，但Memory v1仍须等待ML5唯一演示后才可标记`preview_usable`。
 
 ## 16. ML2 implementation evidence
 
@@ -679,7 +703,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] wrong-scope 0、stale 0、100 candidate cap、recency tie、删除/损坏projection重建与canonical-change rebuild通过focused tests；
 - [x] extracted tarball正向读取exact source、搜索available episode，并在删除retrieval projection后恢复相同logical hits；
 - [x] 当前工作树lint/typecheck、1,310项non-PTY tests、适用PTY与clean build通过；
-- [ ] 提交后同一exact commit的Linux/Windows CI尚未发生；在此之前不标`preview_usable`。
+- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；Memory v1整体仍不标`preview_usable`。
 
 ## 17. ML3 implementation evidence
 
@@ -691,4 +715,28 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 新进程Session B通过真实product path使用Session A episode；off和provider-network均为0条注入，remote路径不创建FTS projection；
 - [x] installed tarball直接加载ML3模块并通过bounded historical-only preparation probe；
 - [x] 当前工作树lint/typecheck、1,315项non-PTY tests、适用PTY与clean build通过；
-- [ ] 提交后同一exact commit的Linux/Windows CI尚未发生；在此之前不标`preview_usable`。
+- [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；Memory v1整体仍不标`preview_usable`。
+
+## 18. ML4 implementation evidence
+
+- [x] 冻结直接本地MemoryService mutation而不扩张Phase21 ApplicationService的单consumer边界；
+- [x] 实现schema 1到schema 2原子迁移，旧episode canonical JSON、ID与hash原样成为revision 1，并补deterministic `ADD`；
+- [x] 实现strict explicit fact/preference/decision/constraint `MemoryRecordV1`、stable logical ID、immutable revision与typed `ADD/SUPERSEDE/RETRACT` ledger；
+- [x] 实现`memory remember/retract/rebuild/doctor`，human与JSON投影来自同一MemoryService结果；
+- [x] ML2/ML3升级为active-only record/revision refetch，superseded与retracted revision在manual/automatic recall均为0；
+- [x] builder、SQLite transaction与FTS rebuild三层secret admission通过，fixture secret的canonical/FTS rows均为0且错误不回显；
+- [x] 10,000 revision/64 MiB record cap与20,000 operation/64 MiB reserve冻结；record cap满时新episode/remember停止，retract仍成功且重复retract不增长；
+- [x] `fts5-v2`绑定record/revision identity；删除整个retrieval后canonical logical hash不变，显式rebuild恢复active search；
+- [x] 本地全部16个`agent-memory`文件/54测试通过；完整repository gate的non-PTY 288 files/1,323 tests、适用PTY与clean build通过；
+- [x] final extracted-tarball smoke真实执行ML1 close/reopen、ML2 search/rebuild、ML3 bounded historical context与ML4完整lifecycle；
+- [x] ML4已进入当前ML5 local release candidate并通过唯一发布演示；candidate尚未提交，同一exact commit Linux/Windows CI尚未发生，因此仍不标`preview_usable`。
+
+## 19. ML5 release evidence
+
+- [x] 冻结唯一11步fixture、4-case blocking manifest和不含用户文本的machine-readable pack receipt；
+- [x] extracted tarball通过7个独立Node Agent进程完成mode-off baseline、Session A terminal ingest、Session B episode recall、explicit new-session recall、retract、wrong repository、rebuild与final off；
+- [x] list/show/search explain保持exact source与`historical_only`；retracted record uses=0、wrong repository records=0、remote billable requests=0；
+- [x] 删除整个derived retrieval后canonical logical hash和active hit order不变；前后mode-off stable non-memory request shape相同；
+- [x] 演示暴露的第二repository non-zero catalog-head binding已修复，并由Phase21A顺序双仓库回归覆盖；
+- [x] 本地17个`agent-memory`文件/56测试、non-PTY 289 files/1,326 tests、适用PTY、clean build与final extracted-tarball 11/11 demo通过；
+- [ ] candidate尚未提交；必须等待同一`GITHUB_SHA`的Linux `quality`、Windows `windows-phase20`与两份`memory_v1_release_demo_passed` receipt后才标`preview_usable`。

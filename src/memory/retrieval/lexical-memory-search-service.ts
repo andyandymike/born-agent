@@ -1,9 +1,9 @@
 import { sha256Canonical } from "../../completion/canonical-json.js";
 import { DeterministicTokenEstimator, type TokenEstimator } from "../../context/token-estimator.js";
-import type { Ml1EpisodeRecordV1, Ml1MemoryScopeV1 } from "../core/ml1-episode-record.js";
+import type { Ml1MemoryScopeV1 } from "../core/ml1-episode-record.js";
 import { Ml1MemoryError } from "../core/ml1-memory-error.js";
-import type { Ml1EpisodeViewV1 } from "../product/memory-service.js";
-import type { Ml1EpisodeStorePort } from "../store/sqlite-episode-store.js";
+import { memoryRecordRevisionId, type MemoryRecordV1 } from "../core/memory-record-v1.js";
+import type { MemoryStorePort } from "../store/sqlite-episode-store.js";
 import type { Fts5EpisodeProjection, Ml2Fts5CandidateV1 } from "./fts5-episode-projection.js";
 import {
   ML2_RETRIEVER_ID,
@@ -32,21 +32,26 @@ const SEARCH_ESTIMATOR = new DeterministicTokenEstimator({
 interface AvailableCandidate {
   readonly lexicalBm25: number | null;
   readonly reason: Ml2SearchHitV1["reason"];
-  readonly record: Ml1EpisodeRecordV1;
+  readonly record: MemoryRecordV1;
 }
+
+type MemorySourceInspector = {
+  bivarianceHack(record: MemoryRecordV1): Promise<Readonly<{ readonly sourceStatus: "available" | "stale" }>>;
+}["bivarianceHack"];
 
 function compareCandidates(left: Ml2Fts5CandidateV1, right: Ml2Fts5CandidateV1): number {
   if (left.lexicalBm25 !== right.lexicalBm25) return left.lexicalBm25 - right.lexicalBm25;
   if (left.occurredAt !== right.occurredAt) return right.occurredAt.localeCompare(left.occurredAt);
-  return left.recordId.localeCompare(right.recordId);
+  const byRecord = left.recordId.localeCompare(right.recordId);
+  return byRecord !== 0 ? byRecord : left.revisionId.localeCompare(right.revisionId);
 }
 
 export class LexicalMemorySearchService {
   constructor(private readonly input: Readonly<{
-    readonly inspectSource: (record: Ml1EpisodeRecordV1) => Promise<Ml1EpisodeViewV1>;
+    readonly inspectSource: MemorySourceInspector;
     readonly projection: Fts5EpisodeProjection;
     readonly scope: Ml1MemoryScopeV1;
-    readonly store: Ml1EpisodeStorePort;
+    readonly store: MemoryStorePort;
     readonly tokenEstimator?: TokenEstimator;
   }>) {}
 
@@ -72,7 +77,7 @@ export class LexicalMemorySearchService {
     }
 
     if (parsed.kind === "exact_id") {
-      const record = await this.input.store.getEpisode({
+      const record = await this.input.store.getActiveRecord({
         recordId: parsed.exactRecordId,
         scope: this.input.scope,
       });
@@ -104,12 +109,15 @@ export class LexicalMemorySearchService {
     const ordered = [...projected.candidates].sort(compareCandidates);
     const availableCandidates: AvailableCandidate[] = [];
     for (const candidate of ordered) {
-      const record = await this.input.store.getEpisode({
+      const record = await this.input.store.getActiveRecord({
         recordId: candidate.recordId,
         scope: this.input.scope,
       });
       if (record === null) continue;
-      if (record.occurredAt !== candidate.occurredAt) {
+      if (
+        record.occurredAt !== candidate.occurredAt ||
+        memoryRecordRevisionId(record) !== candidate.revisionId
+      ) {
         throw new Ml1MemoryError("memory_projection_failed", "retrieval projection disagrees with canonical time");
       }
       const exactPhrase = parsed.kind === "quoted_phrase" && parsed.phrase !== null &&
