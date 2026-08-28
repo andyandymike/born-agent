@@ -1,0 +1,792 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-cf0-context-folding-lite-v1",
+  "sourceCommit": null,
+  "manifestSha256": "f96c0acb13bd928e6266e01fac08866f1af31fb4f22130aade7ba4fbcc3da759",
+  "estimatorId": "a0e41db18535eb63d62c7704e8ec84fccd7d3607484ddc2b57ec69a5f5b3e975",
+  "baselineImplementationSha256": "62966937c86dbb92f8d4d05b0589581a8d7aff0546c073dd071c13d9cdeb7e16",
+  "candidateImplementationSha256": "b63740754e947af6a37d571380936d9c57eaa865b35f91cf5323d434c68c3981",
+  "cases": [
+    {
+      "caseId": "single-short-answer",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 4096,
+        "rawTrajectoryTokens": 1374,
+        "receiptProjectionBytes": 625,
+        "receiptProjectionTokens": 217,
+        "taskContextTokens": 299,
+        "receiptCount": 1,
+        "verifiedClaimCount": 1
+      },
+      "candidate": {
+        "bytes": 1181,
+        "tokens": 402,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "single-medium-answer",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 1188,
+        "receiptProjectionTokens": 404,
+        "taskContextTokens": 486,
+        "receiptCount": 1,
+        "verifiedClaimCount": 2
+      },
+      "candidate": {
+        "bytes": 2066,
+        "tokens": 697,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "single-long-verified-route",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 16384,
+        "rawTrajectoryTokens": 5470,
+        "receiptProjectionBytes": 3022,
+        "receiptProjectionTokens": 1016,
+        "taskContextTokens": 1098,
+        "receiptCount": 1,
+        "verifiedClaimCount": 4
+      },
+      "candidate": {
+        "bytes": 4544,
+        "tokens": 1523,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "single-many-evidence",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 12288,
+        "rawTrajectoryTokens": 4104,
+        "receiptProjectionBytes": 1644,
+        "receiptProjectionTokens": 556,
+        "taskContextTokens": 638,
+        "receiptCount": 1,
+        "verifiedClaimCount": 2
+      },
+      "candidate": {
+        "bytes": 3506,
+        "tokens": 1177,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "single-failed-zero-claim",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 4096,
+        "rawTrajectoryTokens": 1374,
+        "receiptProjectionBytes": 386,
+        "receiptProjectionTokens": 137,
+        "taskContextTokens": 219,
+        "receiptCount": 1,
+        "verifiedClaimCount": 0
+      },
+      "candidate": {
+        "bytes": 622,
+        "tokens": 216,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "single-chinese-answer",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 12288,
+        "rawTrajectoryTokens": 4104,
+        "receiptProjectionBytes": 1445,
+        "receiptProjectionTokens": 490,
+        "taskContextTokens": 572,
+        "receiptCount": 1,
+        "verifiedClaimCount": 2
+      },
+      "candidate": {
+        "bytes": 2323,
+        "tokens": 783,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "multi-two-unique",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 24576,
+        "rawTrajectoryTokens": 8200,
+        "receiptProjectionBytes": 2367,
+        "receiptProjectionTokens": 797,
+        "taskContextTokens": 879,
+        "receiptCount": 2,
+        "verifiedClaimCount": 4
+      },
+      "candidate": {
+        "bytes": 3867,
+        "tokens": 1297,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "multi-four-unique",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 49152,
+        "rawTrajectoryTokens": 16392,
+        "receiptProjectionBytes": 4225,
+        "receiptProjectionTokens": 1417,
+        "taskContextTokens": 1499,
+        "receiptCount": 4,
+        "verifiedClaimCount": 8
+      },
+      "candidate": {
+        "bytes": 6969,
+        "tokens": 2331,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "multi-same-id-different-content",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 32768,
+        "rawTrajectoryTokens": 10931,
+        "receiptProjectionBytes": 3969,
+        "receiptProjectionTokens": 1331,
+        "taskContextTokens": 1413,
+        "receiptCount": 2,
+        "verifiedClaimCount": 6
+      },
+      "candidate": {
+        "bytes": 6113,
+        "tokens": 2046,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "multi-sequence-verified-route",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 40960,
+        "rawTrajectoryTokens": 13662,
+        "receiptProjectionBytes": 3589,
+        "receiptProjectionTokens": 1205,
+        "taskContextTokens": 1287,
+        "receiptCount": 3,
+        "verifiedClaimCount": 6
+      },
+      "candidate": {
+        "bytes": 5711,
+        "tokens": 1912,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "duplicate-claims-two-child",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 32768,
+        "rawTrajectoryTokens": 10931,
+        "receiptProjectionBytes": 4727,
+        "receiptProjectionTokens": 1584,
+        "taskContextTokens": 1666,
+        "receiptCount": 2,
+        "verifiedClaimCount": 6
+      },
+      "candidate": {
+        "bytes": 2471,
+        "tokens": 832,
+        "selected": true,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 5,
+        "duplicateEvidenceInstancesRemoved": 5
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "duplicate-shared-evidence",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 40960,
+        "rawTrajectoryTokens": 13662,
+        "receiptProjectionBytes": 4345,
+        "receiptProjectionTokens": 1457,
+        "taskContextTokens": 1539,
+        "receiptCount": 3,
+        "verifiedClaimCount": 6
+      },
+      "candidate": {
+        "bytes": 5602,
+        "tokens": 1876,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 5
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "duplicate-near-limit",
+      "class": "stress",
+      "baseline": {
+        "rawTrajectoryBytes": 131072,
+        "rawTrajectoryTokens": 43699,
+        "receiptProjectionBytes": 46937,
+        "receiptProjectionTokens": 15654,
+        "taskContextTokens": 15736,
+        "receiptCount": 8,
+        "verifiedClaimCount": 48
+      },
+      "candidate": {
+        "bytes": 9081,
+        "tokens": 3035,
+        "selected": true,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 47,
+        "duplicateEvidenceInstancesRemoved": 47
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "duplicate-eight-child",
+      "class": "stress",
+      "baseline": {
+        "rawTrajectoryBytes": 131072,
+        "rawTrajectoryTokens": 43699,
+        "receiptProjectionBytes": 45185,
+        "receiptProjectionTokens": 15070,
+        "taskContextTokens": 15152,
+        "receiptCount": 8,
+        "verifiedClaimCount": 64
+      },
+      "candidate": {
+        "bytes": 10433,
+        "tokens": 3486,
+        "selected": true,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 63,
+        "duplicateEvidenceInstancesRemoved": 63
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "coding-success-verified-route",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 24576,
+        "rawTrajectoryTokens": 8200,
+        "receiptProjectionBytes": 1575,
+        "receiptProjectionTokens": 533,
+        "taskContextTokens": 615,
+        "receiptCount": 1,
+        "verifiedClaimCount": 2
+      },
+      "candidate": {
+        "bytes": 2453,
+        "tokens": 826,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "coding-known-failed",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 16384,
+        "rawTrajectoryTokens": 5470,
+        "receiptProjectionBytes": 795,
+        "receiptProjectionTokens": 273,
+        "taskContextTokens": 355,
+        "receiptCount": 1,
+        "verifiedClaimCount": 1
+      },
+      "candidate": {
+        "bytes": 1351,
+        "tokens": 459,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "coding-blocked",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 16384,
+        "rawTrajectoryTokens": 5470,
+        "receiptProjectionBytes": 778,
+        "receiptProjectionTokens": 268,
+        "taskContextTokens": 350,
+        "receiptCount": 1,
+        "verifiedClaimCount": 1
+      },
+      "candidate": {
+        "bytes": 1334,
+        "tokens": 453,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "coding-cancelled-zero-claim",
+      "class": "representative",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 392,
+        "receiptProjectionTokens": 139,
+        "taskContextTokens": 221,
+        "receiptCount": 1,
+        "verifiedClaimCount": 0
+      },
+      "candidate": {
+        "bytes": 628,
+        "tokens": 218,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-unverified-stale",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 12288,
+        "rawTrajectoryTokens": 4104,
+        "receiptProjectionBytes": 387,
+        "receiptProjectionTokens": 137,
+        "taskContextTokens": 219,
+        "receiptCount": 1,
+        "verifiedClaimCount": 0
+      },
+      "candidate": {
+        "bytes": 623,
+        "tokens": 216,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-wrong-goal-binding",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 2,
+        "receiptProjectionTokens": 9,
+        "taskContextTokens": 82,
+        "receiptCount": 0,
+        "verifiedClaimCount": 0
+      },
+      "candidate": null,
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-unaccepted-receipt",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 2,
+        "receiptProjectionTokens": 9,
+        "taskContextTokens": 82,
+        "receiptCount": 0,
+        "verifiedClaimCount": 0
+      },
+      "candidate": null,
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-forged-receipt-hash",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 2,
+        "receiptProjectionTokens": 9,
+        "taskContextTokens": 82,
+        "receiptCount": 0,
+        "verifiedClaimCount": 0
+      },
+      "candidate": null,
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-poison-narrative",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 919,
+        "receiptProjectionTokens": 315,
+        "taskContextTokens": 397,
+        "receiptCount": 1,
+        "verifiedClaimCount": 1
+      },
+      "candidate": {
+        "bytes": 1475,
+        "tokens": 500,
+        "selected": false,
+        "losslessExpansion": true,
+        "duplicateClaimInstancesRemoved": 0,
+        "duplicateEvidenceInstancesRemoved": 0
+      },
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-adapter-fault-fallback",
+      "class": "security",
+      "baseline": {
+        "rawTrajectoryBytes": 8192,
+        "rawTrajectoryTokens": 2739,
+        "receiptProjectionBytes": 669,
+        "receiptProjectionTokens": 231,
+        "taskContextTokens": 313,
+        "receiptCount": 1,
+        "verifiedClaimCount": 1
+      },
+      "candidate": null,
+      "correctness": {
+        "requiredFactsPresent": true,
+        "forbiddenFactsAbsent": true,
+        "sourceIdentityExact": true,
+        "authorityEquivalent": true
+      },
+      "cost": {
+        "additionalModelCalls": 0,
+        "additionalToolCalls": 0,
+        "projectorDurationMs": 0
+      },
+      "status": "pass"
+    }
+  ],
+  "aggregate": {
+    "representativeCases": 16,
+    "foldEligibleCases": 9,
+    "baselineReceiptTokens": 43258,
+    "selectedReceiptTokens": 18303,
+    "medianEligibleReductionRatio": 0,
+    "hardGateFailures": 0
+  },
+  "qualityEvidence": "not_run",
+  "platformEvidence": {
+    "windows": "passed",
+    "linux": "not_run",
+    "packed": "not_run"
+  },
+  "outcome": "rejected",
+  "actualFocusedMinutes": 40,
+  "receiptSha256": "88cac12c8010d24266bcc2900fc5f4ee3a9f9724329f63d27f9633a931cd3d9b"
+}

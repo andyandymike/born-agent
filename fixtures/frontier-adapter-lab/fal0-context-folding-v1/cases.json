@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "caseId": "single-short-answer",
+      "class": "representative",
+      "category": "single_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 96, "rawTrajectoryBytes": 4096 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 1, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "single-medium-answer",
+      "class": "representative",
+      "category": "single_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 2, "narrativeBytes": 256, "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 2, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "single-long-verified-route",
+      "class": "representative",
+      "category": "single_child",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 4, "narrativeBytes": 512, "rawTrajectoryBytes": 16384 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 4, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "single-many-evidence",
+      "class": "representative",
+      "category": "single_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 2, "narrativeBytes": 256, "evidencePerClaim": 4, "rawTrajectoryBytes": 12288 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 2, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "single-failed-zero-claim",
+      "class": "representative",
+      "category": "single_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 0, "narrativeBytes": 64, "status": "failed", "rawTrajectoryBytes": 4096 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 0, "statuses": ["failed"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "single-chinese-answer",
+      "class": "representative",
+      "category": "single_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 2, "narrativeBytes": 384, "language": "chinese", "rawTrajectoryBytes": 12288 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 2, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "multi-two-unique",
+      "class": "representative",
+      "category": "multi_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 2, "claimsPerReceipt": 2, "narrativeBytes": 256, "rawTrajectoryBytes": 24576 },
+      "expected": { "projectedReceiptCount": 2, "projectedClaimCount": 4, "statuses": ["succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "multi-four-unique",
+      "class": "representative",
+      "category": "multi_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 4, "claimsPerReceipt": 2, "narrativeBytes": 192, "rawTrajectoryBytes": 49152 },
+      "expected": { "projectedReceiptCount": 4, "projectedClaimCount": 8, "statuses": ["succeeded", "succeeded", "succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "multi-same-id-different-content",
+      "class": "representative",
+      "category": "multi_child",
+      "route": "static_projection",
+      "input": { "receiptCount": 2, "claimsPerReceipt": 3, "narrativeBytes": 384, "rawTrajectoryBytes": 32768 },
+      "expected": { "projectedReceiptCount": 2, "projectedClaimCount": 6, "statuses": ["succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "multi-sequence-verified-route",
+      "class": "representative",
+      "category": "multi_child",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 3, "claimsPerReceipt": 2, "narrativeBytes": 256, "reverseRevisionOrder": true, "rawTrajectoryBytes": 40960 },
+      "expected": { "projectedReceiptCount": 3, "projectedClaimCount": 6, "statuses": ["succeeded", "succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "duplicate-claims-two-child",
+      "class": "representative",
+      "category": "duplicate_pressure",
+      "route": "static_projection",
+      "input": { "receiptCount": 2, "claimsPerReceipt": 3, "narrativeBytes": 512, "contentMode": "exact_duplicate", "rawTrajectoryBytes": 32768 },
+      "expected": { "projectedReceiptCount": 2, "projectedClaimCount": 6, "statuses": ["succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "duplicate-shared-evidence",
+      "class": "representative",
+      "category": "duplicate_pressure",
+      "route": "static_projection",
+      "input": { "receiptCount": 3, "claimsPerReceipt": 2, "narrativeBytes": 384, "contentMode": "shared_evidence", "rawTrajectoryBytes": 40960 },
+      "expected": { "projectedReceiptCount": 3, "projectedClaimCount": 6, "statuses": ["succeeded", "succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "duplicate-near-limit",
+      "class": "stress",
+      "category": "duplicate_pressure",
+      "route": "static_projection",
+      "input": { "receiptCount": 8, "claimsPerReceipt": 6, "narrativeBytes": 768, "contentMode": "exact_duplicate", "rawTrajectoryBytes": 131072 },
+      "expected": { "projectedReceiptCount": 8, "projectedClaimCount": 48, "statuses": ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "duplicate-eight-child",
+      "class": "stress",
+      "category": "duplicate_pressure",
+      "route": "static_projection",
+      "input": { "receiptCount": 8, "claimsPerReceipt": 8, "narrativeBytes": 512, "contentMode": "exact_duplicate", "rawTrajectoryBytes": 131072 },
+      "expected": { "projectedReceiptCount": 8, "projectedClaimCount": 64, "statuses": ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded", "succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "coding-success-verified-route",
+      "class": "representative",
+      "category": "coding_status",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 2, "claimKind": "change_bundle", "narrativeBytes": 384, "includeChangeBundle": true, "verificationIdsPerReceipt": 1, "rawTrajectoryBytes": 24576 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 2, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "coding-known-failed",
+      "class": "representative",
+      "category": "coding_status",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "claimKind": "verification_result", "narrativeBytes": 256, "status": "failed", "rawTrajectoryBytes": 16384 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 1, "statuses": ["failed"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "coding-blocked",
+      "class": "representative",
+      "category": "coding_status",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 256, "status": "blocked", "rawTrajectoryBytes": 16384 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 1, "statuses": ["blocked"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "coding-cancelled-zero-claim",
+      "class": "representative",
+      "category": "coding_status",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 0, "narrativeBytes": 64, "status": "cancelled", "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 0, "statuses": ["cancelled"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-unverified-stale",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 2, "narrativeBytes": 256, "status": "failed", "claimStatusMode": "mixed_unverified_stale", "rawTrajectoryBytes": 12288 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 0, "statuses": ["failed"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-wrong-goal-binding",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 128, "binding": "wrong_goal", "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 0, "projectedClaimCount": 0, "statuses": [], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-unaccepted-receipt",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 128, "accepted": false, "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 0, "projectedClaimCount": 0, "statuses": [], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-forged-receipt-hash",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "verified_receipt",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 128, "artifactFault": "sha_mismatch", "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 0, "projectedClaimCount": 0, "statuses": [], "failureCode": "delegation_receipt_invalid", "poisonNarrativeProjected": false, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-poison-narrative",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 384, "poisonNarrative": true, "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 1, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": true, "baselineFallback": false }
+    },
+    {
+      "caseId": "security-adapter-fault-fallback",
+      "class": "security",
+      "category": "security_freshness",
+      "route": "static_projection",
+      "input": { "receiptCount": 1, "claimsPerReceipt": 1, "narrativeBytes": 128, "candidateFault": true, "rawTrajectoryBytes": 8192 },
+      "expected": { "projectedReceiptCount": 1, "projectedClaimCount": 1, "statuses": ["succeeded"], "failureCode": null, "poisonNarrativeProjected": false, "baselineFallback": true }
+    }
+  ]
+}

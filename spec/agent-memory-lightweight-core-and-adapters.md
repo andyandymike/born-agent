@@ -1,6 +1,6 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
-> Status: Active implementation contract（updated 2026-08-26）
+> Status: Active implementation contract（updated 2026-08-28）
 > Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511` after dedicated Linux/Windows focused-contract + packed-demo jobs passed; Agent default remains `off`, remote provider injection remains zero
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: `preview_usable` does not mean stable or prove remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
@@ -554,34 +554,115 @@ ML1不实现operation ledger、search、automatic recall、`memory_lookup`、exp
 
 只有ML5完成`preview_usable`跨平台闭环后，Frontier Adapter Lab才进入实现队列；ML0–ML5期间可以读论文和写experiment card，但不得用实验打断核心闭环。之后最多同时进行一个active experiment，并按“一项技术、一张card、一个isolated intervention”推进：
 
-| Experiment | Simple baseline | 最小问题 | 进入 preview 的必要证据 |
-|---|---|---|---|
-| progressive views / PACE | bounded direct historical excerpts | full/brief/placeholder + plan-bound `memory_lookup`是否在相同budget下保留更多任务信息 | protected closure不回退，lookup exact，quality/token/latency净收益 |
-| context folding | raw child receipt + bounded projection | branch return 是否比 raw tail 更有效 | exact source、parent token下降、completion不回退 |
-| consolidation / RecMem | one record per admitted event | recurrence-triggered merge能否减噪 | update/temporal/abstention不回退，节省量可量化 |
-| local embedding hybrid | FTS + recency | 是否改善paraphrase recall | fixed scope/token/latency下显著优于FTS，无新泄漏 |
-| graph multi-hop | flat multi-key retrieval | 真实coding multi-hop query是否需要graph | 只在multi-hop子集净胜，index可重建、无graph authority |
-| verified procedure | episode search | success/failure能否形成可复用步骤候选 | verifier来自observable evidence，用户review，零自动effect |
-| reflection/self-improvement | deterministic episode/candidate | reflection是否改善后续任务而非只写更长文本 | blind eval净胜、poisoning不过线、失败可回退 |
+Frontier Adapter Lab不是第二套memory system。Adapter只能消费已经通过对应Host authority filter的输入：memory方向先做principal/repository hard scope，context/task方向先做session/Goal/Plan/source/receipt exact binding；若需要持久化，只能写独立、可整目录删除的derived store。disabled、crash、timeout或invalid output时必须回到该方向的existing baseline；memory retrieval默认为FTS + recency，context folding默认为current verified receipt projection。`lab_verified`不等于`preview_usable`，实验也不能修改canonical memory、current instruction、approval或effect authority。
 
 每张 experiment card 必须记录 primary source、baseline、intervention、correctness/quality/latency/token/storage、poisoning/failure cases、结果和实际时间。
 
 默认时间盒为4–12小时，16小时硬停。达到硬停时只能：保留可复现结果、标 `inconclusive/rejected`、提出下一实验；不能把实验依赖偷偷搬进核心来证明“已经投入很多所以继续”。
 
-### 10.1 Research anchors
+### 10.1 研究结论：9个功能方向，3条横向验证线
 
-每个实验开始时必须重新核验primary source和reference implementation版本。当前方向的起始锚点包括：[PACE](https://aclanthology.org/2026.acl-long.1252/)、[Agentic Context Engineering / ARC](https://aclanthology.org/2026.findings-acl.930/)、[Context Folding](https://openreview.net/forum?id=lNRgWoGfYg)、[RecMem](https://aclanthology.org/2026.findings-acl.1619/)、[Hindsight](https://aclanthology.org/2026.acl-demo.27/)、[Zep / Graphiti](https://arxiv.org/abs/2501.13956)、[Agent Workflow Memory](https://proceedings.mlr.press/v267/wang25bx.html)、[Mem0](https://arxiv.org/abs/2504.19413)、[A-MEM](https://arxiv.org/abs/2502.12110)、[LongMemEval](https://arxiv.org/abs/2410.10813)、[Mem2ActBench](https://aclanthology.org/2026.acl-long.370/)与[AgentPoison](https://proceedings.neurips.cc/paper_files/paper/2024/hash/eb113910e9c3f6242541c1652e30dfd6-Abstract-Conference.html)。
+论文和开源系统数量很多，但Mem0、A-MEM、Hindsight等是多机制组合，不应各算成一个独立adapter。按BornAgent可以隔离替换的底层机制拆分，当前共有9个功能方向：
+
+| Family | Direction | Simple baseline | 最小问题 | 进入preview前的必要证据 |
+|---|---|---|---|---|
+| short-term/context | context folding lite | raw child receipt + bounded projection | branch return是否比raw tail更有效 | exact source、parent active token下降、completion不回退；额外model/tool calls已测量 |
+| short-term/context | progressive views / PACE | bounded direct historical excerpts | full/detailed/brief/placeholder能否在相同budget保留更多任务信息 | protected closure不回退，glimpse exact，quality/token/latency净收益 |
+| short-term/context | ARC active context repair | current ContextPlan + deterministic checklist | 独立context manager能否发现遗漏并修复working state | blind completion净胜，串行/重叠延迟已测量，无authority elevation |
+| retrieval/formation | local embedding hybrid | FTS + recency | 是否改善中文、同义词与paraphrase recall | fixed scope/token/latency下显著优于FTS，abstention不回退，无新泄漏 |
+| retrieval/formation | recurrence consolidation / RecMem | one record per admitted event | recurrence-triggered merge能否减噪并减少整理调用 | update/temporal/abstention不回退，raw source保留，节省量可量化 |
+| retrieval/formation | automatic formation/evolution | deterministic episode + explicit remember | model抽取、ADD/UPDATE/DELETE或note evolution能否提高后续使用质量 | 只能生成candidate；provenance/retraction/poisoning通过，零direct canonical mutation |
+| knowledge reuse | graph multi-hop | flat multi-key retrieval | 真实coding multi-hop query是否确实需要graph | 只在multi-hop子集净胜，index可重建，无graph authority |
+| knowledge reuse | verified procedure | episode search | success/failure能否形成可复用步骤候选 | verifier来自observable evidence，适用scope/version/rollback明确，零自动effect |
+| knowledge reuse | verified reflection / ACE-style playbook | deterministic episode/candidate | verified delta能否改善后续任务而非只写更长文本 | blind eval净胜，helpful/harmful可计数，规则可retract，poisoning不过线 |
+
+ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Reflector–Curator增量playbook；ARC是Active and Reflection-driven Context Management的主动上下文管理器。现有文档不得再用“Agentic Context Engineering / ARC”指代同一方向。
+
+另外有3条横向验证线，它们不是adapter，也不增加功能方向计数：
+
+1. **LongMemEval-lite**：覆盖extraction、跨session、temporal、update、conflict与应当abstain；
+2. **Mem2ActBench-lite**：检查memory是否让tool/action参数发生正确变化，而不只检查“检索到了没有”；
+3. **AgentPoison canary**：poisoned memory不能提高authority、跨repository泄漏、改变approval/effect或诱导高风险参数。
+
+### 10.2 工程难度与成本估算
+
+下表是基于当前TypeScript/Node 22、SQLite FTS5、Memory v1 derived-store边界的单人工程估算，不是论文给出的工时，也不包含论文级RL/SFT训练、不可控CI等待或远程模型费用。`产品化总投入`从零开始计算，并非在lab时间之外必然追加。
+
+| # | Direction | 难度 | Isolated lab | 产品化总投入 | 主要持续成本 | 当前研究判断 |
+|---:|---|---:|---:|---:|---|---|
+| 1 | context folding lite | 3/5 | 8–16h | 20–50h | active token下降，但model/tool call可能上升；derived receipt很小 | 最适合第一个context实验 |
+| 2 | progressive views / PACE | 3/5；faithful 4/5 | 8–16h | 24–56h | local embedding、异步summary、多级view与vector storage | 候选池长期大于约10–20条后再做；该阈值是工程启发式，不是论文结论 |
+| 3 | ARC active context repair | 5/5 | 12–16h feasibility only | 1–2 engineer-weeks以上，另计训练 | 每step增加context manager；延迟与训练硬件高 | 暂缓，不作为轻量adapter起点 |
+| 4 | local embedding hybrid | 3/5 | 8–16h | 20–40h | 首次模型包约140MiB量级；CPU embedding与vector scan | 最务实的第一个retrieval实验 |
+| 5 | recurrence consolidation / RecMem | 4/5 | 8–16h recurrence-only | 30–60h | 每次写入embedding、命中recurrence后偶发LLM、三层store | embedding baseline后研究 |
+| 6 | automatic formation/evolution | 5/5 | 12–16h candidate-only | 40–80h | 典型方案每次写入至少一次LLM/embedding；provenance与poison风险最高 | 最后研究，永不直写canonical |
+| 7 | graph multi-hop | 5/5 | 12–16h SQLite-lite | 50–120h | entity/relation extraction、graph index；full方案还需DB/GPU | 先用eval证明真实multi-hop缺口 |
+| 8 | verified procedure | 3–4/5 | 12–16h | 30–70h | verified success后一次抽取，另有replay/test/version storage | 产品收益最高的优先方向 |
+| 9 | verified reflection / ACE | 5/5 | 12–16h delta-only | 50–120h | model/evaluator calls与持续增长的playbook | procedure稳定后再做 |
+
+本地embedding首个实验不引入vector DB或HNSW：可用独立SQLite BLOB保存384维vector，并在候选硬上限内用JavaScript exact cosine scan，再与FTS做rank fusion。10,000条`float32 × 384` raw vector约14.7MiB；真正需要先测的是ONNX Windows/Linux packed artifact、冷启动与p95 latency，而不是提前引入服务。
+
+### 10.3 论文结果对BornAgent的约束
+
+- **Context Folding**：branch/return能减少父任务active context，但论文收益依赖针对性训练；轻量实现必须先复用现有child receipt/task graph，只返回结论、exact evidence、未解决项和change receipt，并单独统计增加的调用数。
+- **PACE**：多分辨率view在超长任务中有效，但当前ML3每request最多3条、`min(1,024 tokens, 8%)`；在候选规模仍小时，summary/view基础设施可能比节省的上下文更贵。
+- **ARC**：它是每步主动维护和反思working state的context manager，不是ACE缩写；论文级训练和额外推理路径超出当前轻量实验边界。
+- **Embedding hybrid**：优先评估multilingual-e5-small一类384维多语言模型；all-MiniLM-L6-v2只适合做小包smoke，不作为中文质量结论。
+- **RecMem**：recurrence减少的是LLM整理频率，不代表raw store停止增长；论文中的raw/subconscious store对准确率重要，因此canonical/source不能为了“consolidation”被删除。
+- **Automatic formation/evolution**：Mem0、A-MEM和Hindsight说明自动抽取、链接、更新可能有价值，但也把错误抽取、错误覆盖与poison传播带进写路径；BornAgent首个实验只能输出有source-bound proposal的candidate。
+- **Graph**：只允许先做deterministic SQLite explicit-edge、1–2 hop实验；没有multi-hop子集净收益时，不引入Graphiti/Neo4j/FalkorDB或LLM OpenIE。
+- **Verified procedure**：只有observable test/build/environment receipt支持的成功步骤才能成为candidate；memory提供建议，不恢复旧approval，也不能直接执行。
+- **Verified reflection/ACE**：只保存test/build/environment证明过的delta及helpful/harmful计数；raw reflection、自由文本“经验”或自动active instruction不进入产品路径。
+
+### 10.4 FAL0共用评测底座
+
+在实现任一adapter前，先用8–16 focused hours冻结一个轻量FAL0（Frontier Adapter Lab baseline 0）measurement envelope与concrete runner，不建立企业级gate。FAL0共用的是report schema、metric语义、failure/security门和baseline/candidate比较方法；每张card使用自己的applicable case pack，不强迫context folding运行embedding retrieval case，也不能用`not_applicable`凑数量。整个frontier lane的20–50个起始BornAgent cases至少逐步覆盖：
+
+- exact、paraphrase、中文改写与negative/abstention；
+- supersede、retract、temporal与conflict；
+- wrong principal/repository、missing/tampered source；
+- memory正确或错误地改变tool/action参数；
+- poisoned instruction、旧approval复活、跨repository诱导与高风险effect canary。
+
+每个experiment复用同一corpus，至少报告correctness/quality、token、wall latency、model/tool calls、storage、dependency/install size、startup、Windows pack结果与fallback。若AgentPoison canary未并入首版runner，可另设4–8 focused hours，但不得用安全case缺失宣称`lab_verified`。
+
+### 10.5 推荐实验顺序
+
+推荐顺序是研究优先级，不是已承诺backlog：
+
+1. FAL0 shared corpus/runner；
+2. context folding lite；
+3. local embedding + FTS rank fusion；
+4. verified procedure；若目标是最快产品收益，可与第3项互换；
+5. RecMem recurrence trigger；
+6. 只有候选池和task horizon实际变长后才做PACE；
+7. verified reflection delta；
+8. graph multi-hop；
+9. ARC与automatic formation/evolution最后研究。
+
+因此“第一个方向”按目标区分：学习先锋context engineering选context folding lite；补齐retrieval选local embedding hybrid；追求直接产品收益选verified procedure。三者不是互相矛盾的总冠军。
+
+首张experiment card[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)已经完成。CF0证明Live Phase 20把verified child receipt而非raw trajectory投影给parent，代表性fixture的`T -> B` token reduction约89.70%；CF1虽然lossless/security全过，但eligible representative median为0%、representative aggregate reduction为6.36%，因此以`rejected`收口并删除candidate。下一候选方向是local embedding + FTS rank fusion，尚未冻结为active card。
+
+### 10.6 Research anchors
+
+每个实验开始时必须重新核验primary source、reference implementation、license与版本。当前方向的起始锚点按机制分组如下：
+
+- Context management：[PACE](https://aclanthology.org/2026.acl-long.1252/)、[Context Folding](https://openreview.net/forum?id=lNRgWoGfYg)、[FoldAgent](https://github.com/sunnweiwei/FoldAgent)、[ARC](https://aclanthology.org/2026.findings-acl.930/)与[ACE](https://arxiv.org/abs/2510.04618)；
+- Retrieval/formation：[multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)、[Transformers.js Node](https://huggingface.co/docs/transformers.js/main/tutorials/node)、[RecMem](https://aclanthology.org/2026.findings-acl.1619/)、[Mem0](https://arxiv.org/abs/2504.19413)、[A-MEM](https://arxiv.org/abs/2502.12110)与[Hindsight](https://aclanthology.org/2026.acl-demo.27/)；
+- Knowledge reuse：[HippoRAG 2](https://arxiv.org/abs/2502.14802)、[Zep / Graphiti](https://arxiv.org/abs/2501.13956)、[Agent Workflow Memory](https://proceedings.mlr.press/v267/wang25bx.html)、[Voyager](https://arxiv.org/abs/2305.16291)、[AFTER](https://arxiv.org/abs/2606.23127)、[Reflexion](https://arxiv.org/abs/2303.11366)与[ExpeL](https://arxiv.org/abs/2308.10144)；
+- Evaluation/security：[LongMemEval](https://arxiv.org/abs/2410.10813)、[Mem2ActBench](https://aclanthology.org/2026.acl-long.370/)与[AgentPoison](https://proceedings.neurips.cc/paper_files/paper/2024/hash/eb113910e9c3f6242541c1652e30dfd6-Abstract-Conference.html)。
 
 这些链接是研究入口，不是采用证明。每张card仍需写清BornAgent baseline、没有照搬的部分和复现实验结果。
 
-### 10.2 Adapter promotion gate
+### 10.7 Adapter promotion gate
 
 Adapter 从 `lab_verified` 到 `preview_usable` 必须同时满足：
 
 1. 在固定 baseline 上有明确净收益，而不是只展示成功例；
 2. adapter使用独立derived store；删除整个adapter目录后core logical dump不变；
 3. disabled/crash/timeout/invalid output 均回到 baseline；
-4. scope filter发生在 adapter前，cross-repository leak为0；
+4. 对应authority filter发生在adapter前；memory cross-repository leak为0，context/task wrong-binding input为0；
 5. adapter不得自动 activate candidate、写 current instruction 或触发 effect；
 6. 额外 dependency、install size、startup、storage和Windows成本已测量；
 7. 有真实 CLI/product观察点，而非只有内部 class。

@@ -146,11 +146,12 @@ mode=off baseline
 
 Memory v1 建立可测 baseline 后，先锋方向按“一项技术、一张 experiment card、一个隔离提交”推进：
 
-1. progressive full/detailed/brief/placeholder context；
-2. deterministic consolidation 对比 model-assisted consolidation；
-3. lexical/temporal baseline 对比 embedding、graph 或 hybrid retrieval；
-4. verified trajectory 到 procedure candidate；
-5. memory-guided planning、reflection 或 self-improvement loop。
+1. [`FAL-CF0`](../../spec/frontier-adapter-lab-fal0-context-folding-lite.md)已量化现有verified child receipt folding；CF1 second fold因代表性净收益不足被拒绝并删除；
+2. progressive full/detailed/brief/placeholder context；
+3. deterministic consolidation 对比 model-assisted consolidation；
+4. lexical/temporal baseline 对比 embedding、graph 或 hybrid retrieval；
+5. verified trajectory 到 procedure candidate；
+6. memory-guided planning、reflection 或 self-improvement loop。
 
 实验完成并不自动意味着产品启用。实验即使失败，只要具有可复现 baseline、原因分析和学习记录，也属于本项目的有效成果。
 
@@ -170,6 +171,6 @@ Memory v1 不承诺：
 
 ## 9. 下一步
 
-ML5已按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)完成product closure。下一步不是继续扩张core，而是从embedding、graph、consolidation、procedure或reflection中只选择一个明确学习问题，先写一张isolated experiment card：固定baseline、corpus、quality/token/latency指标、promotion条件与删除条件。未超过简单baseline的实验只保留学习结论，不进入production。
+ML5已按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)完成product closure。[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](../../spec/frontier-adapter-lab-fal0-context-folding-lite.md)也已完成：24 cases机械门全过，但CF1只有1个representative case获益，eligible median为0%，因此以`rejected`收口且未接production。下一候选研究方向是local embedding + FTS rank fusion；它尚未冻结card或进入实现，必须先证明中文/paraphrase retrieval的真实缺口。
 
 Memory v1 core仍不增加普通chat自动提炼、remote disclosure、TUI、daemon或企业治理；`preview_usable`也不等于`stable`。

@@ -4,7 +4,7 @@
 
 > 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前状态：Architecture Simplification AS0.1–AS5.2与Agent Memory AM0/AM1组件已在exact commit `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d`通过Linux/Windows CI。AM0/AM1仅为`component_verified`，production memory仍为`off`且没有跨session长期记忆；当前ML1按[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)以真实跨进程CLI行为、学习记录和时间账为完成边界。
+> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且remote provider injection为0。[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)已完成；CF1因代表性净收益不足被拒绝并删除，不能从实验回执推断adapter可用。
 
 ## 当前阅读顺序
 
@@ -75,6 +75,8 @@
 24. Agent Memory learning-delivery lane：
     - [`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)：切片顺序、学习问题、预算与时间账
     - [`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)：当前数据、端口、行为、实验晋级与机械验收合同
+    - [`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)：首张frontier experiment已完成；CF0保留，CF1因代表性净收益不足被拒绝并删除
+    - [`Context Folding Lite 实验记录`](../docs/agent-memory/context-folding-lite-experiment-record.md)：24-case结果、机器回执、删除边界与下一步
     - `agent-memory-and-context-maintenance.md`：本地exhaustive research/threat-model参考；不作为当前排期或完成权威
 
 Phase 0–20均已实现并有分阶段本地/跨平台证据，21A已通过本地gate。21B–21E已Deferred且M12不再是当前个人项目目标，因此Web、IDE、browser/computer-use、remote worker与team mode仍不可用。当前开发转为真实使用驱动的release、可靠性、简化、质量效率与开源维护。Phase18的Skills、MCP primitives、declarative/command Hooks和local Plugin lifecycle/reconciliation已通过M9；
