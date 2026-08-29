@@ -1,7 +1,7 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
-> Status: Active implementation contract（updated 2026-08-28）
-> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511` after dedicated Linux/Windows focused-contract + packed-demo jobs passed; Agent default remains `off`, remote provider injection remains zero
+> Status: Active implementation contract（updated 2026-08-29）
+> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`; CF2 and EM-R1 candidates remain disabled and never entered production. FAL Memory Shared Benchmark v1 has run public development/calibration: embedding passed only the retrieval-stage gate, Context Folding was not beneficial on 12/12 timelines, and the fixed reader produced zero must-answer grounded successes, so the committed evaluation remains unopened. Shared evidence has `sourceCommit=null` and is not promotion eligible; Agent default remains `off`, remote provider injection remains zero
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: `preview_usable` does not mean stable or prove remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
@@ -52,7 +52,7 @@ Memory Lite 不复制整段对话，也不保存 hidden chain-of-thought。原�
 
 - canonical memory会随ML1 episode rows与ML4 explicit revisions增长，但有record/byte hard cap；达到上限时停止自动写入并返回typed capacity error，不无限扩张。
 - ML1 episode 写入后不原地改写。ML4引入显式记忆时，变化再通过 `SUPERSEDE` 新 revision或 `RETRACT` operation表达。
-- FTS、embedding、graph和summary是可删除、可重建的projection；adapter candidate是可丢弃实验数据，删除不改变core logical state，但不承诺零成本重建。
+- FTS、embedding、graph和summary是可删除、可重建的projection；adapter生成的model/cache/vector/derived state可丢弃，删除不改变core logical state，但不承诺零成本重建。Candidate源码、tests与rehydration manifest按第10节默认保留，不能与derived state混称“可丢弃candidate”。
 - 每次 provider request 实际使用的 memory 有 top-k、text bytes 和 token budget；不会把全部历史不断塞进 prompt。
 - `retract` 表示停止 active recall，不等于物理删除原 session/artifact；产品不得把它命名为 secure erase。
 
@@ -459,15 +459,16 @@ ML4把derived projection升级为`memory/v1/retrieval/fts5-v2/<scope-sha256>.sql
 
 ## 8. Maturity model
 
-每个 core capability 和 adapter 独立标记 maturity；不能因 Memory Lite 核心通过就继承等级。
+每个 core capability 和 adapter 独立标记 maturity；不能因 Memory Lite 核心通过就继承等级。Product maturity与lab evidence是两套不同维度：新实验不得再用一个`lab_verified`或`lab_rejected`同时表示实现忠实度、数据充分性、质量、产品收益与promotion决定。
 
 | Maturity | 能力边界 | 晋级条件 |
 |---|---|---|
-| `lab_verified` | isolated benchmark、shadow/manual use；不进入 provider context | reproducible corpus、schema/scope/source/retract tests、学习记录与时间账 |
+| `mechanism_verified` | isolated source/tests证明候选按冻结合同运行；不进入 provider context | implementation anchors、determinism、correctness/safety/fallback gates与可恢复源码 |
+| `promotion_eligible` | evidence-protocol v2证明指定claim和当前workload的净收益；仍未接product | adequate held-out/trace evidence、cost、quality与explicit promotion amendment |
 | `preview_usable` | local explicit opt-in；允许 bounded product path | 完整restart demo、off equivalence、wrong-scope 0、stale injection 0、hard bounds、Windows/Linux same-exact commit与pack smoke |
 | `stable` | 可作为正式能力，但不要求默认开启 | preview后真实使用期、至少一次migration/rollback演练、capacity evidence与public docs |
 
-禁止使用 `done`、`passed` 或“长期记忆已完成”代替具体 maturity。实验失败但有可复现实验与解释，可以标 `lab_rejected`，仍是有效学习成果。
+禁止使用 `done`、`passed`、无范围的`rejected`或“长期记忆已完成”代替具体状态。历史receipt中的`lab_verified/rejected`保持原字节，但v2解释必须使用第10节的正交结论；`promotion=blocked`不等于论文、模型、算法方向或实现机制被否定。
 
 ## 9. ML0–ML5 纵向切片
 
@@ -554,11 +555,47 @@ ML1不实现operation ledger、search、automatic recall、`memory_lookup`、exp
 
 只有ML5完成`preview_usable`跨平台闭环后，Frontier Adapter Lab才进入实现队列；ML0–ML5期间可以读论文和写experiment card，但不得用实验打断核心闭环。之后最多同时进行一个active experiment，并按“一项技术、一张card、一个isolated intervention”推进：
 
-Frontier Adapter Lab不是第二套memory system。Adapter只能消费已经通过对应Host authority filter的输入：memory方向先做principal/repository hard scope，context/task方向先做session/Goal/Plan/source/receipt exact binding；若需要持久化，只能写独立、可整目录删除的derived store。disabled、crash、timeout或invalid output时必须回到该方向的existing baseline；memory retrieval默认为FTS + recency，context folding默认为current verified receipt projection。`lab_verified`不等于`preview_usable`，实验也不能修改canonical memory、current instruction、approval或effect authority。
+Frontier Adapter Lab不是第二套memory system。Adapter只能消费已经通过对应Host authority filter的输入：memory方向先做principal/repository hard scope，context/task方向先做session/Goal/Plan/source/receipt exact binding；若需要持久化，只能写独立、可整目录删除的derived store。disabled、crash、timeout或invalid output时必须回到该方向的existing baseline；memory retrieval默认为FTS + recency，context folding默认为current verified receipt projection。`mechanism_verified`不等于`promotion_eligible`或`preview_usable`，实验也不能修改canonical memory、current instruction、approval或effect authority。
 
-每张 experiment card 必须记录 primary source、baseline、intervention、correctness/quality/latency/token/storage、poisoning/failure cases、结果和实际时间。
+每张 experiment card 必须记录 primary source、baseline、intervention、correctness/quality/latency/token/storage、poisoning/failure cases、正交结论和实际时间。
 
-默认时间盒为4–12小时，16小时硬停。达到硬停时只能：保留可复现结果、标 `inconclusive/rejected`、提出下一实验；不能把实验依赖偷偷搬进核心来证明“已经投入很多所以继续”。
+默认时间盒为4–12小时，16小时硬停。达到硬停时必须保留已有source/evidence、逐轴标明`verified/failed/inconclusive/not_run`并提出下一实验；不能把实验依赖偷偷搬进核心来证明“已经投入很多所以继续”。
+
+### 10.0 Evidence protocol v2
+
+从2026-08-28起，新的experiment revision使用生命周期加正交结论，不再产出一个包办所有含义的overall outcome：
+
+```text
+lifecycle:
+draft -> baseline_frozen -> candidate_built -> evaluation_complete -> closed
+
+closure axes:
+evidenceValidity       = valid | limited | invalid
+implementationFidelity = verified | failed | inconclusive
+claimResults[]         = supported | refuted | inconclusive | not_run
+productFit             = supported | not_demonstrated | inconclusive | not_assessed
+promotion              = eligible | blocked | not_assessed | promoted
+direction              = retain | revise | pause | drop
+reproducibility        = full | corpus_only | receipt_only
+candidateLifecycle     = retained_disabled | quarantined | archived_recoverable | removed_legacy_policy | removed_for_hazard
+```
+
+每个`claimResults[]`必须同时写清claim边界、metric、case role、evidence provenance和不能外推的部分。例如“E5在固定语料提高semantic Recall@5”与“E5能可靠拒答”是两个claim；“dictionary fold可lossless expand”与“它在真实任务有净收益”也是两个claim。
+
+Gate按以下顺序解释：
+
+1. **G0 evidence validity**：golden独立性、数据来源、case role、calibration/evaluation隔离、真实baseline路径与样本覆盖。失败只使证据`limited/invalid`，不得归因算法或模型；
+2. **G1 safety/isolation**：wrong scope进入adapter、stale/retracted/forged数据实际泄漏、authority提升、canonical mutation或fallback不等价。这才是零容忍安全硬门；
+3. **G2 implementation fidelity**：候选是否忠实实现冻结算法，例如lossless、pooling、normalization、fusion、bounds、hash与determinism；
+4. **G3 quality/benefit**：Recall、MRR、abstention、risk-coverage、token收益与task completion。失败可以refute当前candidate claim或阻止promotion，但不能覆盖G1/G2结论；
+5. **G4 cost**：模型体积、延迟、storage、dependency、pack与startup；只描述当前实现成本并决定是否值得晋级；
+6. **G5 promotion**：真实product path、explicit opt-in、跨平台、rollback和观察点。未通过只表示不接入production。
+
+因果归因也受约束：reference anchor或冻结公式不一致才叫implementation fault；adequate calibration中不存在满足预注册risk/coverage目标的任何operating point，才能refute该selection algorithm；同selector、同corpus的固定model comparison才能归因model。Calibration通过但family-disjoint evaluation失败，只能先记generalization failure。
+
+历史v1 receipt、manifest和case pack不修改hash。新的解释通过spec/learning record引用旧receipt SHA，并使用新experiment ID与新holdout；已经公开或用于讨论的evaluation case只能作为`known_regression`，不能再次冒充blind evidence。CF v1 evidence已经进入Git；EM v1 evidence在EM-R1运行时仍只在working tree中byte-frozen。本轮按用户明确要求先重试，保留旧原字节并记录`sourceCommit=null/working_tree_full`偏差；因此当前证据不能称durably immutable或exact-commit，后续发布前仍须提交并重跑适用门禁。EM-R1后续审计还确认calibration loader为全manifest验hash而读取过evaluation文件，且split-prefixed IDs掩盖了语义孪生family；append-only correction只保留“calibration无eligible point、evaluation未评分、promotion blocked”，并把旧holdout降级为`known_exposed_holdout_development_only`。
+
+Candidate源码、candidate-only tests、fixture、runner与rehydration manifest默认保留在不参与production build的lab目录，必须默认disabled且production import/pack graph为0。模型权重、vector DB、cache、临时目录、隔离lab dependency root中的`node_modules`、含用户数据或绝对路径的输出默认删除。只有secret/license/hazard、无法限制的依赖、用户明确要求，或源码已经进入可恢复Git历史后，才允许从working tree移除唯一源码；此时分别记录`removed_for_hazard`或`archived_recoverable`。历史上按旧合同删除且从未进入Git的候选记录`removed_legacy_policy`。收益不足绝不能自动触发源码删除。
 
 ### 10.1 研究结论：9个功能方向，3条横向验证线
 
@@ -600,7 +637,7 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 | 8 | verified procedure | 3–4/5 | 12–16h | 30–70h | verified success后一次抽取，另有replay/test/version storage | 产品收益最高的优先方向 |
 | 9 | verified reflection / ACE | 5/5 | 12–16h delta-only | 50–120h | model/evaluator calls与持续增长的playbook | procedure稳定后再做 |
 
-本地embedding首个实验不引入vector DB或HNSW：可用独立SQLite BLOB保存384维vector，并在候选硬上限内用JavaScript exact cosine scan，再与FTS做rank fusion。10,000条`float32 × 384` raw vector约14.7MiB；真正需要先测的是ONNX Windows/Linux packed artifact、冷启动与p95 latency，而不是提前引入服务。
+本地embedding首个实验不引入vector DB或HNSW：独立SQLite BLOB保存384维vector，在候选硬上限内用JavaScript exact cosine scan，再与FTS做rank fusion。FAL-EM0证实10,000条`float32 × 384`需要16 KiB SQLite page避免payload overflow；最终store为23,461,888 bytes、scan p95为37.79 ms。性能不是v1 promotion blocker；直接原因是3个safe-distractor abstention false accepts，而其data/algorithm/model根因因calibration不足保持inconclusive。
 
 ### 10.3 论文结果对BornAgent的约束
 
@@ -616,7 +653,19 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 
 ### 10.4 FAL0共用评测底座
 
-在实现任一adapter前，先用8–16 focused hours冻结一个轻量FAL0（Frontier Adapter Lab baseline 0）measurement envelope与concrete runner，不建立企业级gate。FAL0共用的是report schema、metric语义、failure/security门和baseline/candidate比较方法；每张card使用自己的applicable case pack，不强迫context folding运行embedding retrieval case，也不能用`not_applicable`凑数量。整个frontier lane的20–50个起始BornAgent cases至少逐步覆盖：
+在实现任一adapter前，先用8–16 focused hours冻结一个轻量FAL0（Frontier Adapter Lab baseline 0）measurement envelope与concrete runner，不建立企业级gate。FAL0共用的是report schema、metric语义、G0–G5 gate和baseline/candidate比较方法；每张card使用自己的applicable case pack，不强迫context folding运行embedding retrieval case，也不能用`not_applicable`凑数量。
+
+Case数量本身不是证据充分性。每个case必须标明且由runner机械证明其role与provenance：
+
+- `generated_fixture`只证明mechanics；
+- `verified_route_fixture`证明走过live code path，但不证明payload来自真实workload；
+- `calibration`只允许选择冻结参数，且必须实际触发被校准的分支；
+- `known_regression`只防止已知错误复发，不能再次称blind；
+- `family_disjoint_evaluation`只评估冻结candidate，不允许回调参数；
+- `trace_replay`才可支持当前BornAgent真实workload收益；
+- `stress`只证明边界和成本，不能补足representative/trace数量。
+
+整个frontier lane的起始BornAgent cases至少逐步覆盖：
 
 - exact、paraphrase、中文改写与negative/abstention；
 - supersede、retract、temporal与conflict；
@@ -624,7 +673,9 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 - memory正确或错误地改变tool/action参数；
 - poisoned instruction、旧approval复活、跨repository诱导与高风险effect canary。
 
-每个experiment复用同一corpus，至少报告correctness/quality、token、wall latency、model/tool calls、storage、dependency/install size、startup、Windows pack结果与fallback。若AgentPoison canary未并入首版runner，可另设4–8 focused hours，但不得用安全case缺失宣称`lab_verified`。
+每个experiment revision固定自己的corpus identity；旧case可作为regression复用，但新的calibration/evaluation必须用新identity与group-disjoint families。至少报告correctness/quality、token、wall latency、model/tool calls、storage、dependency/install size、startup、Windows pack结果与fallback。若AgentPoison canary未并入首版runner，可另设4–8 focused hours，但不得用安全case缺失宣称promotion eligible。
+
+新的[`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)把横向验证线落实为24条独立时间线、每条6个must-answer + 4个must-abstain probes。Local Embedding位于retrieval层，Context Folding位于verified-receipt projection层；二者使用A/B/C/D四arm与同一canonical pool，但Recall、fold exactness、reader grounded success和cost分别报告，不产生一个混合总分。Public development/calibration各60 probes已运行：embedding calibration Recall@5提升0.111111且无candidate-added safety case，CF在12/12 timeline均`not_beneficial`，fixed reader四arm must-answer grounded success均为0。Evaluation 120 probes仍只公开salted commitment，因reader gate与source freeze失败而未运行。
 
 ### 10.5 推荐实验顺序
 
@@ -642,14 +693,14 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 
 因此“第一个方向”按目标区分：学习先锋context engineering选context folding lite；补齐retrieval选local embedding hybrid；追求直接产品收益选verified procedure。三者不是互相矛盾的总冠军。
 
-首张experiment card[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)已经完成。CF0证明Live Phase 20把verified child receipt而非raw trajectory投影给parent，代表性fixture的`T -> B` token reduction约89.70%；CF1虽然lossless/security全过，但eligible representative median为0%、representative aggregate reduction为6.36%，因此以`rejected`收口并删除candidate。下一候选方向是local embedding + FTS rank fusion，尚未冻结为active card。
+首张experiment card[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)留下了immutable v1 receipt：lossless/security mechanics通过，但没有trace-backed workload；字面Spec要求4个`representative + verified_route`，case pack实际只有3个，而validator错误地只统计7个all-class verified routes。因此v1只能支持fixture mechanics，不能支持“代表性净收益不足”的产品结论。CF2已在working tree按`reimplementation_from_v1_contract`重写tiny candidate：20/20 mechanics通过、7例走真实verifier/projector route、5例为security case，源码保留disabled且production import/pack为0；但合格naturalistic trace与model-quality task均为0，所以`productFit=inconclusive`、promotion blocked。第二张experiment card[`FAL-EM0 — Local Embedding + FTS Rank Fusion`](frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)的v1 receipt证明旧pinned multilingual E5在3-row cases上提高semantic ranking、成本可控且actual forbidden target leak为0，但calibration不足。EM-R1现已保留重建源码、pinned lock/model manifest、双128-row corpus与完整9,538点curve：12个self-frozen anchors一致，16个effective vector negatives和8个baseline collision可在delta gate下不退化，但任何threshold的semantic top-5最多8/16，未达到13/16。Rehydrated artifact与旧manifest不一致、历史输出只匹配26/36，所以不能把差异单独归因data、selector、RRF或model；旧evaluation未解析/评分但文件被manifest verifier读取，且semantic family-disjoint被审计refute，现只作known regression。CF2与EM-R1源码均按v2规则保留disabled，product integration从未发生。共享benchmark作为第三张横向card已完成development/calibration四arm执行；结论分别为embedding `retrieval_calibration_passed_only`、CF `not_selected_no_shared_benefit`、reader/evaluation `blocked`。
 
 ### 10.6 Research anchors
 
 每个实验开始时必须重新核验primary source、reference implementation、license与版本。当前方向的起始锚点按机制分组如下：
 
 - Context management：[PACE](https://aclanthology.org/2026.acl-long.1252/)、[Context Folding](https://openreview.net/forum?id=lNRgWoGfYg)、[FoldAgent](https://github.com/sunnweiwei/FoldAgent)、[ARC](https://aclanthology.org/2026.findings-acl.930/)与[ACE](https://arxiv.org/abs/2510.04618)；
-- Retrieval/formation：[multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)、[Transformers.js Node](https://huggingface.co/docs/transformers.js/main/tutorials/node)、[RecMem](https://aclanthology.org/2026.findings-acl.1619/)、[Mem0](https://arxiv.org/abs/2504.19413)、[A-MEM](https://arxiv.org/abs/2502.12110)与[Hindsight](https://aclanthology.org/2026.acl-demo.27/)；
+- Retrieval/formation：[multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)、[Multilingual E5 report](https://arxiv.org/abs/2402.05672)、[RRF](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf)、[Selective Classification](https://papers.neurips.cc/paper_files/paper/2017/hash/4a8423d5e91fda00bb7e46540e2b0cf1-Abstract.html)、[Selective QA under Domain Shift](https://aclanthology.org/2020.acl-main.503/)、[Transformers.js Node](https://huggingface.co/docs/transformers.js/main/tutorials/node)、[RecMem](https://aclanthology.org/2026.findings-acl.1619/)、[Mem0](https://arxiv.org/abs/2504.19413)、[A-MEM](https://arxiv.org/abs/2502.12110)与[Hindsight](https://aclanthology.org/2026.acl-demo.27/)；
 - Knowledge reuse：[HippoRAG 2](https://arxiv.org/abs/2502.14802)、[Zep / Graphiti](https://arxiv.org/abs/2501.13956)、[Agent Workflow Memory](https://proceedings.mlr.press/v267/wang25bx.html)、[Voyager](https://arxiv.org/abs/2305.16291)、[AFTER](https://arxiv.org/abs/2606.23127)、[Reflexion](https://arxiv.org/abs/2303.11366)与[ExpeL](https://arxiv.org/abs/2308.10144)；
 - Evaluation/security：[LongMemEval](https://arxiv.org/abs/2410.10813)、[Mem2ActBench](https://aclanthology.org/2026.acl-long.370/)与[AgentPoison](https://proceedings.neurips.cc/paper_files/paper/2024/hash/eb113910e9c3f6242541c1652e30dfd6-Abstract-Conference.html)。
 
@@ -657,7 +708,7 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 
 ### 10.7 Adapter promotion gate
 
-Adapter 从 `lab_verified` 到 `preview_usable` 必须同时满足：
+Adapter从`mechanism_verified`到`promotion_eligible`必须先有一份独立promotion amendment，并同时满足：
 
 1. 在固定 baseline 上有明确净收益，而不是只展示成功例；
 2. adapter使用独立derived store；删除整个adapter目录后core logical dump不变；
@@ -666,6 +717,8 @@ Adapter 从 `lab_verified` 到 `preview_usable` 必须同时满足：
 5. adapter不得自动 activate candidate、写 current instruction 或触发 effect；
 6. 额外 dependency、install size、startup、storage和Windows成本已测量；
 7. 有真实 CLI/product观察点，而非只有内部 class。
+
+未满足某项时记录对应轴为`not_demonstrated/blocked/not_run`；只有G1 safety/isolation或G2 implementation fidelity失败时才允许无范围地描述“当前candidate实现失败”。Promotion amendment通过后仍需按第8节另做`preview_usable`的跨平台、pack、restart与rollback证据。
 
 ## 11. Mechanical acceptance
 

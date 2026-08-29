@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "evidenceState": "public_dev_calibration_with_unrevealed_evaluation_commitment",
+  "createdAt": "2026-08-29T05:30:00.000Z",
+  "files": {
+    "protocol.json": {
+      "bytes": 2028,
+      "sha256": "8c837d780a74d208825fc83c90d4cc5e8f177755ec49b9c06250924359893665"
+    },
+    "candidate-freeze.json": {
+      "bytes": 851,
+      "sha256": "9f59cdece1a50fda4df0ed715eea03411cd52e372f1e162a51d52e9e01214590"
+    },
+    "family-registry.json": {
+      "bytes": 10457,
+      "sha256": "7bcc706f0a631cddcaf6fb23e6bc9c198594be14d7bd7988514e3d5a7776a775"
+    },
+    "development-inputs.json": {
+      "bytes": 2173634,
+      "sha256": "4755126fe2759b276a824fc299e012ee65506d9160d2e63360342c0b108cc448"
+    },
+    "development-goldens.json": {
+      "bytes": 51037,
+      "sha256": "569328baa4007b62a1ca0596a72bfaec52e8ef302a21fe5a1a95b19dbb22361b"
+    },
+    "calibration-inputs.json": {
+      "bytes": 2189935,
+      "sha256": "9427e5f718fe6838a79f47a779615fb1184f376e5155042ea2c9b0cc9bf9cada"
+    },
+    "calibration-goldens.json": {
+      "bytes": 51258,
+      "sha256": "42b08ba1863b933132844c1166e3d14307b0014e4e13a5edc727f7a89f39eb37"
+    },
+    "evaluation-commitment.json": {
+      "bytes": 817,
+      "sha256": "093e7a779f9e5f4082e27b93be07f3c35eaf6cc28ba9c53384235e434bacf179"
+    }
+  },
+  "manifestSha256": "b966cee0c44bf791fd10f562828173d3cd404e6c2a5127a8972fc9027e651a1e"
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "priorExperimentId": "fal-em0-local-embedding-hybrid-v1",
+  "priorEvidenceReceiptSha256": "a6a9c5563b421342c7c21f1d1efb0470cdd04aa322ff4b77a2c0ec5ce4b88b6c",
+  "priorCandidateImplementationSha256": "6251ca321314fd920fc106585869b45fec8eb92de56829ca12937c30d0de29d7",
+  "priorModelArtifactManifestSha256": "eb54f2a0fc3b5a2608f4c43b404e10bf4da856b9b405e48ff27fcecaeef55141",
+  "priorThresholdSimilarityMicros": 780000,
+  "evidenceValidity": "limited",
+  "classification": "known_regression_development_only",
+  "limitations": [
+    "only one effective vector-abstention calibration negative",
+    "security families appeared only in evaluation",
+    "case-local three-row corpora did not measure maximum-score distractor risk",
+    "receipt omitted branch provenance and per-row score distributions",
+    "candidate source and artifact inputs were not retained in Git"
+  ]
+}

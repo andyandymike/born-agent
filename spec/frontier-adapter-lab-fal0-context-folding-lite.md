@@ -1,10 +1,10 @@
 # FAL-CF0 — FAL0 Baseline and Context Folding Lite Experiment Spec
 
-> Status: CF0 Implemented；CF1 Rejected by representative net-benefit gate（2026-08-28）
+> Status: historical CF0/CF1 v1 receipt closed；CF2 mechanical reimplementation completed in the working tree, trace-backed product evaluation pending；shared 2×2 benchmark pack frozen but not executed（2026-08-29）
 > Parent contract: [`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)
 > Existing product baseline: Phase 20 controlled delegation is Implemented / M11 Passed
-> Timebox: 8–16 focused hours；16小时硬停
-> Product default: unchanged；candidate已按合同删除，production adapter不存在
+> Historical timebox: 8–16 focused hours；CF2 has a new 8–16 focused-hour budget
+> Product default: unchanged；historical candidate源码已删除且不在Git中；CF2源码保留在`labs/**`且默认disabled，production adapter不存在
 
 ## 0. 文档地位与当前决定
 
@@ -14,16 +14,20 @@
 
 1. 一次只进行一个active experiment；
 2. adapter只能消费已经完成Host验证和current binding过滤的输入；
-3. disabled、throw、timeout或invalid output必须回到existing baseline；
+3. disabled、pre-invocation deadline exhausted、throw或invalid output必须回到existing baseline；
 4. 实验不能修改canonical memory、current authority、approval或effect语义；
 5. `lab_verified`不等于`preview_usable`，更不表示production默认启用；
-6. 达到16小时只能产出`baseline_sufficient`、`lab_verified`、`rejected`或`inconclusive`证据，不能继续扩张scope。
+6. v1历史上使用`baseline_sufficient/lab_verified/rejected/inconclusive`；CF2必须使用父合同evidence-protocol v2的正交结论，不能继续扩张scope。
 
-本spec仍是exact experiment contract；完成证据见[`Context Folding Lite 实验记录`](../docs/agent-memory/context-folding-lite-experiment-record.md)与[`machine receipt`](../fixtures/frontier-adapter-lab/fal0-context-folding-v1/experiment-receipt.json)。
+本spec仍是exact experiment contract；完成证据见[`Context Folding Lite 实验记录`](../docs/agent-memory/context-folding-lite-experiment-record.md)、[`v1 machine receipt`](../fixtures/frontier-adapter-lab/fal0-context-folding-v1/experiment-receipt.json)与[`CF2 machine receipt`](../fixtures/frontier-adapter-lab/fal-cf2-context-folding-v2/experiment-receipt.json)。
 
-### 0.1 实验结论
+### 0.1 v1历史结果与证据更正
 
-CF0的24 cases全部通过，7例走真实verifier/projector路径；16个representative cases中9例触发CF1准入。CF1机械、安全和lossless gates通过，但只选中1个representative与2个synthetic stress cases：eligible representative median reduction为0%，representative aggregate reduction为6.36%，未达到25% / 20%门槛。最终结果为`rejected`，candidate源码和candidate-only tests已删除；保留hash-bound corpus、CF0 runner、tests、机器回执和学习记录。真实模型quality、Linux与packed evidence均为`not_run`。
+CF0/CF1的v1 manifest、cases、receipt、receipt SHA与`outcome: rejected`保持历史原值，不回写机器事实。该receipt证明当时runner上的mechanical/security/lossless checks为0 failure，且dictionary fold只在1个作者标记的representative case和2个synthetic stress cases被旧25% selector选中。
+
+但是v1不能支持“真实BornAgent workload代表性净收益不足”的因果结论：24例全部由profile生成，trace-backed case为0；`rawTrajectoryBytes`是声明值并由runner用marker padding，不是实际parent trajectory测量；字面Spec要求至少4个`representative + verified_receipt`，case pack实际只有3个，validator却错误地只检查all-class `verified_receipt >= 4`并被4个security route补足。`hardGateFailures=0`因此只符合较弱validator，不符合字面corpus合同。
+
+按evidence-protocol v2重新解释为：`implementationFidelity=inconclusive`（candidate源码已删除，不能逐行复核）、`evidenceValidity=limited`、lossless/security fixture claims historically supported、`productFit=inconclusive`、`promotion=blocked`、`direction=revise`、`reproducibility=corpus_only`、`candidateLifecycle=removed_legacy_policy`。这不是对Context Folding论文、dictionary fold机制或未来实现的否定。
 
 ## 1. Live baseline：BornAgent已经做了一次receipt folding
 
@@ -129,7 +133,7 @@ CF1只允许一个intervention：把多个accepted receipts做lossless dictionar
 
 ## 4. FAL0 corpus合同
 
-### 4.1 固定24 cases
+### 4.1 v1固定24 cases（历史fixture-only corpus）
 
 本card的首版case pack固定24个cases，保持在主仓tracked、无secret、无network、无credential。它复用FAL0的metric/report/security envelope，但只证明context-folding问题；未来embedding、consolidation或procedure card必须增加自己的applicable pack，不能把这24例冒充通用memory质量证据：
 
@@ -142,7 +146,7 @@ CF1只允许一个intervention：把多个accepted receipts做lossless dictionar
 | security/freshness | 6 | forged hash、stale/unverified claim、wrong Goal/Plan、unaccepted/superseded receipt、poison narrative、adapter fault |
 | **Total** | **24** | 其中至少12个标记`representative`，其余为`stress`或`security` |
 
-至少4个representative cases必须通过real verifier/projector route构造；静态对象fixture不能替代`readVerifiedChildReceipt()`与exact binding验证。Raw child trajectory只保存无secret fixture及hash/byte/token observation，不成为candidate input。
+v1字面合同要求至少4个representative cases通过real verifier/projector route构造；静态对象fixture不能替代`readVerifiedChildReceipt()`与exact binding验证。历史case pack只有3个`representative + verified_receipt`，因此该条件没有满足；原validator只统计all-class route是已知实现缺口。Raw child trajectory只保存无secret fixture及hash/byte/token observation，不成为candidate input。
 
 ### 4.2 Fixture layout
 
@@ -296,13 +300,13 @@ Wall time只作同机diagnostic；hard gate使用bytes、tokens、calls、hashes
 - raw transcript进入parent context为0；
 - adapter新增model calls为0、tool calls为0、network calls为0；
 - adapter不能改变authority、protected category、approval、tool registry、effect或completion；
-- disabled/throw/timeout/invalid fold回退后baseline task-context bytes/hash相同；
+- disabled/injected throw/timeout/invalid fold回退后baseline task-context bytes/hash相同；
 - poison case相对baseline不能增加instruction/authority/effect成功率；
 - 删除整个candidate目录后existing Phase 20 and Memory logical behavior不变。
 
-任一hard gate失败，candidate为`rejected`，不能用平均token收益覆盖。
+任一G1/G2 hard gate失败才能判定当前candidate mechanics失败，不能用平均token收益覆盖。历史v1曾把后续product-fit gate也折叠进`rejected`；CF2禁止这种解释。
 
-### 6.3 Net-benefit gate
+### 6.3 v1 Net-benefit gate（历史promotion policy，不是机制真理）
 
 只有同时满足下列条件才可标`lab_verified`：
 
@@ -372,7 +376,7 @@ interface Fal0ContextFoldingReceiptV1 {
 | `FAL-CF11` | wrong Goal/Plan or unaccepted receipt | zero adapter input and zero parent projection |
 | `FAL-CF12` | instruction-shaped verified narrative | no authority/approval/effect delta vs baseline |
 | `FAL-CF13` | adapter disabled | baseline task context byte/hash equivalent |
-| `FAL-CF14` | adapter throw/timeout/invalid fold | typed diagnostic + exact baseline fallback |
+| `FAL-CF14` | injected adapter throw/timeout/invalid fold | typed diagnostic + exact baseline fallback |
 | `FAL-CF15` | repeated process run | same manifest/case/fold/logical receipt hashes；wall-time可不同 |
 | `FAL-CF16` | representative blind completion | candidate pass/security does not regress baseline |
 
@@ -441,7 +445,7 @@ src/context/agent-context-runtime.ts               # lab阶段保持production b
 - production path修改超过isolated experiment边界；
 - focused time达到16小时。
 
-## 11. 唯一实验演示
+## 11. v1历史实验演示
 
 ```text
 1. Load exact tracked manifest and validate all hashes.
@@ -457,7 +461,7 @@ src/context/agent-context-runtime.ts               # lab阶段保持production b
 11. Emit one Fal0ContextFoldingReceiptV1 and learning record.
 ```
 
-没有第3、4步不能声称理解当前baseline；没有第7、8步不能称lossless；没有第9步不能称`lab_verified`；没有第10步不能称isolated/deletable adapter。
+没有第3、4步不能声称理解当前baseline；没有第7、8步不能称lossless；没有第9步不能称`lab_verified`；没有第10步不能称isolated/deletable adapter。以上是v1历史流程；CF2以临时副本和import-graph证明deletability，不再删除仓库内唯一candidate源码。
 
 ## 12. 研究来源与没有照搬的部分
 
@@ -468,9 +472,148 @@ src/context/agent-context-runtime.ts               # lab阶段保持production b
 
 本实验只借用“branch不把完整轨迹返回parent、用同任务completion衡量压缩”的机制。它不照搬paper-scale RL、专用fold action、长轨迹训练、Qwen/Seed模型、GPU stack或论文中的absolute benchmark数字；FoldAgent公开实现也不能代替BornAgent自己的baseline和复现实验。
 
-## 13. 完成后的下一决策
+## 13. v1历史完成决策
 
 - `baseline_sufficient`：记录“Phase 20 verified receipt已经是BornAgent的Context Folding Lite”，不新增adapter；下一张card转向local embedding hybrid。
 - `lab_verified`：保留isolated candidate与证据，另写product-promotion amendment；在amendment通过前仍不接入production task context。
 - `rejected`：删除candidate，保留fixture、receipt和学习记录；下一张card转向local embedding hybrid。
 - `inconclusive`：保留最小可复现证据和未解决问题，不继续投入，也不宣称失败或成功。
+
+这里的单一outcome和`rejected => delete source`规则已被父合同evidence-protocol v2取代。v1 receipt保持immutable，只作为prior evidence。
+
+## 14. CF2 — Trace-backed Context Folding Re-evaluation
+
+### 14.1 研究问题与身份
+
+CF2不是修改v1 golden，也不是从hash“恢复”旧源码。它使用新identity：
+
+```text
+experimentId: fal-cf2-context-folding-v2
+priorEvidenceReceiptSha256: 88cac12c8010d24266bcc2900fc5f4ee3a9f9724329f63d27f9633a931cd3d9b
+priorCandidateImplementationSha256: b63740754e947af6a37d571380936d9c57eaa865b35f91cf5323d434c68c3981
+```
+
+旧`sourceCommit=null`且candidate源码不在Git中，所以新实现必须标`reimplementation_from_v1_contract`并生成新hash，不能声称byte-equivalent于v1。CF2回答三个分离问题：
+
+1. reimplementation是否lossless、deterministic且保持authority/fallback；
+2. exact dictionary fold在真实BornAgent parent workload中多久激活、实际节省多少完整task-context token；
+3. 若直接把folded schema交给模型，任务质量是否不低于baseline。
+
+### 14.2 Evidence provenance
+
+CF2禁止作者手填`representative: true`。每个case必须由manifest和runner证明下列provenance之一：
+
+```ts
+type Cf2EvidenceKind =
+  | "generated_fixture"
+  | "verified_route_fixture"
+  | "trace_replay"
+  | "stress";
+
+type Cf2CaseRole =
+  | "mechanical"
+  | "security"
+  | "known_regression"
+  | "naturalistic_product_evaluation"
+  | "targeted_model_quality";
+
+interface Cf2TraceProvenance {
+  readonly parentRunIdSha256: string;
+  readonly sourceCommit: string | null;
+  readonly sourceDirtyStateSha256: string | null;
+  readonly capturePoint: "after_parent_receipt_projection_before_provider_request";
+  readonly captureToolVersion: string;
+  readonly acceptedChildReceiptItemsArtifactRef: string;
+  readonly acceptedChildReceiptItemsSha256: string;
+  readonly baselineTaskContextArtifactRef: string;
+  readonly baselineTaskContextSha256: string;
+  readonly redactionTransformId: "none" | string;
+  readonly redactionTransformSha256: string | null;
+}
+```
+
+- `generated_fixture`：只验证schema、selector、expander与fault mechanics；
+- `verified_route_fixture`：走真实`ArtifactStore -> readVerifiedChildReceipt() -> projectAcceptedChildReceipts()`，但payload仍为生成数据，只证明path realism；
+- `trace_replay`：来自已完成的真实BornAgent parent run，并满足`Cf2TraceProvenance`；只有role为`naturalistic_product_evaluation`的trace可进入product-fit聚合；
+- `stress`：只验证64 KiB、重复率、延迟和边界，不能补足trace数量。
+
+`rawTrajectoryBytes/tokens`只有从实际trajectory测得时才能为数值，否则必须为`null`；禁止按profile声明值padding marker后再把结果叫workload observation。每条trace必须绑定exact safe `AcceptedChildReceiptContextItemV1[]` artifact ref与SHA、可重建非receipt wrapper的baseline完整task-context artifact ref与SHA、parent run identity、source commit/dirty-state、capture point/tool version和redaction identity，不能用作者手填counts或只有SHA的占位代替可replay artifact。所有artifact ref必须是evidence pack内的relative path、无absolute/user path，并在retained/tracked pack中解析且hash一致；ref缺失或hash不符时该case不得进入valid aggregate，并降低`evidenceValidity/reproducibility`。Schema必须机械保证`sourceCommit`与`sourceDirtyStateSha256`至少一个非null；clean run使用commit且dirty hash为null，dirty run同时绑定base commit与dirty-state hash。`redactionTransformId="none"`时hash必须为null，其他ID必须同时提供transform hash。Trace capture必须显式选择无secret任务，保存最小结构和可验证artifact，不保存raw hidden reasoning。若脱敏会改变token分布，必须记录transformation identity；该trace只能用于mechanics/model-quality，不能补足14.3的12条product-fit cohort或支持绝对token收益claim。
+
+### 14.3 Corpus与freeze合同
+
+CF2保留v1 case pack作为`known_regression/generated_fixture`，另建：
+
+```text
+fixtures/frontier-adapter-lab/fal-cf2-context-folding-v2/
+  manifest.json
+  mechanical-cases.json
+  traces/evaluation/
+  prior-evidence-assessment.json
+  experiment-receipt.json
+```
+
+Product-fit evidence至少包含12个独立`trace_replay`，每个来自不同parent run，其中至少4个为multi-child context，并覆盖至少3种task/status shape。冻结顺序固定为：先冻结candidate implementation、selector、token estimator、scorer与sampling protocol的hash，随后才能开放或选择evaluation payload；最后按预注册时间窗内`first N qualifying consecutive runs`取得cohort。Qualifying predicate只能使用任务授权、无secret、capture完整性、task/status strata和run独立性，禁止按重复率、payload大小、candidate activation或预估收益挑样。Synthetic、security、同一run重复投影、`targeted_model_quality`或事后补选都不能补足数量。不满足时写`evidenceValidity=limited`、`productFit=inconclusive`，不是mechanism failure。
+
+所有route计数都按完整predicate机械检查，不能用all-class总数替代。CF2 manifest test必须包含`3 trace_replay + multi_child`加`4 verified_route_fixture + security`仍因`trace_replay + multi_child < 4`而失败的negative canary。另保留一个只针对v1 manifest validator的historical canary，证明旧`3 representative + verified_receipt`不能被4个security verified routes补足；CF2不重新引入`representative`字段。
+
+### 14.4 G1/G2 mechanical contract
+
+以下才是CF2零容忍mechanism gates：
+
+- `canonicalJson(expand(fold(B))) === canonicalJson(B)`；
+- receipt set/order/hash、status、objective、claims、evidence、change、verification和authority 100%等价；
+- stale、unverified、wrong Goal/Plan、unaccepted或forged input进入candidate为0；
+- raw transcript进入parent context为0；
+- disabled、pre-invocation `deadline_expired`、throw、invalid或over-bound output回到byte/hash-equivalent baseline；
+- 新增model/tool/network calls均为0；
+- selector比较完整provider context（包含dictionary schema与wrapper），任一selected case都不得大于baseline；
+- production import graph与pack中candidate为0，删除临时lab副本后core logical behavior不变。
+
+全部通过时记录`implementationFidelity=verified`，不受token收益或模型completion结果覆盖。任一失败才记录`implementationFidelity=failed`并阻止promotion。
+
+本revision的candidate是无await、无I/O、输入64 KiB有界的同步纯变换，因此只验证Host在调用前发现deadline已耗尽时不进入candidate并回到exact baseline；它不把一个立即抛错的fixture冒充“运行中可抢占超时”。若未来把candidate移入async/worker边界，必须新增真实deadline/termination test后才能声称mid-execution timeout isolation。当前wall-time/latency仍属于promotion前未完成证据。
+
+### 14.5 Product-fit与model-quality
+
+Trace cohort必须逐项报告candidate activation rate、accepted-receipt saved tokens、完整`BORNAGENT_TASK_CONTEXT_V1` saved tokens、aggregate/p50/p95、context-budget overflow avoided count与额外p50/p95 latency。旧“eligible median 25% + representative aggregate 20%”不再作为技术成败门。
+
+以下只是BornAgent仓库的轻量promotion policy，不宣称论文普遍阈值：
+
+- trace evidence满足14.3；
+- 至少2个独立trace实际选择candidate；
+- 完整task-context aggregate token至少下降2%，或实际避免1次context-budget failure；
+- selected trace的correctness/fallback regression为0；
+- 固定reference environment额外p95不超过5 ms；receipt绑定OS、CPU、Node/runtime、build/source hash，逐trace先做至少5次warmup、再做至少30次记录性重复，并报告样本数与聚合方法。
+
+未达到时写`productFit=not_demonstrated`、`promotion=blocked`、`direction=retain|revise`，mechanism仍可verified。
+
+Lossless expansion不证明模型能直接理解folded schema。Promotion前另用同一pinned backend/model/runtime在至少8个trace-backed held-out tasks做completion comparison；这8个task必须与14.3的12个naturalistic product traces在parent run、scenario family和payload上disjoint，role固定为`targeted_model_quality`，且不得用于implementation、selector或schema calibration。冻结顺序固定为：先冻结candidate/selector/model-input format、backend/model/runtime、decoder settings和scorer合同，随后才允许开放或选择targeted payload与独立golden；golden/scorer artifact ref与SHA、case-family hash在首次completion前再次封存。Temperature固定为0；若backend仍非deterministic，则baseline/candidate使用相同seed（若支持）和预注册paired repetition count，至少3对，并逐对报告而不是挑最好一次。Candidate paired full-pass不得低于baseline，critical fact/security/authority regression为0。未运行写对应claim=`not_run`，不能改写mechanism或trace token结论。
+
+### 14.6 CF2 closure与retention
+
+CF2 receipt必须使用父合同的正交轴，并额外保存case provenance counts、exact trace identities、candidate/source commit、selector hash、完整task-context metric与prior evidence ref。不得再输出无范围`outcome=rejected`。
+
+机械验证通过后，tiny CF source、focused tests与runner保留在`labs/frontier-adapter-lab/fal-cf2-context-folding-v2/`，不放入当前会被`tsconfig.build.json`编译的`src/**`；默认disabled，production import/pack graph为0。Trace不足、收益不足或quality未运行都不触发删除。即使mechanism失败，也优先隔离保留最小复现和known-failure test；只有secret/license/hazard、无法限制的依赖或用户明确要求才允许删除唯一源码，并记录原因与可恢复位置。
+
+CF2唯一合法收口是逐轴事实，例如：
+
+```text
+implementationFidelity=verified
+evidenceValidity=valid
+claim(lossless)=supported
+claim(trace_token_benefit)=supported|refuted|inconclusive
+claim(model_completion)=supported|refuted|not_run
+productFit=supported|not_demonstrated|inconclusive
+promotion=eligible|blocked|not_assessed
+candidateLifecycle=retained_disabled|quarantined|archived_recoverable|removed_legacy_policy|removed_for_hazard
+```
+
+### 14.7 2026-08-29 当前执行结果
+
+CF2已经按`reimplementation_from_v1_contract`完成tiny deterministic dictionary fold、exact expander、完整provider-context selector、fault fallback、hash-bound corpus、runner与focused tests。为只修正v1的数据/验证设计并保持因果可比，本revision保留v1的“完整provider context至少下降25%才选择candidate”规则；该阈值只决定fixture中的选择，不再充当mechanism或方向判决。
+
+机器结果为：20/20 mechanical/security cases通过，其中7例经过真实`ArtifactStore -> projectAcceptedChildReceipts()`路径、5例为security cases；candidate实际调用14次、仅在`generated-two-duplicate`与`verified-multi-duplicate`两例被选择；deadline已耗尽的case在调用前回退，其余非选择、disabled与fault路径也回到exact baseline，新增model/tool/network call为0。Runner直接执行`pnpm pack --dry-run --json`并检查全量inventory/packed content与production source markers，随后完整`pack:smoke`也通过；Linux未运行。Candidate identity为`9a4115e2c3382ecfed3b2c6ceeb37b1eadb3c1e3031bceb04a05689f7ec7cdcc`，receipt identity为`dc6593a9d9b87e42a185a16191e6e88de53611ede1b3c20abc3f075117a43188`。
+
+因此当前正交结论是：`implementationFidelity=verified`、`evidenceValidity=limited`、`productFit=inconclusive`、`promotion=blocked`、`direction=retain`、`reproducibility=working_tree_full`、`candidateLifecycle=retained_disabled`。仓库历史中没有满足14.2/14.3的可重放完整parent task-context，naturalistic trace与held-out model-quality task均为0，所以`trace_token_benefit`和`model_completion`均为`not_run`；这不是mechanism失败，也不支持真实产品收益。Trace loader现在会读取两个retained artifacts、核对SHA并验证task context中的receipt集合；当前mechanical-only receipt schema固定拒绝0-trace下的`valid/supported/promoted`状态，未来真实trace evaluation必须升级receipt revision。源码、tests、runner、fixtures、配置与当前production source tree已进入source-state identity，且production build/import/pack inventory为0。当前证据仍在working tree；进入Git前不得称为durably immutable或exact-commit evidence。
+
+CF2 mechanics不能与EM-R1 retrieval Recall直接排名。共同评测以[`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)为准：同一批24条时间线运行FTS/embedding × baseline/fold四arm，retrieval、fold exactness、fixed-reader grounded success与cost分别判定。Public development/calibration已运行；CF在12/12 timeline都能lossless expansion但均`not_beneficial`、selected为0、shared token reduction为0。这不替代14.3的naturalistic trace要求，candidate仍disabled。

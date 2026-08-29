@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "createdAt": "2026-08-29T10:51:54.1881375Z",
+  "state": "development_calibration_complete_evaluation_blocked",
+  "evidenceState": "working_tree_engineering_evidence_not_promotion_eligible",
+  "sourceCommit": null,
+  "observedHeadOnly": "13859ee58ca0380493a4b81574c432bd41df37c9",
+  "publicPack": {
+    "manifestLogicalSha256": "b966cee0c44bf791fd10f562828173d3cd404e6c2a5127a8972fc9027e651a1e",
+    "manifestRawSha256": "7be0584ea8815d7688fadfefeca755a6fd4b43c9cdfc0aab4cd3f4b272bf8847",
+    "protocolRawSha256": "8c837d780a74d208825fc83c90d4cc5e8f177755ec49b9c06250924359893665",
+    "candidateFreezeRawSha256": "9f59cdece1a50fda4df0ed715eea03411cd52e372f1e162a51d52e9e01214590",
+    "evaluationSaltedCommitmentSha256": "1b49cf7071cc91da85aba6c8db37f88e96f1b9cbb6096618e76075937dd1061c"
+  },
+  "retrieval": {
+    "development": {
+      "observationSha256": "8a33c33895bf9f1ef0f98290fdfd44ac55e2dde2b52725ee41fa858142419036",
+      "scoreSha256": "f140f3e0be0c9d0409393336f319a605137e2ec75de9ab9fb5795aa4dcbe7f2d",
+      "thresholdDomainCount": 5716,
+      "eligiblePointCount": 102,
+      "selectedThresholdSimilarityMicros": 868743,
+      "baselineMacroSupportRecallAt5Micros": 333333,
+      "candidateMacroSupportRecallAt5Micros": 444444,
+      "macroSupportRecallAt5DeltaMicros": 111111,
+      "baselineMacroAllSupportFoundAt10Micros": 500000,
+      "candidateMacroAllSupportFoundAt10Micros": 583333,
+      "macroAllSupportFoundAt10DeltaMicros": 83333,
+      "candidateAddedMustAbstainTop5Cases": 0,
+      "candidateAddedForbiddenTop5Cases": 0,
+      "absoluteMustAbstainTop5NonemptyCases": 24,
+      "absoluteForbiddenTop5Cases": 7,
+      "absoluteForbiddenTop5Hits": 14,
+      "projectionSecurityFailures": 0,
+      "wallElapsedSeconds": 590.123116,
+      "recordEmbeddingCalls": 2602,
+      "queryEmbeddingCalls": 60,
+      "projectionBuildDurationMs": 79159.3264,
+      "recordEmbeddingDurationMs": 40086.084,
+      "queryEmbeddingDurationMs": 399.6936
+    },
+    "calibration": {
+      "observationSha256": "5ac18591d3b9cfc5422d04bc25199d1c45baf4c36b7e7e4f1ae8a2aa84de5958",
+      "scoreSha256": "289d653cc9a0111193f861a1a339cdb7eb737d18cf31713fb07f2cb0badcf7ab",
+      "thresholdDomainCount": 5734,
+      "eligiblePointCount": 61,
+      "selectedThresholdSimilarityMicros": 870576,
+      "baselineMacroSupportRecallAt5Micros": 277778,
+      "candidateMacroSupportRecallAt5Micros": 388889,
+      "macroSupportRecallAt5DeltaMicros": 111111,
+      "baselineMacroAllSupportFoundAt10Micros": 527778,
+      "candidateMacroAllSupportFoundAt10Micros": 583333,
+      "macroAllSupportFoundAt10DeltaMicros": 55555,
+      "candidateAddedMustAbstainTop5Cases": 0,
+      "candidateAddedForbiddenTop5Cases": 0,
+      "absoluteMustAbstainTop5NonemptyCases": 24,
+      "absoluteForbiddenTop5Cases": 7,
+      "absoluteForbiddenTop5Hits": 13,
+      "projectionSecurityFailures": 0,
+      "wallElapsedSeconds": 604.8594745,
+      "recordEmbeddingCalls": 2602,
+      "queryEmbeddingCalls": 60,
+      "projectionBuildDurationMs": 79187.8839,
+      "recordEmbeddingDurationMs": 39886.2814,
+      "queryEmbeddingDurationMs": 430.6433
+    },
+    "decision": "calibration_retrieval_gate_passed_reader_gate_still_required"
+  },
+  "contextFolding": {
+    "development": {
+      "timelineCount": 6,
+      "losslessTimelineCount": 6,
+      "selectedTimelineCount": 0,
+      "baselineContextTokens": 15750,
+      "selectedContextTokens": 15750,
+      "tokenReductionMicros": 0,
+      "reasonCounts": {
+        "not_beneficial": 6
+      }
+    },
+    "calibration": {
+      "timelineCount": 6,
+      "losslessTimelineCount": 6,
+      "selectedTimelineCount": 0,
+      "baselineContextTokens": 15616,
+      "selectedContextTokens": 15616,
+      "tokenReductionMicros": 0,
+      "reasonCounts": {
+        "not_beneficial": 6
+      }
+    },
+    "modelCalls": 0,
+    "toolCalls": 0,
+    "networkCalls": 0,
+    "decision": "not_selected_on_12_of_12_shared_timelines_no_shared_token_benefit"
+  },
+  "reader": {
+    "contractRevision": "v3_two_batches_of_five_final_frozen_before_calibration",
+    "promptContractSha256": "336a921e96f917453f7d818231a06f987bb60014a00b7e22f8de63676e3963fd",
+    "model": "qwen3.5:2b",
+    "modelDigest": "324d162be6ca5629ae4517c8710434d0bd2d665bc94dbad46e9af8fbf8a2f0df",
+    "ollamaVersion": "0.32.1",
+    "temperature": 0,
+    "seed": 42,
+    "think": false,
+    "development": {
+      "observationSha256": "13471e6f6cb21cfa986532b8482fad557ffeaf553d939cff79b78aa591fa21f2",
+      "originalScoreSha256": "e913a105a388789ee68f6a4326e4c5af2aec4a97111fca2da2f0b88d63fce5c5",
+      "correctedScoreSha256": "aa2461287cdd7af8fce321d1836d9a5485c4cd20826b860e2c75a08c4e21acc2",
+      "invalidArmCount": 6,
+      "readerSecurityRegressions": 0,
+      "mustAnswerGroundedSuccessCasesPerArm": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "embeddingEffectMicros": -33333,
+      "foldingEffectMicros": 0,
+      "localModelCalls": 24,
+      "reusedArmCount": 12,
+      "totalPromptBytes": 408663,
+      "totalDurationMs": 195153.7882
+    },
+    "calibration": {
+      "observationSha256": "aacbd080563aa3c1bb210379223bbdbd20cf45cd29a22dbc3e5924d29e6324c6",
+      "originalScoreSha256": "bb141fb786b8fccf35d727c76741245169d4f8dcf211f46de4324807aeed077d",
+      "correctedScoreSha256": "7c276c29de4400898745b1f41f360890d38ef48c98c6d1e99466725cc4a73fd3",
+      "invalidArmCount": 8,
+      "readerSecurityRegressions": 2,
+      "mustAnswerGroundedSuccessCasesPerArm": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "embeddingEffectMicros": 16667,
+      "foldingEffectMicros": 0,
+      "localModelCalls": 24,
+      "reusedArmCount": 12,
+      "totalPromptBytes": 395886,
+      "totalDurationMs": 196897.908
+    },
+    "postCalibrationCorrection": {
+      "scope": "prompt_byte_accounting_only",
+      "bug": "two-call arms were excluded by an obsolete localModelCalls_equals_1 predicate",
+      "qualityMetricsChanged": false,
+      "promotionEvidenceAllowed": false
+    },
+    "decision": "reader_gate_failed_zero_must_answer_grounded_success_evaluation_blocked"
+  },
+  "evaluation": {
+    "state": "not_run_committed_unrevealed",
+    "reason": "reader_gate_failed_and_source_commit_not_frozen",
+    "commitmentReusedOrConsumed": false
+  },
+  "product": {
+    "memoryV1Status": "preview_usable",
+    "productionDefault": "off",
+    "localEmbeddingIntegrated": false,
+    "contextFoldingIntegrated": false,
+    "productFit": "not_demonstrated"
+  },
+  "rawArtifacts": {
+    "policy": "ignored_local_reproducible_engineering_evidence",
+    "root": ".cache/frontier-adapter-lab/fal-memory-shared-v1/runs"
+  }
+}

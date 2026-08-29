@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "cards": [
+    {
+      "timelineId": "timeline-b12683b4db232b79",
+      "split": "development",
+      "scenarioFamilyId": "atlas-locale-fallback",
+      "sourceCohortId": "cohort-b12683b4db232b79",
+      "independenceUnitId": "independence-b12683b4db232b79",
+      "parentTaskDomain": "localization",
+      "semanticTopicKey": "topic-3b91ed74db72883c",
+      "semanticSummary": "Atlas desktop localization: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-0a22333d89b3e78d",
+        "entity-d5a0e56a851bcdb8",
+        "entity-68355b7edc6feefb"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-cbceb8af81da5681",
+      "split": "development",
+      "scenarioFamilyId": "basil-license-header",
+      "sourceCohortId": "cohort-cbceb8af81da5681",
+      "independenceUnitId": "independence-cbceb8af81da5681",
+      "parentTaskDomain": "licensing",
+      "semanticTopicKey": "topic-2f243bfebf1ff004",
+      "semanticSummary": "Basil source-header policy: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-86bb95cdfbb01862",
+        "entity-92fe7ffbbd2337e0",
+        "entity-8afb0e4fbcad0b83"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-2984807c6b0a9471",
+      "split": "development",
+      "scenarioFamilyId": "coral-client-generator",
+      "sourceCohortId": "cohort-2984807c6b0a9471",
+      "independenceUnitId": "independence-2984807c6b0a9471",
+      "parentTaskDomain": "code-generation",
+      "semanticTopicKey": "topic-adb241bb5bf5434e",
+      "semanticSummary": "Coral API client generation: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-e2f6e06af627ffed",
+        "entity-814d1b926251fc36",
+        "entity-b5f37bf8d7364036"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-f7367d1f7c6f84b4",
+      "split": "development",
+      "scenarioFamilyId": "denim-container-uid",
+      "sourceCohortId": "cohort-f7367d1f7c6f84b4",
+      "independenceUnitId": "independence-f7367d1f7c6f84b4",
+      "parentTaskDomain": "containers",
+      "semanticTopicKey": "topic-90f081c7225b13d6",
+      "semanticSummary": "Denim worker container: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-b4ac1482d7da3389",
+        "entity-0121ad77a5e4f931",
+        "entity-48b68b34a204841b"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-2556e46a7ff3fd5c",
+      "split": "development",
+      "scenarioFamilyId": "elm-pool-ceiling",
+      "sourceCohortId": "cohort-2556e46a7ff3fd5c",
+      "independenceUnitId": "independence-2556e46a7ff3fd5c",
+      "parentTaskDomain": "database-runtime",
+      "semanticTopicKey": "topic-ace2f23bb6ec7763",
+      "semanticSummary": "Elm database connection pool: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-fc00e4c5e52b04f7",
+        "entity-e50f25f338518042",
+        "entity-c0581928979067af"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-54473abd6a033eac",
+      "split": "development",
+      "scenarioFamilyId": "fable-alpha-mode",
+      "sourceCohortId": "cohort-54473abd6a033eac",
+      "independenceUnitId": "independence-54473abd6a033eac",
+      "parentTaskDomain": "image-pipeline",
+      "semanticTopicKey": "topic-d7a044b589e276e0",
+      "semanticSummary": "Fable image import pipeline: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-d17761517d195e29",
+        "entity-89539853d6ac7d58",
+        "entity-5ac333d33538e07f"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-3ffa4ea1a30f47a5",
+      "split": "calibration",
+      "scenarioFamilyId": "glacier-audio-rate",
+      "sourceCohortId": "cohort-3ffa4ea1a30f47a5",
+      "independenceUnitId": "independence-3ffa4ea1a30f47a5",
+      "parentTaskDomain": "audio-pipeline",
+      "semanticTopicKey": "topic-564025a7a3408e87",
+      "semanticSummary": "Glacier audio import: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-0773f7b8ab53d7d4",
+        "entity-4f026bc56eb8b420",
+        "entity-fbc99aee74686d5d"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-2a30676bf7ff3595",
+      "split": "calibration",
+      "scenarioFamilyId": "hazel-test-shards",
+      "sourceCohortId": "cohort-2a30676bf7ff3595",
+      "independenceUnitId": "independence-2a30676bf7ff3595",
+      "parentTaskDomain": "test-orchestration",
+      "semanticTopicKey": "topic-9691c9d0eaf4cd55",
+      "semanticSummary": "Hazel test shard allocation: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-6833336803f1b54b",
+        "entity-2181121f4ce9fa21",
+        "entity-2cc5c589bf152fba"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-cb03a9310b3b7bfe",
+      "split": "calibration",
+      "scenarioFamilyId": "ivory-cli-schema",
+      "sourceCohortId": "cohort-cb03a9310b3b7bfe",
+      "independenceUnitId": "independence-cb03a9310b3b7bfe",
+      "parentTaskDomain": "cli-contract",
+      "semanticTopicKey": "topic-9bcb51b5d6d9d63d",
+      "semanticSummary": "Ivory CLI output contract: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-9001f73ac0a40a5b",
+        "entity-29e2ef4c40f656eb",
+        "entity-3db8b4d53fb88ba5"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-6261292e7cc4d4cf",
+      "split": "calibration",
+      "scenarioFamilyId": "jade-cors-origins",
+      "sourceCohortId": "cohort-6261292e7cc4d4cf",
+      "independenceUnitId": "independence-6261292e7cc4d4cf",
+      "parentTaskDomain": "web-security",
+      "semanticTopicKey": "topic-6c5abeefb674b963",
+      "semanticSummary": "Jade browser origin policy: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-299238e1f15ce626",
+        "entity-4a07bbcfacb9517d",
+        "entity-c2939c9c33f613eb"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-f308f2c2abac7351",
+      "split": "calibration",
+      "scenarioFamilyId": "koala-signing-profile",
+      "sourceCohortId": "cohort-f308f2c2abac7351",
+      "independenceUnitId": "independence-f308f2c2abac7351",
+      "parentTaskDomain": "release-signing",
+      "semanticTopicKey": "topic-738da53030355c4c",
+      "semanticSummary": "Koala desktop signing: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-8e017ed128e9b916",
+        "entity-ce973af0fab0f211",
+        "entity-d1c31a1644885d5d"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    },
+    {
+      "timelineId": "timeline-6d9e032710b9347a",
+      "split": "calibration",
+      "scenarioFamilyId": "linen-log-redaction",
+      "sourceCohortId": "cohort-6d9e032710b9347a",
+      "independenceUnitId": "independence-6d9e032710b9347a",
+      "parentTaskDomain": "observability-security",
+      "semanticTopicKey": "topic-f907844c4d720e0b",
+      "semanticSummary": "Linen structured logging: stable project facts, a setting revision, an assistant/tool outcome, a workflow, and scoped hard negatives.",
+      "entityKeys": [
+        "entity-ea91e0b9ed1534e5",
+        "entity-776c80af5c2e5b27",
+        "entity-f4942bdce89434b7"
+      ],
+      "provenance": "curated_synthetic_structured_timeline",
+      "semanticReview": "author_reviewed_not_independent",
+      "candidateSourceVisibleToAuthor": true,
+      "candidateSharedOutputsSeenBeforeSeal": false
+    }
+  ]
+}

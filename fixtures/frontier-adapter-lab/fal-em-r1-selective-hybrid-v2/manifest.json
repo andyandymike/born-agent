@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "evidenceState": "working_tree_full",
+  "createdAt": "2026-08-29T00:00:00.000Z",
+  "corpusRevision": 2,
+  "dataFrozenBeforeCandidateImplementation": false,
+  "freezeStage": "candidate_mechanism_frozen_before_corpus_revision_2_threshold_run",
+  "revisionReason": "revision 1 failed the live FTS-empty adequacy preflight before evaluation",
+  "supersededInvalidPreflightReceiptSha256": "bb4038b311b72391614df52a715a0e68fe9e21f1261115207b31a2636002b169",
+  "evaluationGoldensSealedUntilCalibrationEligible": true,
+  "sourceCommit": null,
+  "reimplementationMode": "reimplementation_from_v1_contract",
+  "dataAdequacy": {
+    "calibrationCases": 48,
+    "evaluationCases": 48,
+    "calibrationPoolRows": 128,
+    "evaluationPoolRows": 128,
+    "answerablePerSplit": 24,
+    "unanswerablePerSplit": 24,
+    "minimumFtsEmptyVectorNegativesPerSplit": 16,
+    "minimumEligibleDistractorsPerAbstentionCase": 116,
+    "crossSplitScenarioFamilyOverlap": 0,
+    "crossSplitQueryTemplateOverlap": 0,
+    "crossSplitDistractorPoolOverlap": 0,
+    "normalizedTitleTextExactOverlap": 0
+  },
+  "files": {
+    "prior-evidence-assessment.json": {
+      "bytes": 949,
+      "sha256": "2184a609ff8f740e8309a7ddba095aaf4d62fc39f013cbe6e4d733f37d960b99"
+    },
+    "reference-anchors.json": {
+      "bytes": 320430,
+      "sha256": "6761ae585f713e2d35946d00c0a4d9d81da2a346eecff71b54dbdf715fd0318a"
+    },
+    "calibration-pool.json": {
+      "bytes": 56494,
+      "sha256": "d8e6b92d5dfe6fd4168bf5e0a2dee91e6924cdce2e5d2050401d2db3c7f253e5"
+    },
+    "calibration-cases.json": {
+      "bytes": 41860,
+      "sha256": "d3d7ea3c8deb1f73e0956091293ecc9c1c5244306953982bec482296ad64c624"
+    },
+    "evaluation-pool.json": {
+      "bytes": 56179,
+      "sha256": "c844cc47dc45ba91b4db8cf352df83befed7a9c86e3cd7592a6314c7143980f1"
+    },
+    "evaluation-cases.json": {
+      "bytes": 41475,
+      "sha256": "7b595b9c829b29e0277ac2b6b67d8eb148767865dd4f946f436e04dd5b104ce9"
+    }
+  },
+  "manifestSha256": "6407d563e133790fc9ea6fca2f4b2cf7255359912598d3ae3036aa7c730a9460"
+}

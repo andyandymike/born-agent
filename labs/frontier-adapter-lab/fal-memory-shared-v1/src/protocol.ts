@@ -1,0 +1,86 @@
+import {
+  candidateFreezeSchema,
+  SHARED_MEMORY_BENCHMARK_ID,
+  sharedProtocolSchema,
+} from "./benchmark-schema.js";
+
+export const sharedMemoryProtocol = sharedProtocolSchema.parse({
+  schemaVersion: 1,
+  benchmarkId: SHARED_MEMORY_BENCHMARK_ID,
+  design: {
+    timelineCount: 24,
+    probesPerTimeline: 10,
+    answerablePerTimeline: 6,
+    abstentionPerTimeline: 4,
+    developmentTimelines: 6,
+    calibrationTimelines: 6,
+    evaluationTimelines: 12,
+  },
+  arms: [
+    "fts_recency_plus_projection",
+    "local_embedding_plus_projection",
+    "fts_recency_plus_context_fold",
+    "local_embedding_plus_context_fold",
+  ],
+  primaryMetrics: [
+    "macro_grounded_success",
+    "support_set_recall_at_5",
+    "all_support_found_at_10",
+    "retrieval_aurc",
+    "forbidden_hit_count",
+    "context_tokens",
+  ],
+  operatingPointContract: {
+    thresholdDomain: "all_observed_top100_similarity_micros_plus_reject_all",
+    minimumMacroSupportRecallAt5DeltaMicros: 100_000,
+    minimumMacroAllSupportFoundAt10DeltaMicros: 0,
+    maximumCandidateAddedMustAbstainTop5Cases: 0,
+    maximumCandidateAddedForbiddenTop5Cases: 0,
+    maximumProjectionSecurityFailures: 0,
+    selectionOrder: [
+      "eligible_first",
+      "macro_support_recall_at_5_desc",
+      "macro_all_support_found_at_10_desc",
+      "threshold_desc",
+    ],
+    diagnosticSelectionOrder: [
+      "projection_security_failures_asc",
+      "candidate_added_must_abstain_top_5_cases_asc",
+      "candidate_added_forbidden_top_5_cases_asc",
+      "macro_support_recall_at_5_desc",
+      "macro_all_support_found_at_10_desc",
+      "threshold_desc",
+    ],
+    readerDiagnosticAllowedWhenRetrievalRefuted: true,
+    foldingSelectionRule: "candidate_tokens_lte_75_percent_and_bytes_not_greater",
+    readerRequiredBeforeEvaluation: true,
+    minimumReaderMustAnswerGroundedSuccessCasesPerArm: 1,
+    maximumReaderInvalidArms: 0,
+    maximumReaderSecurityRegressions: 0,
+    maximumFoldReaderGroundedRegressionCases: 0,
+  },
+  independenceUnit: "timeline",
+  evaluationPolicy: "one_shot_then_reveal_and_downgrade_to_known_regression",
+  scorePolicy: "stage_specific_no_single_composite_winner",
+});
+
+export const sharedMemoryCandidateFreeze = candidateFreezeSchema.parse({
+  schemaVersion: 1,
+  benchmarkId: SHARED_MEMORY_BENCHMARK_ID,
+  freezeRole: "pre_calibration_implementation_freeze",
+  frozenAt: "2026-08-29T05:30:00.000Z",
+  sourceCommit: null,
+  sourceState: "working_tree_not_promotion_eligible",
+  contextFoldingImplementationSha256:
+    "9a4115e2c3382ecfed3b2c6ceeb37b1eadb3c1e3031bceb04a05689f7ec7cdcc",
+  localEmbeddingImplementationSha256:
+    "cc14a8969f0fedba514732b59f9f5e5eee88afc6b552a909044f63f91f016853",
+  candidateImplementationsFrozen: true,
+  sharedCalibrationRunState: "not_run",
+  sharedOperatingPointState: "not_selected_before_shared_calibration",
+  evaluationExecutionFreezeRequired: true,
+  candidateSharedOutputsSeenBeforeFreeze: false,
+  authoringBlindness: "not_proven_method_aware",
+  runtimeBlindnessRequiredForEvaluation: true,
+  promotionEvidenceAllowed: false,
+});

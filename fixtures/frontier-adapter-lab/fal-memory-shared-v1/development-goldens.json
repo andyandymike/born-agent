@@ -1,0 +1,1459 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "split": "development",
+  "timelines": [
+    {
+      "timelineId": "timeline-b12683b4db232b79",
+      "scenarioFamilyId": "atlas-locale-fallback",
+      "sourceCohortId": "cohort-b12683b4db232b79",
+      "independenceUnitId": "independence-b12683b4db232b79",
+      "receiptPressure": "low_unique",
+      "memoryDensity": "small_128",
+      "probes": [
+        {
+          "probeId": "probe-931ae514662dc0d5",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-4997d8c62fd1d41c"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "core-before-plugins"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-d550dc938c4836ba",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-52bf511c1c6ba6b8",
+              "receipt:delegation-943ce593caa54ebb:claim-e67743fc8b0eeded"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the offline locale audit passed 48 of 48 catalog checks"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-df86d493e0262c7f",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-4997d8c62fd1d41c"
+            ],
+            [
+              "record:record-178ba1ab9185d4ea"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "core-before-plugins"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "show-source-key"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-4f32307f543cb9dc",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-a9e71ffce9b3ad40"
+            ],
+            [
+              "record:record-2cad4ac128a52aba"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "en-US -> en-GB"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-3427d348199241d3",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-2cad4ac128a52aba"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-2ed584bd50833cdf"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "en-GB"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-ed8abc2850afa3b2",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-42b3a6d68382a07a"
+            ],
+            [
+              "receipt:delegation-943ce593caa54ebb:claim-e67743fc8b0eeded"
+            ],
+            [
+              "receipt:delegation-f3e90d8299d6fdc5:claim-7226d18bd2215c18"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "load the core catalog, then plugin catalogs, then run the offline locale audit"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-c539a30889efbf50",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-d7dffe08e0cfba1d",
+            "record:record-7f44c3af99698755",
+            "record:record-72b9ba1e3937795b",
+            "record:record-1effd7fe3ddb829f",
+            "record:record-a274e740c00199c1",
+            "record:record-3b699298edb63820",
+            "record:record-67e74128e595fa28"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-06273c2dc7885f82",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-d7dffe08e0cfba1d",
+            "record:record-67e74128e595fa28"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-a97129fbbcdeb9f5",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-7f44c3af99698755",
+            "record:record-72b9ba1e3937795b",
+            "record:record-1effd7fe3ddb829f",
+            "record:record-a274e740c00199c1",
+            "record:record-3b699298edb63820"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-73fe2d8b5e1432c1",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-6f77f2e4e4d12f58"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    },
+    {
+      "timelineId": "timeline-cbceb8af81da5681",
+      "scenarioFamilyId": "basil-license-header",
+      "sourceCohortId": "cohort-cbceb8af81da5681",
+      "independenceUnitId": "independence-cbceb8af81da5681",
+      "receiptPressure": "medium_shared_evidence",
+      "memoryDensity": "medium_384",
+      "probes": [
+        {
+          "probeId": "probe-151888a4727cb967",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-59ce9f5473a7d7b9"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "exclude-generated-files"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-3bb64971bca6db66",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-af841202162e0836",
+              "receipt:delegation-58920ef5d9212039:claim-2beb35a5d6641804"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the header scanner reported zero policy violations across 312 source files"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-18bf9561b495f459",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-59ce9f5473a7d7b9"
+            ],
+            [
+              "record:record-a75d707e989bf949"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "exclude-generated-files"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "first-year-only"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-aa031cdb6bf32808",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-26398366cec84c58"
+            ],
+            [
+              "record:record-dc77726ce156e9d5"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "GPL-2.0-only -> MIT"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-b3623e8d57cd4d6e",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-dc77726ce156e9d5"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-0c678af78c3163bc"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "MIT"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-f43c42c66ba11d83",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-01a28d93f8ee318c"
+            ],
+            [
+              "receipt:delegation-58920ef5d9212039:claim-2beb35a5d6641804"
+            ],
+            [
+              "receipt:delegation-c102f63919c35740:claim-c52859f845383965"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "scan tracked handwritten sources and exclude generated clients before applying headers"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-f66998039e525c7b",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-086bd39b1faa251c",
+            "record:record-1707c8a58d1e5115",
+            "record:record-3330fa04c5cdc9d3",
+            "record:record-b20957ea988a7c1d",
+            "record:record-67b1bfa177bc56a5",
+            "record:record-9efa89b656b61730",
+            "record:record-f7de0e6750f087f0"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-7043d37a49171ad9",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-086bd39b1faa251c",
+            "record:record-f7de0e6750f087f0"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-932841a088323281",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-1707c8a58d1e5115",
+            "record:record-3330fa04c5cdc9d3",
+            "record:record-b20957ea988a7c1d",
+            "record:record-67b1bfa177bc56a5",
+            "record:record-9efa89b656b61730"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-5f17aed56d9dd69c",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-3a69854bf3d96ffa"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    },
+    {
+      "timelineId": "timeline-2984807c6b0a9471",
+      "scenarioFamilyId": "coral-client-generator",
+      "sourceCohortId": "cohort-2984807c6b0a9471",
+      "independenceUnitId": "independence-2984807c6b0a9471",
+      "receiptPressure": "high_duplicate_claims",
+      "memoryDensity": "large_1024",
+      "probes": [
+        {
+          "probeId": "probe-46b0a4d66c60d973",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-6c83df217bc6d92a"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "checksum-and-version"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-c473b2e3049c00b8",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-4ca554e83e7574ba",
+              "receipt:delegation-a91f3972d714062a:claim-8a2058edd1626cba"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the regenerated client matched all 17 expected endpoint signatures"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-a5f09c88e23df4b6",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-6c83df217bc6d92a"
+            ],
+            [
+              "record:record-064641e9236b1a30"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "checksum-and-version"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "path-then-method"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-2cfd503b4a28a7df",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-35f95fe8f5218de3"
+            ],
+            [
+              "record:record-822602a31dd2baf6"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "2.3.1 -> 2.4.0"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-f62c3b37b2ee47ae",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-822602a31dd2baf6"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-ca0562de873d4335"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "2.4.0"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-7593898ed0b27518",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-d29dc8198f489c32"
+            ],
+            [
+              "receipt:delegation-a91f3972d714062a:claim-8a2058edd1626cba"
+            ],
+            [
+              "receipt:delegation-54a34945e5b2dcd5:claim-6e9b680241414456"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "verify the schema checksum, generate into a temporary tree, then compare signatures"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-ccd5a11b9f54d0ea",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-a7e592d97efbb104",
+            "record:record-94b58367fa8f39f8",
+            "record:record-4a46ff813eac3c42",
+            "record:record-df700e8c330b7a51",
+            "record:record-6694664261d1fac7",
+            "record:record-9637cce88c6a879a",
+            "record:record-08eb70edef8d9859"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-385800ca7ad51ec1",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-a7e592d97efbb104",
+            "record:record-08eb70edef8d9859"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-365c883968060c39",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-94b58367fa8f39f8",
+            "record:record-4a46ff813eac3c42",
+            "record:record-df700e8c330b7a51",
+            "record:record-6694664261d1fac7",
+            "record:record-9637cce88c6a879a"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-2446de5b1b019638",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-481024f058a4ffcc"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    },
+    {
+      "timelineId": "timeline-f7367d1f7c6f84b4",
+      "scenarioFamilyId": "denim-container-uid",
+      "sourceCohortId": "cohort-f7367d1f7c6f84b4",
+      "independenceUnitId": "independence-f7367d1f7c6f84b4",
+      "receiptPressure": "low_unique",
+      "memoryDensity": "small_128",
+      "probes": [
+        {
+          "probeId": "probe-4847524a83556a79",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-64498fd5c633b53d"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "/workspace/out"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-4a89989ff8aa8734",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-dbf1a4c3894b63d6",
+              "receipt:delegation-0fced28edbaaa131:claim-e521f82b80ab1ed2"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the non-root smoke wrote only to the declared output mount and exited cleanly"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-6cfc3105cd6eeed8",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-64498fd5c633b53d"
+            ],
+            [
+              "record:record-d08ffa94beec3b31"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "/workspace/out"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "read-only"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-0c7711db045ebc79",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-b1d3d7515982ab04"
+            ],
+            [
+              "record:record-c51668e890f6f624"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "1000 -> 65532"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-5c19518ed648fc2e",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-c51668e890f6f624"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-3146d04e045fc502"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "65532"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-cad2ffd620300c6a",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-323f600a326e1934"
+            ],
+            [
+              "receipt:delegation-0fced28edbaaa131:claim-e521f82b80ab1ed2"
+            ],
+            [
+              "receipt:delegation-95e72e05aaab8f53:claim-8d0fe3263c4e7120"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "start with a read-only root, mount the output directory, then run the ownership probe"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-e175c6e7240379da",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-d193aabfc6ed0d1f",
+            "record:record-d87280085b7918d3",
+            "record:record-5ea52e70a962aa93",
+            "record:record-d66ac40d432928c3",
+            "record:record-da55ad936ecaefc2",
+            "record:record-0d8999f4dbb4343c",
+            "record:record-6725e22d51a1373c"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-c97991dd915b3c6f",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-d193aabfc6ed0d1f",
+            "record:record-6725e22d51a1373c"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-78faed4a4a0dbfca",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-d87280085b7918d3",
+            "record:record-5ea52e70a962aa93",
+            "record:record-d66ac40d432928c3",
+            "record:record-da55ad936ecaefc2",
+            "record:record-0d8999f4dbb4343c"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-3d350a3a4220b669",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-ab5a5e70ba826cce"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    },
+    {
+      "timelineId": "timeline-2556e46a7ff3fd5c",
+      "scenarioFamilyId": "elm-pool-ceiling",
+      "sourceCohortId": "cohort-2556e46a7ff3fd5c",
+      "independenceUnitId": "independence-2556e46a7ff3fd5c",
+      "receiptPressure": "medium_shared_evidence",
+      "memoryDensity": "medium_384",
+      "probes": [
+        {
+          "probeId": "probe-3c46e417008ba637",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-212181f0093ba43c"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "45s"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-bd68f78292694062",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-c03443ce8a6dd954",
+              "receipt:delegation-52457b431e8d21bb:claim-dad8ef2e6115159c"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the saturation run completed without starvation at the twelve-connection ceiling"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-10515f8e162d080d",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-212181f0093ba43c"
+            ],
+            [
+              "record:record-81649daa0f2366f3"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "45s"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "2"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-4fc3636ba48df116",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-086ff49a699e78fa"
+            ],
+            [
+              "record:record-d538c724a137bf68"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "32 -> 12"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-b7de809725201e11",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-d538c724a137bf68"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-0044fbc9dae1d940"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "12"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-59b57eb1d2cdfe49",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-630e83373f5d38a1"
+            ],
+            [
+              "receipt:delegation-52457b431e8d21bb:claim-dad8ef2e6115159c"
+            ],
+            [
+              "receipt:delegation-244bc69295edd1c5:claim-75015eb3d6fe4e3e"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "warm two idle connections, apply the ceiling, then run the bounded saturation probe"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-a4cdc2b12182bc4c",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-1e1361bbac68c989",
+            "record:record-8c6d8dd6be353194",
+            "record:record-fc5c3bd04a4a73dc",
+            "record:record-97729719b37fe915",
+            "record:record-ff970158352b08a6",
+            "record:record-c209d4ac51c609af",
+            "record:record-ca150f696dbc6cfa"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-e191e21bbcd312d5",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-1e1361bbac68c989",
+            "record:record-ca150f696dbc6cfa"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-2ae9223849644062",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-8c6d8dd6be353194",
+            "record:record-fc5c3bd04a4a73dc",
+            "record:record-97729719b37fe915",
+            "record:record-ff970158352b08a6",
+            "record:record-c209d4ac51c609af"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-f7a8518255da961a",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-f400e6b0b2b625c5"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    },
+    {
+      "timelineId": "timeline-54473abd6a033eac",
+      "scenarioFamilyId": "fable-alpha-mode",
+      "sourceCohortId": "cohort-54473abd6a033eac",
+      "independenceUnitId": "independence-54473abd6a033eac",
+      "receiptPressure": "high_duplicate_claims",
+      "memoryDensity": "large_1024",
+      "probes": [
+        {
+          "probeId": "probe-ea04bcb8fa5fafa8",
+          "probeType": "direct_user_fact",
+          "querySurfaceFamilyId": "ask-stable-project-fact",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-bee09061f5fb9b45"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "nearest-neighbor"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-53bf8ee1a505faaf",
+          "probeType": "assistant_or_tool_outcome",
+          "querySurfaceFamilyId": "ask-observed-task-result",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "cross_lingual",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-2d108487393c7bbd",
+              "receipt:delegation-299a1af041199f98:claim-95142a8d42c16a6b"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-task-outcome",
+              "value": "the edge-pixel comparison found no dark fringe on all twelve reference sprites"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-0fefa9b08f8a41f7",
+          "probeType": "cross_session_synthesis",
+          "querySurfaceFamilyId": "combine-setting-and-companion",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-bee09061f5fb9b45"
+            ],
+            [
+              "record:record-0018fbc0c7cb76fc"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "stable-project-property",
+              "value": "nearest-neighbor"
+            },
+            {
+              "key": "companion-constraint",
+              "value": "sRGB"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-f1c6c642187ee629",
+          "probeType": "temporal_reasoning",
+          "querySurfaceFamilyId": "order-two-recorded-revisions",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-79a8b257b63cfe50"
+            ],
+            [
+              "record:record-e047eba02edba1c4"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "revision-sequence",
+              "value": "straight-alpha -> premultiplied-alpha"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-0c5d3b304ed3bebd",
+          "probeType": "knowledge_update",
+          "querySurfaceFamilyId": "ask-active-revision-now",
+          "judgment": "must_answer",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-e047eba02edba1c4"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-3f9e648dc39229c8"
+          ],
+          "answerAtoms": [
+            {
+              "key": "current-authoritative-setting",
+              "value": "premultiplied-alpha"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-7a45b32a538cbc09",
+          "probeType": "mixed_memory_receipt",
+          "querySurfaceFamilyId": "apply-workflow-with-receipts",
+          "judgment": "must_answer",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "multi_evidence",
+          "requiredEvidenceGroups": [
+            [
+              "record:record-feb4895fc2599359"
+            ],
+            [
+              "receipt:delegation-299a1af041199f98:claim-95142a8d42c16a6b"
+            ],
+            [
+              "receipt:delegation-4b1469575a50771f:claim-13e301cc83047ada"
+            ]
+          ],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [
+            {
+              "key": "verified-workflow",
+              "value": "premultiply during import, preserve sRGB metadata, then compare edge pixels"
+            }
+          ],
+          "expectedAction": "answer",
+          "abstentionReason": null
+        },
+        {
+          "probeId": "probe-e8f4b3a81ffb1679",
+          "probeType": "absent_fact",
+          "querySurfaceFamilyId": "ask-never-recorded-owner",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-af4289159f6a6f42",
+            "record:record-0ad5e2908a53a0a2",
+            "record:record-52db44e4cd344ef1",
+            "record:record-d900b9b9c298626d",
+            "record:record-4bdd4cc0efc6fcd3",
+            "record:record-840e4ae0ee8b3b7d",
+            "record:record-04aae466065d8eae"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "no_evidence"
+        },
+        {
+          "probeId": "probe-f8686d28d71e8e72",
+          "probeType": "semantic_near_miss",
+          "querySurfaceFamilyId": "challenge-related-note-only",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_en",
+          "retrievalProfile": "semantic_paraphrase",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-af4289159f6a6f42",
+            "record:record-04aae466065d8eae"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "near_miss_only"
+        },
+        {
+          "probeId": "probe-580387a8da899c53",
+          "probeType": "filtered_scope_or_lifecycle",
+          "querySurfaceFamilyId": "ask-filtered-environment-value",
+          "judgment": "must_abstain",
+          "languageProfile": "zh_to_en",
+          "retrievalProfile": "filtered_negative",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [],
+          "forbiddenEvidenceRefs": [
+            "record:record-0ad5e2908a53a0a2",
+            "record:record-52db44e4cd344ef1",
+            "record:record-d900b9b9c298626d",
+            "record:record-4bdd4cc0efc6fcd3",
+            "record:record-840e4ae0ee8b3b7d"
+          ],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "filtered_target_only"
+        },
+        {
+          "probeId": "probe-a220a45347399e5d",
+          "probeType": "incomplete_evidence_chain",
+          "querySurfaceFamilyId": "ask-incomplete-two-part-proof",
+          "judgment": "must_abstain",
+          "languageProfile": "en_to_zh",
+          "retrievalProfile": "insufficient_evidence",
+          "requiredEvidenceGroups": [],
+          "admissiblePartialEvidenceRefs": [
+            "record:record-30b728bb8b389d87"
+          ],
+          "forbiddenEvidenceRefs": [],
+          "answerAtoms": [],
+          "expectedAction": "abstain",
+          "abstentionReason": "incomplete_evidence"
+        }
+      ]
+    }
+  ]
+}

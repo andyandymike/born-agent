@@ -18,7 +18,7 @@ export default defineConfig({
     coverage: {
       reporter: ["text", "html"],
     },
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "labs/**/*.test.ts"],
     setupFiles: ["./tests/setup-network-tripwire.ts"],
   },
 });

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "package": "@huggingface/transformers@3.3.3",
+  "packageLockSha256": "48025a70dc59c781d16a0986a421da463065673ec06b62f2a60bd3518cf3eb58",
+  "runtimeLicense": "Apache-2.0",
+  "upstreamModelId": "intfloat/multilingual-e5-small",
+  "upstreamModelLicense": "MIT",
+  "runtimeModelId": "Xenova/multilingual-e5-small",
+  "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+  "artifactSelection": "q8_model_quantized_onnx",
+  "cacheRetention": "retained_local_ignored_not_product_packaged",
+  "files": [
+    {
+      "path": "Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/config.json",
+      "bytes": 658,
+      "sha256": "cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1"
+    },
+    {
+      "path": "Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_quantized.onnx",
+      "bytes": 118308185,
+      "sha256": "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193"
+    },
+    {
+      "path": "Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/tokenizer.json",
+      "bytes": 17082730,
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+    },
+    {
+      "path": "Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/tokenizer_config.json",
+      "bytes": 443,
+      "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+    }
+  ],
+  "artifactBytes": 135392016,
+  "modelArtifactManifestSha256": "a1e26133b5fd17b1a38b8ae084b83c9ca0af7c9233a574e218de3ae1fe436ffb",
+  "historicalModelArtifactManifestSha256": "eb54f2a0fc3b5a2608f4c43b404e10bf4da856b9b405e48ff27fcecaeef55141",
+  "historicalManifestReproduced": false,
+  "reimplementationConfounded": true,
+  "coldLoadObservationMs": 789.0299
+}

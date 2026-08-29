@@ -1,0 +1,2189 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-em0-local-embedding-hybrid-v1",
+  "sourceCommit": null,
+  "manifestSha256": "cecd94bb0fff95f05d86e5f72a3ac5371f3784bdd51ee9273e4c0fd452352ea4",
+  "baseline": {
+    "retrieverId": "bornagent.lexical-memory-search",
+    "retrieverVersion": "ml2-v2",
+    "implementationSha256": "49a34439bc3a408b3262303d310340ab3131698d58fa5b96003b0c56aa12c9a8",
+    "semanticRecallAt5": 0,
+    "semanticMrrAt5": 0,
+    "candidatePermitted": true,
+    "entryGateReasons": [
+      "semantic_recall_below_75_percent",
+      "at_least_five_semantic_top5_misses",
+      "misses_have_no_literal_term_overlap"
+    ]
+  },
+  "candidate": {
+    "implementationSha256": "6251ca321314fd920fc106585869b45fec8eb92de56829ca12937c30d0de29d7",
+    "modelArtifactManifestSha256": "eb54f2a0fc3b5a2608f4c43b404e10bf4da856b9b405e48ff27fcecaeef55141",
+    "vectorProjectionSchemaSha256": "7c0822e41057f5e84d36d02f2236ff6aa611e570aedf8d17f9aed8ecbef2c2d1",
+    "thresholdSimilarityMicros": 780000,
+    "thresholdFrozenBeforeEvaluation": true,
+    "calibrationResultSha256": "4483ba5700c6a90b6b3482c4663a608106d45dced24746a18b9f1628628ec391",
+    "semanticRecallAt5": 1,
+    "semanticMrrAt5": 0.7083333333333334
+  },
+  "cases": [
+    {
+      "caseId": "control-exact-record",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "exact_id",
+        "orderedTopRecordKeys": [
+          "exact-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 122,
+        "estimatedTokensUsed": 49,
+        "resultSha256": "60cb7ecc65277891bf33679faaa15344a56e00e63eedc7eff61035641a2319da"
+      },
+      "candidate": {
+        "queryKind": "exact_id",
+        "orderedTopRecordKeys": [
+          "exact-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 122,
+        "estimatedTokensUsed": 49,
+        "resultSha256": "60cb7ecc65277891bf33679faaa15344a56e00e63eedc7eff61035641a2319da"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 0,
+        "localRecordEmbeddingCalls": 0,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": null,
+        "vectorScanDurationMs": null,
+        "totalSearchDurationMs": 1.7322000000003754
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "control-quoted-phrase",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "quoted_phrase",
+        "orderedTopRecordKeys": [
+          "phrase-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 152,
+        "estimatedTokensUsed": 59,
+        "resultSha256": "924e62f446a2c534e227c334230c616c3580418aa9668b6c8261fd75b00ed148"
+      },
+      "candidate": {
+        "queryKind": "quoted_phrase",
+        "orderedTopRecordKeys": [
+          "phrase-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 152,
+        "estimatedTokensUsed": 59,
+        "resultSha256": "924e62f446a2c534e227c334230c616c3580418aa9668b6c8261fd75b00ed148"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 0,
+        "localRecordEmbeddingCalls": 0,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": null,
+        "vectorScanDurationMs": null,
+        "totalSearchDurationMs": 24.655099999999948
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "control-lexical-shared",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "lexical-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 156,
+        "estimatedTokensUsed": 60,
+        "resultSha256": "35ea5a4bb1db94d6d5b4fe895dd9e8b893854df97045cc42c4a0a454d4d2d778"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "lexical-target",
+          "lexical-distractor-a",
+          "lexical-distractor-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 393,
+        "estimatedTokensUsed": 156,
+        "resultSha256": "98c1649446d8b3b3c9637b20fc15783219f80c365b81b43de2d99a72e400f56d"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.8869000000004235,
+        "vectorScanDurationMs": 2.0424999999995634,
+        "totalSearchDurationMs": 45.47199999999975
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "control-recency-order",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "recency-new",
+          "recency-old"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 230,
+        "estimatedTokensUsed": 94,
+        "resultSha256": "e55714d1cbf3af5caaed92b80189c3a191b9f2184ad8211a22b1ace284daf32d"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "recency-new",
+          "recency-old",
+          "recency-unrelated"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 345,
+        "estimatedTokensUsed": 141,
+        "resultSha256": "9450f4a2f07b79d9f121c795e5c260aa4dc0b7a404ce8d9fef55396556c055c3"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.5888999999997395,
+        "vectorScanDurationMs": 2.088199999999233,
+        "totalSearchDurationMs": 48.92590000000018
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "control-calibration-lexical",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cal-lexical-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 149,
+        "estimatedTokensUsed": 58,
+        "resultSha256": "1eab4315b2d7872f606058cf288f6c83bf7a31d51d0f8561e15a0de46e98ee16"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cal-lexical-target",
+          "cal-lexical-a",
+          "cal-lexical-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 378,
+        "estimatedTokensUsed": 151,
+        "resultSha256": "37ab6a56a0d402b9102b3f82fb5d951cb02321d5c584686692ab358c039534e0"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.696799999999712,
+        "vectorScanDurationMs": 0.0717000000004191,
+        "totalSearchDurationMs": 30.22270000000026
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "control-calibration-phrase",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "quoted_phrase",
+        "orderedTopRecordKeys": [
+          "cal-phrase-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 145,
+        "estimatedTokensUsed": 57,
+        "resultSha256": "4888d798801719b39450d5144dea8630ba450e5d880fab6eec7257a83d30dbb9"
+      },
+      "candidate": {
+        "queryKind": "quoted_phrase",
+        "orderedTopRecordKeys": [
+          "cal-phrase-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 145,
+        "estimatedTokensUsed": 57,
+        "resultSha256": "4888d798801719b39450d5144dea8630ba450e5d880fab6eec7257a83d30dbb9"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 0,
+        "localRecordEmbeddingCalls": 0,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": null,
+        "vectorScanDurationMs": null,
+        "totalSearchDurationMs": 9.838299999999435
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-calibration-offline-package",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "98fcf12e49ee5a6d0cb693844825e2c8d68da8e38124f0aa1747440e365a6517"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-cal-offline-target",
+          "ch-cal-offline-b",
+          "ch-cal-offline-a"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 381,
+        "estimatedTokensUsed": 152,
+        "resultSha256": "0144f545e0e6aa7148bf5b7a224474f6e58a8682af8e4066695e0f82e48b950a"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 5.042599999999766,
+        "vectorScanDurationMs": 0.07270000000062282,
+        "totalSearchDurationMs": 28.60899999999947
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-calibration-index-refresh",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "fd42c0e11e27f5c7b9e4fc28f3930a8daa128b62132a8a4446476ff1f8ddc62e"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-cal-index-target",
+          "ch-cal-index-a",
+          "ch-cal-index-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 408,
+        "estimatedTokensUsed": 161,
+        "resultSha256": "86c139b1b043d71093cece82a9150619d48a0294b24d04c1aac119637efd190d"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.344000000000051,
+        "vectorScanDurationMs": 0.06059999999979482,
+        "totalSearchDurationMs": 29.7511999999997
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-response-style",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-style-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 167,
+        "estimatedTokensUsed": 64,
+        "resultSha256": "c19351cab47983e25a0aff10e77b90ed78c5fed354d10c27b2396236daf89c9c"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-style-collision",
+          "ch-style-target",
+          "ch-style-other"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 417,
+        "estimatedTokensUsed": 164,
+        "resultSha256": "5193b07af043b7c47eff2fb0f88d862508ed30f0c7060bca1d6096afb31815cc"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.532900000000154,
+        "vectorScanDurationMs": 1.9810999999999694,
+        "totalSearchDurationMs": 45.94809999999961
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-edit-recovery",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "910b1c3ccbac647f4dbb14ea5182cbeea2012f02f40c09d68497c3905116537a"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-recovery-target",
+          "ch-recovery-b",
+          "ch-recovery-a"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 378,
+        "estimatedTokensUsed": 151,
+        "resultSha256": "1745bed977d0c4c8410e155a13d4078aa1bffd6a736960cf9b91d9ed3efe384d"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.928299999999581,
+        "vectorScanDurationMs": 1.9533000000001266,
+        "totalSearchDurationMs": 55.6230000000005
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-delivery-checks",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-delivery-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 155,
+        "estimatedTokensUsed": 60,
+        "resultSha256": "7ef7cff1f30243ae0352c3220333a2269c7f925aab006e90160dcadc9024ba36"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-delivery-collision",
+          "ch-delivery-target",
+          "ch-delivery-other"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 426,
+        "estimatedTokensUsed": 167,
+        "resultSha256": "89a1a1017d91eb65e3430743da94b104446600fe6adfc1b9d2d2429363411506"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.3267000000005282,
+        "vectorScanDurationMs": 2.1940999999997075,
+        "totalSearchDurationMs": 45.884000000000015
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-command-approval",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "fe94e15a99e9a651e8244c2c3a9d6ae741a70c1f601f1b0d07b114d058101b1e"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-approval-a",
+          "ch-approval-target",
+          "ch-approval-b"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 387,
+        "estimatedTokensUsed": 154,
+        "resultSha256": "5de4eb80aa7ad9a43d26c0db717be246c08fc05d872d99c597781ab5c04a08ec"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.3796000000002095,
+        "vectorScanDurationMs": 1.9852000000000771,
+        "totalSearchDurationMs": 48.275000000000546
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-source-freshness",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-fresh-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 149,
+        "estimatedTokensUsed": 58,
+        "resultSha256": "ad26aab084979d95ab30d3195c8cc47a0713ddc81625bc52f608b60b3397249e"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-fresh-collision",
+          "ch-fresh-target",
+          "ch-fresh-other"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 426,
+        "estimatedTokensUsed": 167,
+        "resultSha256": "463a47d55c3057e9eb404f31463cbf80a3365886053c805afec65a141b470abf"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.92870000000039,
+        "vectorScanDurationMs": 2.5590000000001965,
+        "totalSearchDurationMs": 52.967099999999846
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "chinese-eval-local-memory",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "4eabc030ced7ee4b94d3a9495b0aa70f533df78611cfa8fb5ec56fd61a045c21"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "ch-local-target",
+          "ch-local-a",
+          "ch-local-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 396,
+        "estimatedTokensUsed": 157,
+        "resultSha256": "af209c2ace4bf08874607ea971036f9e97a2d0f3e0d7b039f554ac19b28d58e8"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.5986000000002605,
+        "vectorScanDurationMs": 2.2023999999992157,
+        "totalSearchDurationMs": 45.25659999999971
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "english-calibration-offline",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "7f2c5d036f483106be18fca28bd5f5b7500abfca2a106764ab4f7614c0d03d62"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-cal-target",
+          "en-cal-b",
+          "en-cal-a"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 358,
+        "estimatedTokensUsed": 144,
+        "resultSha256": "642278ede9945b77a710b6bd31ad93d33d0326fe93a52e4d1bf38b7a7382c8af"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 5.055699999999888,
+        "vectorScanDurationMs": 0.05640000000039436,
+        "totalSearchDurationMs": 32.49919999999929
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "english-eval-edit-rollback",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-rollback-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 121,
+        "estimatedTokensUsed": 49,
+        "resultSha256": "c6bb2ecfd5b3bfed1a456449d4e31626a67d45119a88b459a73b527e062c7534"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-rollback-collision",
+          "en-rollback-target",
+          "en-rollback-other"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 383,
+        "estimatedTokensUsed": 153,
+        "resultSha256": "6286ae80c0c756af5d0537cad7cd28c9f1fff5589511dd0a7840736e5a5315a2"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 5.264799999999923,
+        "vectorScanDurationMs": 1.931999999999789,
+        "totalSearchDurationMs": 51.358900000000176
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "english-eval-prior-decisions",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "4b9e7afae08ea04d39c387fd878f80ad0d1dbf2f8c40a5a550bc309ea8b51d9d"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-decision-target",
+          "en-decision-a",
+          "en-decision-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 378,
+        "estimatedTokensUsed": 152,
+        "resultSha256": "bde8009a72e624f6f71a03b0c19b09943a1afd03958b7d0183c809adf9548edf"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.268500000000131,
+        "vectorScanDurationMs": 2.1804000000001906,
+        "totalSearchDurationMs": 47.29709999999977
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "english-eval-private-recall",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-private-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 121,
+        "estimatedTokensUsed": 49,
+        "resultSha256": "dc31fec1ffc545671b66d96c6a154a1e9b13daea7c2fd5e830ce156cb7df20e3"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "en-private-collision",
+          "en-private-target"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 263,
+        "estimatedTokensUsed": 105,
+        "resultSha256": "90c411162acc5198f0390795cf2092d43851b85abfdc0b11f5f8b6792a6baa4d"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.6921999999995023,
+        "vectorScanDurationMs": 1.9193999999997686,
+        "totalSearchDurationMs": 44.224599999999555
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "cross-calibration-cache-refresh",
+      "split": "calibration",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "030858786307f98f8157c0c3b9646ff15753052fd3e8d2e0ff91ce535215d305"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cross-cal-target"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 137,
+        "estimatedTokensUsed": 54,
+        "resultSha256": "45c2a65fdbdd9cede77f6e3e71744821c0b6e544ebc5abc80679e805dc7f2b42"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.85990000000038,
+        "vectorScanDurationMs": 0.052700000000186265,
+        "totalSearchDurationMs": 31.896999999999935
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "cross-eval-release-artifact",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "1e837418af6419612f500a1a0bfaf8b11cb789968117cc6288e611cebe313781"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cross-release-target",
+          "cross-release-b",
+          "cross-release-a"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 380,
+        "estimatedTokensUsed": 151,
+        "resultSha256": "c2a57681b15f3e73af4c57c6fb1494ebbdd66942fa14ebd27630d3dea0921d55"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.153900000000249,
+        "vectorScanDurationMs": 2.131800000000112,
+        "totalSearchDurationMs": 45.32669999999962
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "cross-eval-stale-memory",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "04b89392c9bff7f8bb0014ca0f2487cb0cfaf00d970251ca656d68782b7acb69"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cross-stale-target",
+          "cross-stale-a",
+          "cross-stale-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 378,
+        "estimatedTokensUsed": 151,
+        "resultSha256": "6b0c92546a72089bd7ec8a655131a2f2ceb8ce62a9ceca1aa4c6b8cce212ef0f"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.523600000000442,
+        "vectorScanDurationMs": 2.046900000000278,
+        "totalSearchDurationMs": 44.539999999999964
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "cross-eval-command-permission",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cross-permission-collision"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 0,
+        "reciprocalRank": 0,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 123,
+        "estimatedTokensUsed": 49,
+        "resultSha256": "acba19a69b8128e8aba7094fef7c86b063483f7adfb05745f338c39325293b8b"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cross-permission-collision",
+          "cross-permission-target",
+          "cross-permission-other"
+        ],
+        "recallAt1": 0,
+        "recallAt5": 1,
+        "reciprocalRank": 0.5,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 391,
+        "estimatedTokensUsed": 155,
+        "resultSha256": "f5626177b36ec740c1d2973d3a3ffd06d43007b3c0f79869400aa0e542bdd15f"
+      },
+      "correctness": {
+        "requiredTop1": false,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.4495999999999185,
+        "vectorScanDurationMs": 1.8208999999997104,
+        "totalSearchDurationMs": 44.148699999999735
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "temporal-deployment-region",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "region-current"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 44,
+        "estimatedTokensUsed": 23,
+        "resultSha256": "599fde3aad1a797b60dedfa4f16ce89d5e5126598794729982cef7bfd2e23dd7"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "region-current",
+          "region-other"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 159,
+        "estimatedTokensUsed": 70,
+        "resultSha256": "83e2aee3d1545a27f361daa2b4408c9712d6cc3d995b48197b9284316857ea96"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": true
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 5.039999999999964,
+        "vectorScanDurationMs": 2.1549999999997453,
+        "totalSearchDurationMs": 47.76789999999983
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "temporal-verification-command",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "check-current"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 44,
+        "estimatedTokensUsed": 23,
+        "resultSha256": "73f49763455bf0b1f079bf4490134c5335aa49807f7a4f5c6b1bf7001128dfa7"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "check-current",
+          "check-other"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 161,
+        "estimatedTokensUsed": 70,
+        "resultSha256": "0e310603d36dc56970d6522c90eb1778254529747591345a4a3d8cf31c2408f3"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": true
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.278699999999844,
+        "vectorScanDurationMs": 2.4243999999998778,
+        "totalSearchDurationMs": 51.06530000000021
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "temporal-release-channel",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "channel-current"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 37,
+        "estimatedTokensUsed": 21,
+        "resultSha256": "c32c22444f5484f800813ddd8602dd700e846149dec8f497a1c1ba785b0b29a4"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "channel-current",
+          "channel-other"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 154,
+        "estimatedTokensUsed": 68,
+        "resultSha256": "7a5bda69cad9872cafb03682b40579e44d2cb469fbfa467dc9b7e2815be871be"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": true
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.081099999999424,
+        "vectorScanDurationMs": 1.7986000000000786,
+        "totalSearchDurationMs": 48.589500000000044
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "temporal-cache-policy",
+      "split": "evaluation",
+      "class": "representative",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cache-current"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 43,
+        "estimatedTokensUsed": 23,
+        "resultSha256": "ba05f1a4ebeb3ce0ff40232a0e00feb3e7af92c5becbccea6d1213d8dea87822"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "cache-current",
+          "cache-other"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 152,
+        "estimatedTokensUsed": 68,
+        "resultSha256": "63b25c4da78adea52e57e7bc76e822fb9504d4aff4de6210d94cafb6c21d0a9c"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": true
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.598999999998341,
+        "vectorScanDurationMs": 2.0398000000004686,
+        "totalSearchDurationMs": 41.06490000000122
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "negative-calibration-punctuation",
+      "split": "calibration",
+      "class": "stress",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_searchable_terms",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "1e4c27d7dc63eb82996edb073686cc4feb078d057f105f8a821ef09711c4bd80"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_searchable_terms",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "1e4c27d7dc63eb82996edb073686cc4feb078d057f105f8a821ef09711c4bd80"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 0,
+        "localRecordEmbeddingCalls": 0,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": null,
+        "vectorScanDurationMs": null,
+        "totalSearchDurationMs": 1.819300000000112
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "negative-calibration-unrelated",
+      "split": "calibration",
+      "class": "stress",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "518b589d4e3528cfa0ecc975f237ff288fc09e3c8244db1a7240223d3de5fb62"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "dabbe8c3a3f3d912ae8daf4c2e800370c6860b00b50730ac21b0ea7218005bf3"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.272799999999734,
+        "vectorScanDurationMs": 0.06379999999990105,
+        "totalSearchDurationMs": 31.0604000000003
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "negative-eval-backup-collision",
+      "split": "evaluation",
+      "class": "stress",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "backup-collision"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 115,
+        "estimatedTokensUsed": 47,
+        "resultSha256": "3dc80261346d27a3252ff76f7c023a47e492499e150d8863a52e2a5b5eb5e593"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "backup-collision",
+          "backup-a",
+          "backup-b"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 346,
+        "estimatedTokensUsed": 140,
+        "resultSha256": "59b24fbda3e4c2fdacb350a7c51d8a8630a632d47e5adc5fe50e5d94aa1c4936"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": false,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.3060000000004948,
+        "vectorScanDurationMs": 1.8382999999994354,
+        "totalSearchDurationMs": 41.51230000000032
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "negative-eval-delete-collision",
+      "split": "evaluation",
+      "class": "stress",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "delete-collision"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 118,
+        "estimatedTokensUsed": 48,
+        "resultSha256": "c4377af6ac58206ccf4c2b1db42c65cd8c662fe12302b315f9d7ff5a4794450d"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "delete-collision",
+          "delete-a",
+          "delete-b"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 345,
+        "estimatedTokensUsed": 141,
+        "resultSha256": "b8005b01b6262f081e015db71635bd9e3495720822045095b29d2daa3da4d0ac"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 1,
+        "abstentionCorrect": false,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.3101000000006024,
+        "vectorScanDurationMs": 1.976699999999255,
+        "totalSearchDurationMs": 42.06869999999981
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-wrong-repository",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "f8878bb6c62ce58c5e9dcb908269c639e2d53d7f72d47c266dede41bd3c02fc1"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "wrong-repo-current-b",
+          "wrong-repo-current-a"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 220,
+        "estimatedTokensUsed": 90,
+        "resultSha256": "62bf2650056a15959f95c4ec0dc34b1e3287153982ab37001c5d78f69b500cdd"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": false,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.0165000000015425,
+        "vectorScanDurationMs": 1.776899999998932,
+        "totalSearchDurationMs": 39.41899999999987
+      },
+      "status": "fail"
+    },
+    {
+      "caseId": "security-wrong-principal",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "df5cda474bdfa9c18bb659bd8c5903ffc86245cbfd257430629b0809693d2c18"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "dabbe8c3a3f3d912ae8daf4c2e800370c6860b00b50730ac21b0ea7218005bf3"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.75800000000163,
+        "vectorScanDurationMs": 1.7422999999998865,
+        "totalSearchDurationMs": 44.71320000000014
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-stale-source",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 1,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "e275d09f6b113ea3f9306974e169bd3be98fc5eca6c3a0a6b28a745765f7cc08"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "stale-source-b",
+          "stale-source-a"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 2,
+        "candidatesAvailable": 2,
+        "candidatesTruncated": false,
+        "textBytesUsed": 220,
+        "estimatedTokensUsed": 90,
+        "resultSha256": "c9258226cf12bea8b6a6785f7e88bb78ecfe017d12b0c310977054741f3ad6de"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": false,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.113199999999779,
+        "vectorScanDurationMs": 1.8641999999999825,
+        "totalSearchDurationMs": 44.98079999999936
+      },
+      "status": "fail"
+    },
+    {
+      "caseId": "security-tampered-source",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 1,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "8097c285f844d6d01244ab68722f44ad446cc0df66f3238afed2a6af1f0a0807"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "dabbe8c3a3f3d912ae8daf4c2e800370c6860b00b50730ac21b0ea7218005bf3"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 4.0768000000007305,
+        "vectorScanDurationMs": 1.9058999999997468,
+        "totalSearchDurationMs": 40.560999999999694
+      },
+      "status": "pass"
+    },
+    {
+      "caseId": "security-retracted-record",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": true,
+        "abstentionReason": "no_available_match",
+        "candidatesMatched": 0,
+        "candidatesAvailable": 0,
+        "candidatesTruncated": false,
+        "textBytesUsed": 0,
+        "estimatedTokensUsed": 0,
+        "resultSha256": "48737c55639cc65c9e56db5e8b18cd7c840f05692dbec69480184aae3206bff2"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "retracted-security-b"
+        ],
+        "recallAt1": null,
+        "recallAt5": null,
+        "reciprocalRank": null,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 1,
+        "candidatesAvailable": 1,
+        "candidatesTruncated": false,
+        "textBytesUsed": 110,
+        "estimatedTokensUsed": 45,
+        "resultSha256": "b3303b520fab7f12fbe66cff3adcf969de01907323dce8d2cac0fe746495b688"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": false,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 2,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.647100000000137,
+        "vectorScanDurationMs": 1.8568999999988591,
+        "totalSearchDurationMs": 41.58469999999943
+      },
+      "status": "fail"
+    },
+    {
+      "caseId": "security-instruction-shaped-memory",
+      "split": "evaluation",
+      "class": "security",
+      "baseline": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "poison-shaped-record",
+          "poison-shaped-a",
+          "poison-shaped-b"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 394,
+        "estimatedTokensUsed": 156,
+        "resultSha256": "f73bb2fcabb716be8aa2b30d86b29231f70b7264429a80a15c669221e07aa1b1"
+      },
+      "candidate": {
+        "queryKind": "lexical",
+        "orderedTopRecordKeys": [
+          "poison-shaped-record",
+          "poison-shaped-b",
+          "poison-shaped-a"
+        ],
+        "recallAt1": 1,
+        "recallAt5": 1,
+        "reciprocalRank": 1,
+        "abstained": false,
+        "abstentionReason": null,
+        "candidatesMatched": 3,
+        "candidatesAvailable": 3,
+        "candidatesTruncated": false,
+        "textBytesUsed": 394,
+        "estimatedTokensUsed": 156,
+        "resultSha256": "d220f1a8263b941e5aea93d12529455e6c2d06667d6ce586646329e02d0e5443"
+      },
+      "correctness": {
+        "requiredTop1": true,
+        "requiredTop5": true,
+        "forbiddenTop5Count": 0,
+        "abstentionCorrect": true,
+        "sourceFresh": true,
+        "scopeExact": true,
+        "actionParameterSupported": null
+      },
+      "cost": {
+        "localQueryEmbeddingCalls": 1,
+        "localRecordEmbeddingCalls": 3,
+        "remoteModelCalls": 0,
+        "toolCalls": 0,
+        "networkCallsDuringSearch": 0,
+        "queryEmbeddingDurationMs": 3.334600000000137,
+        "vectorScanDurationMs": 2.2145000000000437,
+        "totalSearchDurationMs": 44.1887999999999
+      },
+      "status": "pass"
+    }
+  ],
+  "aggregate": {
+    "calibrationCases": 8,
+    "evaluationCases": 28,
+    "hardGateFailures": 3,
+    "securityLeaks": 0,
+    "vectorAddedForbiddenHits": 0,
+    "fallbackMismatches": 0
+  },
+  "cost": {
+    "modelArtifactBytes": 135138424,
+    "dependencyInstallDeltaBytes": 356256406,
+    "packedArtifactDeltaBytes": 18305,
+    "vectorStoreBytesAt10000": 23461888,
+    "coldLoadP95Ms": 2011.9178000000002,
+    "warmQueryEmbeddingP95Ms": 4.610000000000582,
+    "vectorScan10000P95Ms": 37.786299999999756,
+    "hybridSearchP95Ms": 30.343800000000556
+  },
+  "platformEvidence": {
+    "windows": "failed",
+    "linux": "not_run",
+    "packed": "passed"
+  },
+  "outcome": "rejected",
+  "actualFocusedMinutes": 60,
+  "receiptSha256": "a6a9c5563b421342c7c21f1d1efb0470cdd04aa322ff4b77a2c0ec5ce4b88b6c"
+}

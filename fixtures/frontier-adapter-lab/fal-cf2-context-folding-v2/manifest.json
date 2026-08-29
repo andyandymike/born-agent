@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-cf2-context-folding-v2",
+  "candidateIdentityMode": "reimplementation_from_v1_contract",
+  "priorEvidenceReceiptSha256": "88cac12c8010d24266bcc2900fc5f4ee3a9f9724329f63d27f9633a931cd3d9b",
+  "priorCandidateImplementationSha256": "b63740754e947af6a37d571380936d9c57eaa865b35f91cf5323d434c68c3981",
+  "mechanicalCasePackRef": "mechanical-cases.json",
+  "mechanicalCasePackSha256": "98c0d6e081e96ef2a86bc50fc1d4feedeb71460dcc9e5a807a0d7d4267431494",
+  "mechanicalCaseIds": [
+    "generated-single-unique",
+    "generated-two-duplicate",
+    "generated-shared-evidence",
+    "generated-failed-empty",
+    "generated-blocked-empty",
+    "generated-cancelled-empty",
+    "generated-change-verification",
+    "generated-unique-long",
+    "generated-disabled",
+    "generated-fault-throw",
+    "generated-deadline-expired",
+    "generated-fault-invalid",
+    "stress-near-projection-bound",
+    "verified-multi-duplicate",
+    "verified-multi-unique-order",
+    "security-wrong-goal-binding",
+    "security-unaccepted-receipt",
+    "security-unverified-stale",
+    "security-forged-receipt-hash",
+    "security-instruction-shaped-narrative"
+  ],
+  "traceDirectoryRef": "traces/evaluation",
+  "traces": [],
+  "samplingProtocol": {
+    "protocolId": "first-n-qualifying-consecutive-runs-v1",
+    "protocolSha256": "fbc74cc6acfee766b9590be020ade3e43123b917bb3977503881e42bf0073652",
+    "productFitEvaluationRequested": false,
+    "minimumNaturalisticTraces": 12,
+    "minimumMultiChildTraces": 4,
+    "minimumTaskStatusShapes": 3,
+    "selectionFields": [
+      "authorization",
+      "no_secret",
+      "capture_complete",
+      "task_status_stratum",
+      "independent_parent_run"
+    ]
+  },
+  "candidateImplementationSha256": "9a4115e2c3382ecfed3b2c6ceeb37b1eadb3c1e3031bceb04a05689f7ec7cdcc",
+  "manifestSha256": "7e4785ed68b41ad7e676039f68ff07417bca5191899e034835a958f093bf4070"
+}

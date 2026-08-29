@@ -1,0 +1,1207 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "split": "calibration",
+  "cases": [
+    {
+      "caseId": "cal-semantic-offline-bundle",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-offline-bundle",
+      "queryTemplateId": "calibration-query-semantic-offline-bundle",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "怎样确认安装包断网也能运行"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-offline-bundle"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-approval-recovery",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-approval-recovery",
+      "queryTemplateId": "calibration-query-semantic-approval-recovery",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "误点拒绝之后如何恢复那次操作"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-approval-recovery"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-cache-refresh",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-cache-refresh",
+      "queryTemplateId": "calibration-query-semantic-cache-refresh",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "源码变了但索引结果没更新怎么办"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-cache-refresh"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-source-revalidation",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-source-revalidation",
+      "queryTemplateId": "calibration-query-semantic-source-revalidation",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "记忆命中了也要重新确认原始出处吗"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-source-revalidation"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-unstable-test",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-unstable-test",
+      "queryTemplateId": "calibration-query-semantic-unstable-test",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "偶尔红一次的自动化检查该怎么处理"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-unstable-test"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-feature-disable",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-feature-disable",
+      "queryTemplateId": "calibration-query-semantic-feature-disable",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "上线后怎样一键退回原来的检索逻辑"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-feature-disable"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-release-archive",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-release-archive",
+      "queryTemplateId": "calibration-query-semantic-release-archive",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "Where is the final build kept for offline delivery?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-release-archive"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-decision-recall",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-decision-recall",
+      "queryTemplateId": "calibration-query-semantic-decision-recall",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "What did we previously decide about retaining personal preferences?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-decision-recall"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-socket-reconnect",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-socket-reconnect",
+      "queryTemplateId": "calibration-query-semantic-socket-reconnect",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "长连接掉线后如何继续接收事件"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-socket-reconnect"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-recoverable-cleanup",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-recoverable-cleanup",
+      "queryTemplateId": "calibration-query-semantic-recoverable-cleanup",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "清理大文件时怎样避免无法找回"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-recoverable-cleanup"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-schema-upgrade",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-schema-upgrade",
+      "queryTemplateId": "calibration-query-semantic-schema-upgrade",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "旧数据格式升级时怎样保证中途崩溃可恢复"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-schema-upgrade"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-schedule-zone",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-schedule-zone",
+      "queryTemplateId": "calibration-query-semantic-schedule-zone",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "定时任务跨地区运行应该保存什么时间"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-schedule-zone"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-audit-trail",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-audit-trail",
+      "queryTemplateId": "calibration-query-semantic-audit-trail",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "How can I reconstruct why a tool action happened?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-audit-trail"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-editor-restart",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-editor-restart",
+      "queryTemplateId": "calibration-query-semantic-editor-restart",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "编辑器重启后如何找回未完成步骤"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-editor-restart"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-lock-resolution",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-lock-resolution",
+      "queryTemplateId": "calibration-query-semantic-lock-resolution",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "依赖版本冲突时以什么作为可复现依据"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-lock-resolution"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-semantic-resume-checkpoint",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "calibration-scenario-semantic-resume-checkpoint",
+      "queryTemplateId": "calibration-query-semantic-resume-checkpoint",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "进程退出后怎样从安全位置继续任务"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-semantic-resume-checkpoint"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-control-exact-amber",
+      "split": "calibration",
+      "class": "representative",
+      "category": "exact_control",
+      "scenarioFamilyId": "calibration-scenario-control-exact-amber",
+      "queryTemplateId": "calibration-query-control-exact-amber",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "exact_record",
+        "targetRecordKey": "cal-control-exact-amber"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-exact-amber"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "exact_bypass",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-control-exact-cobalt",
+      "split": "calibration",
+      "class": "representative",
+      "category": "exact_control",
+      "scenarioFamilyId": "calibration-scenario-control-exact-cobalt",
+      "queryTemplateId": "calibration-query-control-exact-cobalt",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "exact_record",
+        "targetRecordKey": "cal-control-exact-cobalt"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-exact-cobalt"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "exact_bypass",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-control-phrase-orchid",
+      "split": "calibration",
+      "class": "representative",
+      "category": "phrase_control",
+      "scenarioFamilyId": "calibration-scenario-control-phrase-orchid",
+      "queryTemplateId": "calibration-query-control-phrase-orchid",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "\"copper orchid rendezvous\""
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-phrase-orchid"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "lexical",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-control-phrase-sparrow",
+      "split": "calibration",
+      "class": "representative",
+      "category": "phrase_control",
+      "scenarioFamilyId": "calibration-scenario-control-phrase-sparrow",
+      "queryTemplateId": "calibration-query-control-phrase-sparrow",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "\"silent sparrow checksum\""
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-phrase-sparrow"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "lexical",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-control-temporal-region",
+      "split": "calibration",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "calibration-scenario-control-temporal-region",
+      "queryTemplateId": "calibration-query-control-temporal-region",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "nebula-region"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-temporal-region-current"
+        ],
+        "forbiddenRecordKeys": [
+          "cal-control-temporal-region-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "cal-control-temporal-region-current",
+        "expectedActionParametersSha256": "d6c3c8393aa942944576824cd16fd1cc7046756aa47441643dccc820610d7793"
+      }
+    },
+    {
+      "caseId": "cal-control-temporal-command",
+      "split": "calibration",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "calibration-scenario-control-temporal-command",
+      "queryTemplateId": "calibration-query-control-temporal-command",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "lattice-command"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-temporal-command-current"
+        ],
+        "forbiddenRecordKeys": [
+          "cal-control-temporal-command-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "cal-control-temporal-command-current",
+        "expectedActionParametersSha256": "5fb717ad15d36a2369c00bcee41684f6b050325cefb6111b3055acc00951ee4d"
+      }
+    },
+    {
+      "caseId": "cal-control-temporal-channel",
+      "split": "calibration",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "calibration-scenario-control-temporal-channel",
+      "queryTemplateId": "calibration-query-control-temporal-channel",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "harbor-channel"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-temporal-channel-current"
+        ],
+        "forbiddenRecordKeys": [
+          "cal-control-temporal-channel-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "cal-control-temporal-channel-current",
+        "expectedActionParametersSha256": "4202d7205851c0225a293fbd0665ee5728b407761603e74dc382c3982a545907"
+      }
+    },
+    {
+      "caseId": "cal-control-temporal-policy",
+      "split": "calibration",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "calibration-scenario-control-temporal-policy",
+      "queryTemplateId": "calibration-query-control-temporal-policy",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "quartz-policy"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "cal-control-temporal-policy-current"
+        ],
+        "forbiddenRecordKeys": [
+          "cal-control-temporal-policy-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "cal-control-temporal-policy-current",
+        "expectedActionParametersSha256": "92651cb8f597c99428a5d10beb2713ff00e1d3ec44e683a379f30ead5ca7eb60"
+      }
+    },
+    {
+      "caseId": "cal-negative-far-lunar-cooking",
+      "split": "calibration",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "calibration-scenario-negative-far-lunar-cooking",
+      "queryTemplateId": "calibration-query-negative-far-lunar-cooking",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "玄武岩重力下的月球酸面团要发酵多久"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-far-coral-biology",
+      "split": "calibration",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "calibration-scenario-negative-far-coral-biology",
+      "queryTemplateId": "calibration-query-negative-far-coral-biology",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "哪种珊瑚会在极地冰层下面歌唱"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-far-violin-weather",
+      "split": "calibration",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "calibration-scenario-negative-far-violin-weather",
+      "queryTemplateId": "calibration-query-negative-far-violin-weather",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "小提琴漆色能否预测季风冰雹"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-far-orbit-gardening",
+      "split": "calibration",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "calibration-scenario-negative-far-orbit-gardening",
+      "queryTemplateId": "calibration-query-negative-far-orbit-gardening",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "彗星温室里的番茄应该使用什么肥料"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-lexical-orchard-release",
+      "split": "calibration",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-lexical-orchard-release",
+      "queryTemplateId": "calibration-query-negative-lexical-orchard-release",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "orchard release"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-lexical-orchard-release"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-lexical-cursor-approval",
+      "split": "calibration",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-lexical-cursor-approval",
+      "queryTemplateId": "calibration-query-negative-lexical-cursor-approval",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "cursor approval"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-lexical-cursor-approval"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-lexical-memory-violet",
+      "split": "calibration",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-lexical-memory-violet",
+      "queryTemplateId": "calibration-query-negative-lexical-memory-violet",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "memory violet"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-lexical-memory-violet"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-lexical-cache-river",
+      "split": "calibration",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-lexical-cache-river",
+      "queryTemplateId": "calibration-query-negative-lexical-cache-river",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "cache river"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-lexical-cache-river"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-near-region",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "calibration-scenario-negative-near-region",
+      "queryTemplateId": "calibration-query-negative-near-region",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "当前正式部署使用的是哪个区域"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-near-region"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-near-timeout",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "calibration-scenario-negative-near-timeout",
+      "queryTemplateId": "calibration-query-negative-near-timeout",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "构建流程批准的超时时间是多少"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-near-timeout"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-near-backup",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "calibration-scenario-negative-near-backup",
+      "queryTemplateId": "calibration-query-negative-near-backup",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "生产备份应该保存到什么位置"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-near-backup"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-near-branch",
+      "split": "calibration",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "calibration-scenario-negative-near-branch",
+      "queryTemplateId": "calibration-query-negative-near-branch",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "哪个分支已经获准用于正式发布"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-near-branch"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-boiler-source",
+      "split": "calibration",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-boiler-source",
+      "queryTemplateId": "calibration-query-negative-boiler-source",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "source record instruction"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-boiler-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-boiler-repository",
+      "split": "calibration",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-boiler-repository",
+      "queryTemplateId": "calibration-query-negative-boiler-repository",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "repository decision outcome"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-boiler-repository"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-boiler-session",
+      "split": "calibration",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-boiler-session",
+      "queryTemplateId": "calibration-query-negative-boiler-session",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "session task completion"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-boiler-session"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-negative-boiler-memory",
+      "split": "calibration",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "calibration-scenario-negative-boiler-memory",
+      "queryTemplateId": "calibration-query-negative-boiler-memory",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "memory retrieval result"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-negative-boiler-memory"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-wrong-repository",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-wrong-repository",
+      "queryTemplateId": "calibration-query-filtered-wrong-repository",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "黑曜石部署密钥保存在哪里"
+      },
+      "filteredTargetKind": "wrong_repository",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-wrong-repository"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-wrong-principal",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-wrong-principal",
+      "queryTemplateId": "calibration-query-filtered-wrong-principal",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "私有雪松偏好具体是什么"
+      },
+      "filteredTargetKind": "wrong_principal",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-wrong-principal"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-stale-source",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-stale-source",
+      "queryTemplateId": "calibration-query-filtered-stale-source",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "蛇怪服务当前使用哪个端点"
+      },
+      "filteredTargetKind": "stale_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-stale-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-tampered-source",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-tampered-source",
+      "queryTemplateId": "calibration-query-filtered-tampered-source",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "黄玉构建由什么校验值保护"
+      },
+      "filteredTargetKind": "tampered_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-tampered-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-unavailable-source",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-unavailable-source",
+      "queryTemplateId": "calibration-query-filtered-unavailable-source",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "消失的笔记批准了哪个鹤形令牌"
+      },
+      "filteredTargetKind": "unavailable_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-unavailable-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-retracted",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-retracted",
+      "queryTemplateId": "calibration-query-filtered-retracted",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "冰川功能应该启用哪个开关"
+      },
+      "filteredTargetKind": "retracted",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-retracted"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-superseded",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-superseded",
+      "queryTemplateId": "calibration-query-filtered-superseded",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "旧泻湖策略是否仍然采用十二小时"
+      },
+      "filteredTargetKind": "superseded",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-superseded-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "cal-filtered-no-current-revision",
+      "split": "calibration",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "calibration-scenario-filtered-no-current-revision",
+      "queryTemplateId": "calibration-query-filtered-no-current-revision",
+      "distractorPoolId": "calibration-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "被移除的杜松指令要求执行什么"
+      },
+      "filteredTargetKind": "no_current_revision",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "cal-filtered-no-current-revision"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    }
+  ]
+}

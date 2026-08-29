@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "correctionId": "fal-em-r1-evidence-correction-v2",
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "issuedAt": "2026-08-29T08:05:00.000Z",
+  "appliesTo": {
+    "receiptPath": "experiment-receipt.json",
+    "receiptLogicalSha256": "4e20762f11447a136423699bda44ac09268374f62f8907fa603a59ecc084220f",
+    "receiptRawSha256": "3facb256726ba1fcefffc1a7766c9e2512c31b9ff372223bce8097bade8caa66"
+  },
+  "historicalBytesModified": false,
+  "retainedClaims": [
+    "calibration_has_no_eligible_global_threshold",
+    "evaluation_scoring_not_run",
+    "promotion_blocked"
+  ],
+  "corrections": {
+    "evaluationFilesReadForManifestVerification": true,
+    "evaluationCasesParsedOrScored": false,
+    "runtimeBlindness": "not_proven",
+    "authoringBlindness": "not_proven",
+    "semanticFamilyDisjoint": "refuted_by_audit",
+    "normalizedExactTextOverlap": "supported_literal_only",
+    "evaluationLifecycle": "known_exposed_holdout_development_only",
+    "baselineCollisionPassSemantics": "delta_parity_not_absolute_abstention"
+  },
+  "interpretation": "The calibration refutation remains valid for this retained candidate. The old evaluation must not be described as blind, sealed, or semantically family-disjoint, and it cannot provide promotion evidence for a later candidate.",
+  "correctionSha256": "eeb8d761ccd7a0913d1694a9c324a79ee28d8019b401318f1574aa46d40a674e"
+}

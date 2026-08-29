@@ -19,6 +19,8 @@ playwright-report/
 /spec/*
 !/spec/agent-memory-lightweight-core-and-adapters.md
 !/spec/frontier-adapter-lab-fal0-context-folding-lite.md
+!/spec/frontier-adapter-lab-fal-em0-local-embedding-hybrid.md
+!/spec/frontier-adapter-lab-shared-memory-benchmark-v1.md
 /docs/learning/
 /ROADMAP.md
 /TODO.local.md

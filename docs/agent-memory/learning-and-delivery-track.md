@@ -1,8 +1,8 @@
 # BornAgent Agent Memory 学习与交付路线
 
-> 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-26）
+> 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-29）
 > 当前基线：Memory v1 core已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused-contract + packed-artifact release jobs并达到`preview_usable`；production Agent默认仍为`off`
-> 当前切片：ML5闭环完成；下一步只选择一张Frontier Adapter experiment card，不把实验能力直接升为production；exact合同见[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)
+> 当前切片：ML5闭环完成；CF2与EM-R1都保留disabled。新的24 timeline / 240 probe共享测试已运行development/calibration：embedding只通过retrieval-stage calibration，CF在12/12 timeline都未达到收益选择条件，fixed reader四arm must-answer grounded success均为0；evaluation仍是未打开的salted commitment，production仍是FTS + recency
 
 ## 1. 为什么做这条路线
 
@@ -65,12 +65,15 @@ Current BornAgent baseline
 One isolated intervention
 Correctness / quality / latency / token metrics
 Failure and poisoning cases
-Result: retain | revise | reject | inconclusive
+Evidence validity + implementation fidelity
+Per-claim supported | refuted | inconclusive | not_run
+Product fit + promotion decision
+Candidate retention and reproducibility
 What I learned
 Actual engineering time
 ```
 
-候选方向包括但不限于：tiered context/episodic folding、context evolution/consolidation、hybrid retrieval、graph-assisted multi-hop memory、verified procedural memory 和 self-improving agent loops。每次实验前重新核验 primary source；没有超过简单 baseline 的方案保留为学习结果，不进入主路径。
+候选方向包括但不限于：tiered context/episodic folding、context evolution/consolidation、hybrid retrieval、graph-assisted multi-hop memory、verified procedural memory 和 self-improving agent loops。每次实验前重新核验 primary source；没有超过简单 baseline 的方案保留为默认关闭的学习实现，不进入主路径。收益不足、trace不足或promotion blocked不能自动删除candidate源码/tests；weights、vectors、cache与用户数据型输出仍按边界清理。
 
 ### 3.4 时间预算与停机线
 
@@ -144,16 +147,17 @@ mode=off baseline
 
 ## 7. Frontier experiment lane
 
-Memory v1 建立可测 baseline 后，先锋方向按“一项技术、一张 experiment card、一个隔离提交”推进：
+Memory v1 建立可测 baseline 后，先锋方向按“一项技术、一张 experiment revision、一个隔离提交”推进。每个revision先过data adequacy，再分别记录mechanics、quality、product fit与promotion：
 
-1. [`FAL-CF0`](../../spec/frontier-adapter-lab-fal0-context-folding-lite.md)已量化现有verified child receipt folding；CF1 second fold因代表性净收益不足被拒绝并删除；
+1. [`FAL-CF0/CF2`](../../spec/frontier-adapter-lab-fal0-context-folding-lite.md)：v1只留下fixture mechanics与有限product-fit evidence；CF2现已重新验证lossless/security/fallback/pack mechanics，源码保留disabled；真实收益仍等待按冻结协议收集trace replay；
 2. progressive full/detailed/brief/placeholder context；
 3. deterministic consolidation 对比 model-assisted consolidation；
-4. lexical/temporal baseline 对比 embedding、graph 或 hybrid retrieval；
-5. verified trajectory 到 procedure candidate；
-6. memory-guided planning、reflection 或 self-improvement loop。
+4. [`FAL-EM0/EM-R1`](../../spec/frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)：v1支持semantic ranking/cost与safety isolation，但abstention calibration不足；EM-R1已完成retained reimplementation、16/24 FTS-empty live preflight与9,538点完整sweep。Anchor 12/12一致，安全/delta-risk可达0，但semantic最高8/16且历史回放仅26/36，因此当前组合在旧calibration被refute。审计更正为evaluation文件曾被manifest verifier读取、semantic family-disjoint不成立；该holdout只能作known regression，不能单独归因data、selector、RRF或model；
+5. [`FAL Memory Shared Benchmark v1`](../../spec/frontier-adapter-lab-shared-memory-benchmark-v1.md)：把Local Embedding的retrieval层与Context Folding的projection层放进同一批24×10时间线，以2×2、分阶段指标和one-shot commit/reveal重新比较；public development/calibration已完成，embedding检索门通过、CF无共享收益、reader门失败，evaluation未运行；
+6. verified trajectory 到 procedure candidate；
+7. memory-guided planning、reflection 或 self-improvement loop。
 
-实验完成并不自动意味着产品启用。实验即使失败，只要具有可复现 baseline、原因分析和学习记录，也属于本项目的有效成果。
+实验完成并不自动意味着产品启用。G1/G2 mechanics失败、G3 claim被refute、证据不足和promotion blocked是不同结论；任何一种只要保留可恢复源码、baseline、证据边界和学习记录，都是本项目的有效成果。
 
 ## 8. 明确延期
 
@@ -171,6 +175,8 @@ Memory v1 不承诺：
 
 ## 9. 下一步
 
-ML5已按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)完成product closure。[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](../../spec/frontier-adapter-lab-fal0-context-folding-lite.md)也已完成：24 cases机械门全过，但CF1只有1个representative case获益，eligible median为0%，因此以`rejected`收口且未接production。下一候选研究方向是local embedding + FTS rank fusion；它尚未冻结card或进入实现，必须先证明中文/paraphrase retrieval的真实缺口。
+ML5已按[`Lightweight Memory Core and Frontier Adapters Spec`](../../spec/agent-memory-lightweight-core-and-adapters.md)完成product closure。两份FAL v1 receipt继续保留原`outcome: rejected`但不作为方向判决。CF2等待真实trace。EM-R1 candidate、tests、lock、model manifest与失败证据均保留；旧calibration没有eligible threshold，且旧evaluation经审计不能再称blind/sealed/family-disjoint。
+
+当前下一步已收窄为共享测试执行层：先提交candidate implementation、protocol与salted commitment，再实现input-only四arm runner、阶段化scorer和post-calibration execution freeze；只运行public development/calibration，若不存在预注册eligible operating point则停止，不解封evaluation。共享pack当前`sourceCommit=null`、candidate run为0，所以只能称benchmark mechanics完成，不能称两方案比较完成。Production保持FTS + recency。
 
 Memory v1 core仍不增加普通chat自动提炼、remote disclosure、TUI、daemon或企业治理；`preview_usable`也不等于`stable`。

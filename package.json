@@ -30,6 +30,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lab:context-folding": "node --import tsx scripts/run-context-folding-lab.mjs",
+    "lab:local-embedding": "node --import tsx scripts/run-local-embedding-lab.mjs",
     "memory:baseline": "tsx src/memory/benchmark/run-agent-memory-baseline-cli.ts",
     "memory:validate": "tsx src/memory/benchmark/run-agent-memory-validate-cli.ts",
     "memory:working:benchmark": "tsx src/memory/benchmark/run-agent-memory-working-state-cli.ts",

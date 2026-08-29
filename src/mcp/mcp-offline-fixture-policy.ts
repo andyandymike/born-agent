@@ -9,9 +9,9 @@ const REQUIRED_FIXTURE_FILES = Object.freeze([
 ]);
 const REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/server.mjs": "9093c8cbf78b9bc29b0d1ae82f2ed75fb6b28af951aa1c3ef786070f53ad3037",
-  // FAL-CF0: this remains a frozen byte oracle. The reviewed package scripts
-  // now also expose the local-only context-folding baseline lab.
-  "package.json": "dfe03dbe15b84e78dd87d1b6dd4e74728c3fb9b43c6484f250576edeb8658122",
+  // FAL-EM0: this remains a frozen byte oracle. The reviewed package scripts
+  // expose only local, explicit frontier-lab baseline commands.
+  "package.json": "f1816aa6a349bc22fcb65d4015ebf92f58d53e27b75309292b318a1b252d26d1",
   "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 
@@ -26,7 +26,7 @@ const PHASE18_REVIEWED_SHA256 = Object.freeze({
   "fixtures/mcp/phase18-server/resources/guide.md": "687e67e92fb08155e839600ccf1e3c4c279543a5d9ecab32e48378b97620fab8",
   "fixtures/mcp/phase18-server/resources/large.txt": "29300fac5e5817c9cf9dc0a6c01b93ab88799a1b8f6996e325f4855dd0bc7417",
   "fixtures/mcp/phase18-server/server.mjs": "b1957b5fb498edc6b3a6adb338e85612a156d447e42241f51bb5dfce75aa31c8",
-  "package.json": "dfe03dbe15b84e78dd87d1b6dd4e74728c3fb9b43c6484f250576edeb8658122",
+  "package.json": "f1816aa6a349bc22fcb65d4015ebf92f58d53e27b75309292b318a1b252d26d1",
   "pnpm-lock.yaml": "cddadcf3bc9c49f9279f5d0c1a9478d07d7837350e821d9f5df74f9f37062668",
 } as const);
 

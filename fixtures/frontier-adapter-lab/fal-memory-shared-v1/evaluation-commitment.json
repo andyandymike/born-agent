@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "packId": "shared-evaluation-one-shot-v1",
+  "createdAt": "2026-08-29T05:30:00.000Z",
+  "state": "committed_unrevealed",
+  "commitmentDomain": "bornagent-fal-memory-shared-v1-evaluation-pack",
+  "saltedPackCommitmentSha256": "1b49cf7071cc91da85aba6c8db37f88e96f1b9cbb6096618e76075937dd1061c",
+  "nonceBytes": 32,
+  "candidateFreezeSha256": "9f59cdece1a50fda4df0ed715eea03411cd52e372f1e162a51d52e9e01214590",
+  "protocolSha256": "8c837d780a74d208825fc83c90d4cc5e8f177755ec49b9c06250924359893665",
+  "timelineCount": 12,
+  "probeCount": 120,
+  "answerableCount": 72,
+  "abstentionCount": 48,
+  "workerMountPolicy": "evaluation_input_only_no_repo_no_goldens_no_network",
+  "revealPolicy": "publish_nonce_pack_observations_and_receipt_after_first_run"
+}

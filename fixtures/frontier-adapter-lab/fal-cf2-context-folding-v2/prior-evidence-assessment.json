@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-cf2-context-folding-v2",
+  "priorExperimentId": "fal-cf0-context-folding-lite-v1",
+  "priorEvidenceReceiptSha256": "88cac12c8010d24266bcc2900fc5f4ee3a9f9724329f63d27f9633a931cd3d9b",
+  "priorCandidateImplementationSha256": "b63740754e947af6a37d571380936d9c57eaa865b35f91cf5323d434c68c3981",
+  "priorSourceCommit": null,
+  "priorCandidateSourceAvailable": false,
+  "priorCandidateRecoverableFromGit": false,
+  "priorCaseRole": "known_regression_generated_fixture",
+  "traceBackedCaseCount": 0,
+  "literalRepresentativeVerifiedRouteCount": 3,
+  "allClassVerifiedRouteCount": 7,
+  "historicalValidatorMatchedLiteralContract": false,
+  "allowedInterpretation": {
+    "losslessSecurityFixtureClaims": "historically_supported",
+    "implementationFidelity": "inconclusive",
+    "evidenceValidity": "limited",
+    "productFit": "inconclusive",
+    "promotion": "blocked",
+    "candidateLifecycle": "removed_legacy_policy"
+  }
+}

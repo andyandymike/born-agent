@@ -4,7 +4,7 @@
 
 > 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且remote provider injection为0。[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)已完成；CF1因代表性净收益不足被拒绝并删除，不能从实验回执推断adapter可用。
+> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且remote provider injection为0。CF2与EM-R1都保留disabled；旧EM-R1 holdout已由append-only correction降级为known exposed。新的FAL Memory Shared Benchmark v1已完成public development/calibration：embedding只通过retrieval-stage gate，CF在12/12 timeline都未被收益规则选中，fixed reader四arm must-answer grounded success均为0；evaluation 120 probes仍只公开salted commitment且未运行。当前`sourceCommit=null`，结果不是promotion evidence。
 
 ## 当前阅读顺序
 
@@ -75,8 +75,11 @@
 24. Agent Memory learning-delivery lane：
     - [`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)：切片顺序、学习问题、预算与时间账
     - [`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)：当前数据、端口、行为、实验晋级与机械验收合同
-    - [`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)：首张frontier experiment已完成；CF0保留，CF1因代表性净收益不足被拒绝并删除
-    - [`Context Folding Lite 实验记录`](../docs/agent-memory/context-folding-lite-experiment-record.md)：24-case结果、机器回执、删除边界与下一步
+    - [`FAL-CF0 / CF2 — Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)：v1证据更正、CF2 retained lab implementation、trace-backed corpus合同与正交gates
+    - [`Context Folding Lite 实验记录`](../docs/agent-memory/context-folding-lite-experiment-record.md)：v1历史删除边界与CF2 20-case mechanics结果、0-trace产品边界
+    - [`FAL-EM0 / EM-R1 — Local Embedding + Selective Retrieval`](frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)：v1 observation、data-adequacy audit、48/48 family-disjoint redesign与risk–coverage合同
+    - [`Local Embedding Hybrid 实验记录`](../docs/agent-memory/local-embedding-hybrid-experiment-record.md)：FTS/E5历史结果、EM-R1 retained实现、data-contract修正、calibration曲线与根因边界
+    - [`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)：24×10共享时间线、2×2 retrieval/projection实验、分阶段指标与one-shot commit/reveal协议
     - `agent-memory-and-context-maintenance.md`：本地exhaustive research/threat-model参考；不作为当前排期或完成权威
 
 Phase 0–20均已实现并有分阶段本地/跨平台证据，21A已通过本地gate。21B–21E已Deferred且M12不再是当前个人项目目标，因此Web、IDE、browser/computer-use、remote worker与team mode仍不可用。当前开发转为真实使用驱动的release、可靠性、简化、质量效率与开源维护。Phase18的Skills、MCP primitives、declarative/command Hooks和local Plugin lifecycle/reconciliation已通过M9；

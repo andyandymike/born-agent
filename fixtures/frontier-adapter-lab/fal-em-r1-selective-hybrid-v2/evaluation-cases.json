@@ -1,0 +1,1207 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "fal-em-r1-selective-hybrid-v2",
+  "split": "evaluation",
+  "cases": [
+    {
+      "caseId": "eva-semantic-portable-package",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-portable-package",
+      "queryTemplateId": "evaluation-query-semantic-portable-package",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "如何证明交付物不依赖在线下载"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-portable-package"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-command-consent",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-command-consent",
+      "queryTemplateId": "evaluation-query-semantic-command-consent",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "取消过的命令以后想运行该怎么办"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-command-consent"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-index-rebuild",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-index-rebuild",
+      "queryTemplateId": "evaluation-query-semantic-index-rebuild",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "仓库内容更新后搜索仍显示旧答案怎么修"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-index-rebuild"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-origin-check",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-origin-check",
+      "queryTemplateId": "evaluation-query-semantic-origin-check",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "召回结果能不能直接当成最新事实"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-origin-check"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-sporadic-ci",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-sporadic-ci",
+      "queryTemplateId": "evaluation-query-semantic-sporadic-ci",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "流水线不是每次都失败该如何判断"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-sporadic-ci"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-rollout-switch",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-rollout-switch",
+      "queryTemplateId": "evaluation-query-semantic-rollout-switch",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "新召回方案出问题时怎样立即撤回"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-rollout-switch"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-artifact-digest",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-artifact-digest",
+      "queryTemplateId": "evaluation-query-semantic-artifact-digest",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "Where can a disconnected customer verify the shipped package?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-artifact-digest"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-preference-policy",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-preference-policy",
+      "queryTemplateId": "evaluation-query-semantic-preference-policy",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "Which user details are allowed to persist between sessions?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-preference-policy"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-stream-resume",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-stream-resume",
+      "queryTemplateId": "evaluation-query-semantic-stream-resume",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "事件订阅断开后怎样避免重复处理"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-stream-resume"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-safe-space",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-safe-space",
+      "queryTemplateId": "evaluation-query-semantic-safe-space",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "释放磁盘空间前怎样保证可以反悔"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-safe-space"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-database-transition",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-database-transition",
+      "queryTemplateId": "evaluation-query-semantic-database-transition",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "数据库升级如何避免半新半旧状态"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-database-transition"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-regional-clock",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-regional-clock",
+      "queryTemplateId": "evaluation-query-semantic-regional-clock",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "跨时区提醒怎样避免夏令时偏移"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-regional-clock"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-incident-history",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-incident-history",
+      "queryTemplateId": "evaluation-query-semantic-incident-history",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "How do we prove which approval led to a side effect?"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-incident-history"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-terminal-return",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-terminal-return",
+      "queryTemplateId": "evaluation-query-semantic-terminal-return",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "终端意外关闭后怎样恢复当前工作"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-terminal-return"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-package-pin",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-package-pin",
+      "queryTemplateId": "evaluation-query-semantic-package-pin",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "怎样确保另一台机器安装出同样依赖"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-package-pin"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-semantic-continuation-token",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_answerable",
+      "scenarioFamilyId": "evaluation-scenario-semantic-continuation-token",
+      "queryTemplateId": "evaluation-query-semantic-continuation-token",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "后台任务重启后从哪里接着执行"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-semantic-continuation-token"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 5,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-control-exact-violet",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "exact_control",
+      "scenarioFamilyId": "evaluation-scenario-control-exact-violet",
+      "queryTemplateId": "evaluation-query-control-exact-violet",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "exact_record",
+        "targetRecordKey": "eva-control-exact-violet"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-exact-violet"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "exact_bypass",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-control-exact-sienna",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "exact_control",
+      "scenarioFamilyId": "evaluation-scenario-control-exact-sienna",
+      "queryTemplateId": "evaluation-query-control-exact-sienna",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "exact_record",
+        "targetRecordKey": "eva-control-exact-sienna"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-exact-sienna"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "exact_bypass",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-control-phrase-maple",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "phrase_control",
+      "scenarioFamilyId": "evaluation-scenario-control-phrase-maple",
+      "queryTemplateId": "evaluation-query-control-phrase-maple",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "\"glass maple waypoint\""
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-phrase-maple"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "lexical",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-control-phrase-finch",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "phrase_control",
+      "scenarioFamilyId": "evaluation-scenario-control-phrase-finch",
+      "queryTemplateId": "evaluation-query-control-phrase-finch",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "\"patient finch signature\""
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-phrase-finch"
+        ],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "lexical",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-control-temporal-zone",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "evaluation-scenario-control-temporal-zone",
+      "queryTemplateId": "evaluation-query-control-temporal-zone",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "aurora-zone"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-temporal-zone-current"
+        ],
+        "forbiddenRecordKeys": [
+          "eva-control-temporal-zone-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "eva-control-temporal-zone-current",
+        "expectedActionParametersSha256": "c9edbf5e1f73245be1b7c6675f02851bbfa5a0b381b0cff04e7c570241ee67d5"
+      }
+    },
+    {
+      "caseId": "eva-control-temporal-probe",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "evaluation-scenario-control-temporal-probe",
+      "queryTemplateId": "evaluation-query-control-temporal-probe",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "marble-probe"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-temporal-probe-current"
+        ],
+        "forbiddenRecordKeys": [
+          "eva-control-temporal-probe-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "eva-control-temporal-probe-current",
+        "expectedActionParametersSha256": "f5ce6f82955edbf813d4d9832f0bcfb508bead08ce38a15cfe211a2f963656a4"
+      }
+    },
+    {
+      "caseId": "eva-control-temporal-lane",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "evaluation-scenario-control-temporal-lane",
+      "queryTemplateId": "evaluation-query-control-temporal-lane",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "willow-lane"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-temporal-lane-current"
+        ],
+        "forbiddenRecordKeys": [
+          "eva-control-temporal-lane-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "eva-control-temporal-lane-current",
+        "expectedActionParametersSha256": "b714fe7b08df2229d2011b3811f43e79b77e8283abcaa6d26eaf46cee04b8d36"
+      }
+    },
+    {
+      "caseId": "eva-control-temporal-window",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "temporal_control",
+      "scenarioFamilyId": "evaluation-scenario-control-temporal-window",
+      "queryTemplateId": "evaluation-query-control-temporal-window",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "ember-window"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "answerable",
+        "allowedRelevantRecordKeys": [
+          "eva-control-temporal-window-current"
+        ],
+        "forbiddenRecordKeys": [
+          "eva-control-temporal-window-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": 1,
+        "expectedCurrentRevisionKey": "eva-control-temporal-window-current",
+        "expectedActionParametersSha256": "8a8276a3f658f5cfdca2627b925f2d0a03b040db4809eee9ce238243fd948e6e"
+      }
+    },
+    {
+      "caseId": "eva-negative-far-desert-whale",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "evaluation-scenario-negative-far-desert-whale",
+      "queryTemplateId": "evaluation-query-negative-far-desert-whale",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "沙漠鲸鱼为什么穿越水晶沙丘迁徙"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-far-teapot-astronomy",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "evaluation-scenario-negative-far-teapot-astronomy",
+      "queryTemplateId": "evaluation-query-negative-far-teapot-astronomy",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "哪个茶壶星座会在日出之前沸腾"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-far-moss-engine",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "evaluation-scenario-negative-far-moss-engine",
+      "queryTemplateId": "evaluation-query-negative-far-moss-engine",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "苔藓能否驱动青铜机车跨越海洋"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-far-cloud-pottery",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "far_unrelated",
+      "scenarioFamilyId": "evaluation-scenario-negative-far-cloud-pottery",
+      "queryTemplateId": "evaluation-query-negative-far-cloud-pottery",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "雷声怎样烧制到云朵陶器表面"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-lexical-meadow-package",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-lexical-meadow-package",
+      "queryTemplateId": "evaluation-query-negative-lexical-meadow-package",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "meadow package"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-lexical-meadow-package"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-lexical-token-consent",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-lexical-token-consent",
+      "queryTemplateId": "evaluation-query-negative-lexical-token-consent",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "token consent"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-lexical-token-consent"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-lexical-history-indigo",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-lexical-history-indigo",
+      "queryTemplateId": "evaluation-query-negative-lexical-history-indigo",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "history indigo"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-lexical-history-indigo"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-lexical-index-canyon",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "lexical_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-lexical-index-canyon",
+      "queryTemplateId": "evaluation-query-negative-lexical-index-canyon",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "index canyon"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-lexical-index-canyon"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-near-zone",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "evaluation-scenario-negative-near-zone",
+      "queryTemplateId": "evaluation-query-negative-near-zone",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "线上应用当前由哪个服务区承载"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-near-zone"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-near-retry",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "evaluation-scenario-negative-near-retry",
+      "queryTemplateId": "evaluation-query-negative-near-retry",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "发布动作批准的重试次数是多少"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-near-retry"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-near-archive",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "evaluation-scenario-negative-near-archive",
+      "queryTemplateId": "evaluation-query-negative-near-archive",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "客户归档最终保留在什么地方"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-near-archive"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-near-tag",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "semantic_near_miss",
+      "scenarioFamilyId": "evaluation-scenario-negative-near-tag",
+      "queryTemplateId": "evaluation-query-negative-near-tag",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "哪个标签已经允许进入部署流程"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-near-tag"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-boiler-origin",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-boiler-origin",
+      "queryTemplateId": "evaluation-query-negative-boiler-origin",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "origin revision action"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-boiler-origin"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-boiler-project",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-boiler-project",
+      "queryTemplateId": "evaluation-query-negative-boiler-project",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "project verification report"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-boiler-project"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-boiler-run",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-boiler-run",
+      "queryTemplateId": "evaluation-query-negative-boiler-run",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "run step finished"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-boiler-run"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-negative-boiler-recall",
+      "split": "evaluation",
+      "class": "representative",
+      "category": "boilerplate_collision",
+      "scenarioFamilyId": "evaluation-scenario-negative-boiler-recall",
+      "queryTemplateId": "evaluation-query-negative-boiler-recall",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "recall search response"
+      },
+      "filteredTargetKind": null,
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-negative-boiler-recall"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-wrong-repository",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-wrong-repository",
+      "queryTemplateId": "evaluation-query-filtered-wrong-repository",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "缟玛瑙发布凭据保存在什么地方"
+      },
+      "filteredTargetKind": "wrong_repository",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-wrong-repository"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-wrong-principal",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-wrong-principal",
+      "queryTemplateId": "evaluation-query-filtered-wrong-principal",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "私有万寿菊设置的值是什么"
+      },
+      "filteredTargetKind": "wrong_principal",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-wrong-principal"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-stale-source",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-stale-source",
+      "queryTemplateId": "evaluation-query-filtered-stale-source",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "狮鹫服务当前使用哪一个网关"
+      },
+      "filteredTargetKind": "stale_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-stale-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-tampered-source",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-tampered-source",
+      "queryTemplateId": "evaluation-query-filtered-tampered-source",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "白银构建应该用哪个摘要验证"
+      },
+      "filteredTargetKind": "tampered_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-tampered-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-unavailable-source",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-unavailable-source",
+      "queryTemplateId": "evaluation-query-filtered-unavailable-source",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "缺失笔记允许了哪个苍鹭密钥"
+      },
+      "filteredTargetKind": "unavailable_source",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-unavailable-source"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-retracted",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-retracted",
+      "queryTemplateId": "evaluation-query-filtered-retracted",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "苔原功能现在应该打开哪个开关"
+      },
+      "filteredTargetKind": "retracted",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-retracted"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-superseded",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-superseded",
+      "queryTemplateId": "evaluation-query-filtered-superseded",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "旧三角洲策略是否仍采用九小时"
+      },
+      "filteredTargetKind": "superseded",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-superseded-previous"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    },
+    {
+      "caseId": "eva-filtered-no-current-revision",
+      "split": "evaluation",
+      "class": "security",
+      "category": "filtered_target_abstention",
+      "scenarioFamilyId": "evaluation-scenario-filtered-no-current-revision",
+      "queryTemplateId": "evaluation-query-filtered-no-current-revision",
+      "distractorPoolId": "evaluation-shared-pool-v2",
+      "query": {
+        "mode": "text",
+        "value": "已删除的杨树指令要求什么动作"
+      },
+      "filteredTargetKind": "no_current_revision",
+      "golden": {
+        "answerability": "must_abstain",
+        "allowedRelevantRecordKeys": [],
+        "forbiddenRecordKeys": [
+          "eva-filtered-no-current-revision"
+        ],
+        "expectedQueryRoute": "hybrid",
+        "requiredRank": null,
+        "expectedCurrentRevisionKey": null,
+        "expectedActionParametersSha256": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "freezeRole": "pre_calibration_implementation_freeze",
+  "frozenAt": "2026-08-29T05:30:00.000Z",
+  "sourceCommit": null,
+  "sourceState": "working_tree_not_promotion_eligible",
+  "contextFoldingImplementationSha256": "9a4115e2c3382ecfed3b2c6ceeb37b1eadb3c1e3031bceb04a05689f7ec7cdcc",
+  "localEmbeddingImplementationSha256": "cc14a8969f0fedba514732b59f9f5e5eee88afc6b552a909044f63f91f016853",
+  "candidateImplementationsFrozen": true,
+  "sharedCalibrationRunState": "not_run",
+  "sharedOperatingPointState": "not_selected_before_shared_calibration",
+  "evaluationExecutionFreezeRequired": true,
+  "candidateSharedOutputsSeenBeforeFreeze": false,
+  "authoringBlindness": "not_proven_method_aware",
+  "runtimeBlindnessRequiredForEvaluation": true,
+  "promotionEvidenceAllowed": false
+}

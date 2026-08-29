@@ -1,0 +1,13 @@
+{
+  "name": "@bornagent/fal-em-r1",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "3.3.3",
+    "undici": "6.21.3"
+  }
+}
