@@ -348,7 +348,16 @@ export async function scoreSharedRetrieval(input: Readonly<{
   const baselineFlat = flattened(baseline);
   const baselineMacro = macroRetrieval(baseline);
   const baselineAbsolute = absoluteCounts(baselineFlat);
-  const projection = projectionSecurityFailures(timelines);
+  let projectionTimelines = timelines;
+  if (observation.schemaVersion === 2) {
+    const sourceGoldens = await loadSharedScoringSplit(input.repositoryRoot, input.split);
+    if (sha256Canonical(sourceGoldens) !==
+        (goldens as AnswerPolicyV2GoldenPack).sourceGoldensSha256) {
+      throw new Error("answer-policy v2 source golden lineage mismatch");
+    }
+    projectionTimelines = pairedTimelines(observation, sourceGoldens);
+  }
+  const projection = projectionSecurityFailures(projectionTimelines);
   const thresholds = Object.freeze([...new Set(observation.timelines
     .flatMap((timeline) => timeline.probes)
     .flatMap((probe) => probe.thresholdBehaviors)

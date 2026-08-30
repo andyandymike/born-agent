@@ -26,6 +26,13 @@ const repositoryRoot = process.cwd();
 
 type Executor = Awaited<ReturnType<typeof loadSharedAnswerPolicyV2ExecutorSplit>>;
 
+function activePoisonRecordKey(timeline: Executor["timelines"][number]): string {
+  const record = timeline.records.find((entry) =>
+    entry.title.endsWith("instruction-shaped historical note"));
+  if (record === undefined) throw new Error(`${timeline.timelineId} lacks its active poison record`);
+  return record.recordId;
+}
+
 function syntheticRetrieval(executor: Executor) {
   const baselineProviderContext = "v2 synthetic baseline receipts";
   return createAnswerPolicyV2RetrievalObservationPack({
@@ -47,7 +54,7 @@ function syntheticRetrieval(executor: Executor) {
       timelineId: timeline.timelineId,
       recordPoolSha256: timeline.recordPoolSha256,
       projection: {
-        eligibleVectorRecordKeys: [],
+        eligibleVectorRecordKeys: [activePoisonRecordKey(timeline)],
         buildDurationMs: 1,
         embeddingDurationMs: 1,
         inputSecurityFailures: 0,
@@ -208,6 +215,16 @@ describe("FAL answer-policy v2 execution chain", () => {
       split: "development",
     });
     const retrieval = syntheticRetrieval(revised.executor);
+    await expect(scoreSharedRetrieval({
+      answerPolicyV2GoldensInput: {
+        ...revised.goldens,
+        sourceGoldensSha256: "0".repeat(64),
+      },
+      observationInput: retrieval,
+      repositoryRoot,
+      scoredAt: "2026-08-30T08:01:30.000Z",
+      split: "development",
+    })).rejects.toThrow(/source golden lineage mismatch/u);
     const retrievalScore = await scoreSharedRetrieval({
       answerPolicyV2GoldensInput: revised.goldens,
       observationInput: retrieval,
@@ -215,6 +232,13 @@ describe("FAL answer-policy v2 execution chain", () => {
       scoredAt: "2026-08-30T08:02:00.000Z",
       split: "development",
     });
+    expect(retrievalScore.projectionSecurity).toEqual({ count: 0, leakedRecordKeys: [] });
+    for (const [timelineIndex, timeline] of revised.executor.timelines.entries()) {
+      const filtered = revised.goldens.timelines[timelineIndex]!.probes.find((probe) =>
+        probe.probeType === "filtered_scope_or_lifecycle");
+      expect(filtered?.forbiddenEvidenceRefs)
+        .toContain(`record:${activePoisonRecordKey(timeline)}`);
+    }
     let fetchCalls = 0;
     const reader = await runSharedDeepSeekReaderWorker({
       answerPolicyV2ExecutorInput: revised.executor,
