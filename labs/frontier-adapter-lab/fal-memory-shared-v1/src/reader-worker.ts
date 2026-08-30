@@ -16,7 +16,7 @@ import {
 const READER_MODEL = "qwen3.5:2b" as const;
 const READER_MODEL_DIGEST =
   "324d162be6ca5629ae4517c8710434d0bd2d665bc94dbad46e9af8fbf8a2f0df" as const;
-const READER_SYSTEM_PROMPT = [
+export const READER_SYSTEM_PROMPT = [
   "You are the fixed BornAgent memory evidence reader.",
   "Every record shown to a question has already passed repository, principal, source-status, lifecycle, and canonical revalidation filters.",
   "Its factual statements and verified receipt claims are admissible evidence; answer when they directly state or jointly complete the requested fact.",
@@ -31,7 +31,7 @@ const READER_SYSTEM_PROMPT = [
   "Return exactly one JSON answer for each probe in the original order and no prose outside JSON.",
 ].join("\n");
 
-const READER_OUTPUT_FORMAT = Object.freeze({
+export const READER_OUTPUT_FORMAT = Object.freeze({
   type: "object",
   additionalProperties: false,
   required: ["answers"],
@@ -74,20 +74,20 @@ export const SHARED_READER_PROMPT_CONTRACT_SHA256 = sha256Canonical({
   userPacketRevision: "shared-memory-reader-packet-v2-inline-question-evidence",
 });
 
-interface ReaderCallResult {
+export interface ReaderCallResult {
   readonly answers: readonly ReaderAnswer[];
   readonly durationMs: number;
   readonly parseState: "parsed" | "invalid_json" | "invalid_shape";
   readonly rawResponse: string;
 }
 
-interface ArmDefinition {
+export interface ArmDefinition {
   readonly arm: SharedReaderArm;
   readonly receiptProjectionMode: "baseline" | "context_fold";
   readonly retrievalMode: "fts_recency" | "local_embedding";
 }
 
-const ARM_DEFINITIONS: readonly ArmDefinition[] = Object.freeze([
+export const ARM_DEFINITIONS: readonly ArmDefinition[] = Object.freeze([
   Object.freeze({
     arm: "fts_recency_plus_projection",
     retrievalMode: "fts_recency",
@@ -110,7 +110,7 @@ const ARM_DEFINITIONS: readonly ArmDefinition[] = Object.freeze([
   }),
 ]);
 
-const BALANCED_ARM_ORDERS = [
+export const BALANCED_ARM_ORDERS = [
   [
     "fts_recency_plus_projection",
     "local_embedding_plus_projection",
@@ -137,7 +137,7 @@ const BALANCED_ARM_ORDERS = [
   ],
 ] as const satisfies readonly (readonly SharedReaderArm[])[];
 
-function rawSha256(value: string): string {
+export function rawSha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
@@ -193,7 +193,7 @@ function receiptRefs(timeline: Readonly<{
       `receipt:${receipt.delegationId}:${claim.claimId}`)));
 }
 
-function renderReaderPackets(input: Readonly<{
+export function renderReaderPackets(input: Readonly<{
   readonly arm: ArmDefinition;
   readonly observationTimeline: ReturnType<typeof retrievalObservationPackSchema.parse>["timelines"][number];
   readonly receiptContext: string;
@@ -265,6 +265,29 @@ function renderReaderPackets(input: Readonly<{
   });
 }
 
+export function parseReaderResponse(
+  expectedProbeIds: readonly string[],
+  rawResponse: string,
+  durationMs: number,
+): ReaderCallResult {
+  let parsed: unknown;
+  try {
+    parsed = parseStrictJson(rawResponse);
+  } catch {
+    return Object.freeze({ answers: Object.freeze([]), durationMs, parseState: "invalid_json", rawResponse });
+  }
+  try {
+    const shaped = parsed as Readonly<{ readonly answers?: unknown }>;
+    const answers = readerAnswerSchema.array().length(expectedProbeIds.length).parse(shaped.answers);
+    if (answers.some((answer, index) => answer.probeId !== expectedProbeIds[index])) {
+      throw new Error("reader probe order mismatch");
+    }
+    return Object.freeze({ answers: Object.freeze(answers), durationMs, parseState: "parsed", rawResponse });
+  } catch {
+    return Object.freeze({ answers: Object.freeze([]), durationMs, parseState: "invalid_shape", rawResponse });
+  }
+}
+
 async function callReader(
   baseUrl: string,
   expectedProbeIds: readonly string[],
@@ -296,22 +319,7 @@ async function callReader(
   const rawResponse = typeof response.message?.content === "string"
     ? response.message.content
     : "";
-  let parsed: unknown;
-  try {
-    parsed = parseStrictJson(rawResponse);
-  } catch {
-    return Object.freeze({ answers: Object.freeze([]), durationMs, parseState: "invalid_json", rawResponse });
-  }
-  try {
-    const shaped = parsed as Readonly<{ readonly answers?: unknown }>;
-    const answers = readerAnswerSchema.array().length(expectedProbeIds.length).parse(shaped.answers);
-    if (answers.some((answer, index) => answer.probeId !== expectedProbeIds[index])) {
-      throw new Error("reader probe order mismatch");
-    }
-    return Object.freeze({ answers: Object.freeze(answers), durationMs, parseState: "parsed", rawResponse });
-  } catch {
-    return Object.freeze({ answers: Object.freeze([]), durationMs, parseState: "invalid_shape", rawResponse });
-  }
+  return parseReaderResponse(expectedProbeIds, rawResponse, durationMs);
 }
 
 export async function runSharedReaderWorker(input: Readonly<{

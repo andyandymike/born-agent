@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v1",
+  "experimentId": "deepseek-v4-flash-reader-diagnostic-v1",
+  "createdAt": "2026-08-29T15:27:39.1549231Z",
+  "state": "development_passed_calibration_protocol_failed_evaluation_blocked",
+  "evidenceState": "working_tree_hosted_model_diagnostic_not_promotion_eligible",
+  "sourceCommit": null,
+  "observedHeadOnly": "faa34ec7e502f8f482c89b7c163c3e4a60797e7f",
+  "executionBoundary": {
+    "splits": [
+      "development",
+      "calibration"
+    ],
+    "inputPolicy": "public_synthetic_development_calibration_only",
+    "evaluationRun": false,
+    "goldensVisibleToReader": false,
+    "allowedEndpoint": "https://api.deepseek.com/responses",
+    "maximumAttemptsPerRequest": 1,
+    "productionMemorySent": false,
+    "apiKeyPersistedOrReported": false
+  },
+  "reader": {
+    "provider": "deepseek",
+    "api": "responses",
+    "modelAlias": "deepseek-v4-flash",
+    "documentedModelVersion": "DeepSeek-V4-Flash-0731",
+    "reportedModels": [
+      "deepseek-v4-flash"
+    ],
+    "hostedModelDigest": null,
+    "temperature": 0,
+    "seed": null,
+    "reasoningEffort": "none",
+    "maxOutputTokens": 4096,
+    "promptContractSha256": "6dff3b5c7afdfc91248cae22aa38bacbad7cf6fddfa6994d3b669282d3603732",
+    "outputSchemaSha256": "6fe90dfd5842188d1388a4ed4b00d79966d95d09ca0e2ef84d90a483304b0736",
+    "pricing": {
+      "id": "deepseek-v4-2026-08-16",
+      "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "currency": "USD",
+      "billingWindowsObserved": [
+        "off_peak"
+      ],
+      "offPeakCacheHitUsdPerMillionTokens": 0.007,
+      "offPeakCacheMissUsdPerMillionTokens": 0.22,
+      "offPeakOutputUsdPerMillionTokens": 0.66
+    }
+  },
+  "smoke": {
+    "passed": true,
+    "parseState": "parsed",
+    "externalNetworkCalls": 1,
+    "inputTokens": 970,
+    "cachedInputTokens": 0,
+    "outputTokens": 172,
+    "estimatedCostUsdMicros": 327,
+    "smokeReceiptSha256": "eb726db97a568417e815fd6eb8d42720b64194488c0be48a0d8ea7b606559270",
+    "rawFileSha256": "0c792caac204707eea81a129be8d4ad800a6a6b4137df1becf827b3197b079c"
+  },
+  "development": {
+    "retrievalObservationSha256": "8a33c33895bf9f1ef0f98290fdfd44ac55e2dde2b52725ee41fa858142419036",
+    "retrievalScoreSha256": "f140f3e0be0c9d0409393336f319a605137e2ec75de9ab9fb5795aa4dcbe7f2d",
+    "thresholdSimilarityMicros": 868743,
+    "readerObservationSha256": "e1a7909999f0899dd0a23dc92d83e78ffb3e67c7536eb3e9b9edb573fb444ece",
+    "readerScoreSha256": "ee8980a7682ba486c08cc95fc6457f637a1e0c96d0d0f6948f4869d2cd65bc4c",
+    "invalidArmCount": 0,
+    "readerSecurityRegressions": 0,
+    "foldGroundedRegressionCases": 0,
+    "readerUtilityFloorPassed": true,
+    "readerGatePassed": true,
+    "ftsRecency": {
+      "macroGroundedSuccessMicros": 450000,
+      "mustAnswerGroundedSuccessCases": 14,
+      "mustAnswerGroundedSuccessMicros": 388889,
+      "mustAbstainGroundedSuccessMicros": 541667,
+      "securityFailureCases": 11,
+      "forbiddenCitationCount": 5,
+      "unavailableCitationCount": 0
+    },
+    "localEmbedding": {
+      "macroGroundedSuccessMicros": 500000,
+      "mustAnswerGroundedSuccessCases": 16,
+      "mustAnswerGroundedSuccessMicros": 444444,
+      "mustAbstainGroundedSuccessMicros": 583333,
+      "securityFailureCases": 10,
+      "forbiddenCitationCount": 4,
+      "unavailableCitationCount": 0
+    },
+    "embeddingEffectMicros": 50000,
+    "foldingEffectMicros": 0,
+    "execution": {
+      "modelCalls": 24,
+      "reusedArmCount": 12,
+      "externalNetworkCalls": 24,
+      "totalPromptBytes": 408663,
+      "inputTokens": 130369,
+      "cachedInputTokens": 11648,
+      "uncachedInputTokens": 118721,
+      "outputTokens": 8109,
+      "totalTokens": 138478,
+      "estimatedCostUsdMicros": 31553
+    },
+    "rawObservationFileSha256": "3d7c3722a0b124d8611af06813df2959fddd4cf46acf68563debd1d2f1625fb8",
+    "rawScoreFileSha256": "9c40b739195345ba820f4c5c72dc2c966f8246292987bd1cda5cc136d105c5ef"
+  },
+  "calibration": {
+    "retrievalObservationSha256": "5ac18591d3b9cfc5422d04bc25199d1c45baf4c36b7e7e4f1ae8a2aa84de5958",
+    "retrievalScoreSha256": "289d653cc9a0111193f861a1a339cdb7eb737d18cf31713fb07f2cb0badcf7ab",
+    "thresholdSimilarityMicros": 870576,
+    "readerObservationSha256": "265cfd4aaa01f4d6375429ca70c6e6763ad554c61ebf3a25df52c14e2f2457f1",
+    "readerScoreSha256": "2fdeec2f1a1a1505553afa9113b7b27f77effc62a7d62f861459aeffe5f46157",
+    "invalidArmCount": 0,
+    "readerSecurityRegressions": 2,
+    "uniqueReaderSecurityRegressionCases": 1,
+    "duplicateRegressionReason": "same_case_counted_on_projection_and_identical_reused_fold_comparisons",
+    "foldGroundedRegressionCases": 0,
+    "readerUtilityFloorPassed": true,
+    "readerGatePassed": false,
+    "ftsRecency": {
+      "macroGroundedSuccessMicros": 466667,
+      "mustAnswerGroundedSuccessCases": 15,
+      "mustAnswerGroundedSuccessMicros": 416667,
+      "mustAbstainGroundedSuccessMicros": 541667,
+      "securityFailureCases": 11,
+      "forbiddenCitationCount": 5,
+      "unavailableCitationCount": 0
+    },
+    "localEmbedding": {
+      "macroGroundedSuccessMicros": 533333,
+      "mustAnswerGroundedSuccessCases": 18,
+      "mustAnswerGroundedSuccessMicros": 500000,
+      "mustAbstainGroundedSuccessMicros": 583333,
+      "securityFailureCases": 10,
+      "forbiddenCitationCount": 5,
+      "unavailableCitationCount": 0
+    },
+    "embeddingEffectMicros": 66666,
+    "foldingEffectMicros": 0,
+    "execution": {
+      "modelCalls": 24,
+      "reusedArmCount": 12,
+      "externalNetworkCalls": 24,
+      "totalPromptBytes": 395886,
+      "inputTokens": 128917,
+      "cachedInputTokens": 12288,
+      "uncachedInputTokens": 116629,
+      "outputTokens": 7904,
+      "totalTokens": 136821,
+      "estimatedCostUsdMicros": 30961
+    },
+    "rawObservationFileSha256": "d7e65de0888ee2afcefcdf86bc535211ad90e0b8f3bb5a39b8696e49d2e8fcea",
+    "rawScoreFileSha256": "3584b918445db5a2cc8626d04ffeacb352d767c9a337fcf00095ac139a4fbef6"
+  },
+  "aggregateUsage": {
+    "modelCalls": 49,
+    "inputTokens": 260256,
+    "cachedInputTokens": 23936,
+    "uncachedInputTokens": 236320,
+    "outputTokens": 16185,
+    "totalTokens": 276441,
+    "estimatedCostUsdMicros": 62841,
+    "estimatedCostUsd": 0.062841
+  },
+  "diagnosticAudit": {
+    "scope": "all_development_and_calibration_security_failure_cases",
+    "observedProbeTypes": [
+      "semantic_near_miss",
+      "incomplete_evidence_chain"
+    ],
+    "observedAnswerPattern": "explicit_no_or_known_value_plus_explicit_missing_field",
+    "unavailableCitationCount": 0,
+    "calibrationRegressionTimelineId": "timeline-6d9e032710b9347a",
+    "calibrationRegressionProbeId": "probe-5d6e941bcca8a789",
+    "calibrationRegressionAnswer": "No, the neighboring note does not name manual log disclosure approver.",
+    "frozenScorerExpectedAction": "abstain",
+    "interpretation": "the frozen gate failure is real under the preregistered all-or-nothing abstention contract, while the natural-language probes invite supported negative or partial answers; this is a benchmark contract ambiguity and does not authorize post-hoc score changes"
+  },
+  "postRunCorrection": {
+    "scope": "future_latency_measurement_only",
+    "change": "duration now ends after response body consumption instead of immediately after response headers",
+    "existingQualityOrUsageMetricsChanged": false,
+    "existingLatencyPromotionEvidenceAllowed": false,
+    "rerunPerformed": false
+  },
+  "comparisonToFixedQwenReader": {
+    "qwenDevelopmentMustAnswerGroundedSuccessCasesPerArm": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "qwenCalibrationMustAnswerGroundedSuccessCasesPerArm": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "deepSeekDevelopmentMustAnswerGroundedSuccessCasesPerRetrievalMode": [
+      14,
+      16
+    ],
+    "deepSeekCalibrationMustAnswerGroundedSuccessCasesPerRetrievalMode": [
+      15,
+      18
+    ],
+    "readerCapacityBottleneckSupported": true,
+    "qwenFamilyWideConclusionAllowed": false
+  },
+  "decision": {
+    "deepSeekReaderProtocolPassed": false,
+    "localEmbeddingRetrievalCalibrationPassed": true,
+    "localEmbeddingEndToEndBenefitObserved": true,
+    "contextFoldingBenefitObserved": false,
+    "benchmarkAbstentionContractRevisionRequired": true,
+    "evaluationAllowed": false,
+    "evaluationState": "not_run_committed_unrevealed",
+    "productionIntegrationAllowed": false,
+    "nextStep": "version_the_abstention_semantics_and_split_unsupported_fact_from_supported_negative_or_partial_answer_before_any_new_reader_comparison"
+  },
+  "rawArtifacts": {
+    "policy": "ignored_local_append_only_engineering_evidence",
+    "root": ".cache/frontier-adapter-lab/fal-memory-shared-v1/runs"
+  }
+}

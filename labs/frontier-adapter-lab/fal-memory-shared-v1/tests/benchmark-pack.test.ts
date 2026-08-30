@@ -109,6 +109,42 @@ describe("FAL shared memory benchmark pack", () => {
     expect(receipt.evaluation?.commitmentReusedOrConsumed).toBe(false);
   });
 
+  it("retains the append-only DeepSeek diagnostic without overriding its failed calibration gate", async () => {
+    const receipt = parseStrictJson(await readFile(
+      join(fixtureDirectory, "deepseek-v4-flash-development-calibration-receipt.json"),
+      "utf8",
+    )) as {
+      state?: unknown;
+      sourceCommit?: unknown;
+      executionBoundary?: { evaluationRun?: unknown; productionMemorySent?: unknown };
+      development?: { readerGatePassed?: unknown };
+      calibration?: {
+        readerGatePassed?: unknown;
+        readerSecurityRegressions?: unknown;
+        uniqueReaderSecurityRegressionCases?: unknown;
+      };
+      aggregateUsage?: { modelCalls?: unknown; estimatedCostUsdMicros?: unknown };
+      decision?: {
+        deepSeekReaderProtocolPassed?: unknown;
+        benchmarkAbstentionContractRevisionRequired?: unknown;
+        evaluationAllowed?: unknown;
+      };
+    };
+    expect(receipt.state).toBe("development_passed_calibration_protocol_failed_evaluation_blocked");
+    expect(receipt.sourceCommit).toBeNull();
+    expect(receipt.executionBoundary?.evaluationRun).toBe(false);
+    expect(receipt.executionBoundary?.productionMemorySent).toBe(false);
+    expect(receipt.development?.readerGatePassed).toBe(true);
+    expect(receipt.calibration?.readerGatePassed).toBe(false);
+    expect(receipt.calibration?.readerSecurityRegressions).toBe(2);
+    expect(receipt.calibration?.uniqueReaderSecurityRegressionCases).toBe(1);
+    expect(receipt.aggregateUsage?.modelCalls).toBe(49);
+    expect(receipt.aggregateUsage?.estimatedCostUsdMicros).toBe(62_841);
+    expect(receipt.decision?.deepSeekReaderProtocolPassed).toBe(false);
+    expect(receipt.decision?.benchmarkAbstentionContractRevisionRequired).toBe(true);
+    expect(receipt.decision?.evaluationAllowed).toBe(false);
+  });
+
   it("rejects split-prefix family tricks, duplicate families, and ambiguous goldens", async () => {
     const loaded = await loadAndValidatePublicSharedBenchmark(repositoryRoot);
     const duplicateRegistry = structuredClone(loaded.registry);

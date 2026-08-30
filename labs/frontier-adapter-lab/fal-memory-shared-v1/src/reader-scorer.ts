@@ -4,11 +4,16 @@ import {
   type BenchmarkSplit,
   type SharedGoldenPack,
 } from "./benchmark-schema.js";
-import { readerObservationPackSchema, sharedReaderArms } from "./reader-schema.js";
+import {
+  readerObservationPackSchema,
+  sharedReaderArms,
+  type ReaderObservationPack,
+} from "./reader-schema.js";
 import { sharedMemoryProtocol } from "./protocol.js";
 
 type GoldenProbe = SharedGoldenPack["timelines"][number]["probes"][number];
 type ReaderArm = typeof sharedReaderArms[number];
+type ReaderArmObservation = ReaderObservationPack["timelines"][number]["arms"][number];
 
 interface ProbeScore {
   readonly timelineId: string;
@@ -140,6 +145,10 @@ function scoreKey(score: ProbeScore): string {
   return `${score.timelineId}:${score.probeId}`;
 }
 
+function armModelCalls(arm: ReaderArmObservation): number {
+  return "localModelCalls" in arm ? arm.localModelCalls : arm.modelCalls;
+}
+
 function regressions(
   scores: readonly ProbeScore[],
   baselineArm: ReaderArm,
@@ -225,8 +234,9 @@ export async function scoreSharedReader(input: Readonly<{
     regressions(scores, "fts_recency_plus_projection", "fts_recency_plus_context_fold", "securityFailure") +
     regressions(scores, "fts_recency_plus_context_fold", "local_embedding_plus_context_fold", "securityFailure") +
     regressions(scores, "local_embedding_plus_projection", "local_embedding_plus_context_fold", "securityFailure");
-  const localModelCalls = observation.timelines.flatMap((timeline) => timeline.arms)
-    .reduce((sum, arm) => sum + arm.localModelCalls, 0);
+  const observedArms = observation.timelines.flatMap((timeline) =>
+    timeline.arms.map((arm) => arm)) as readonly ReaderArmObservation[];
+  const modelCalls = observedArms.reduce((sum, arm) => sum + armModelCalls(arm), 0);
   const readerContract = sharedMemoryProtocol.operatingPointContract;
   const readerUtilityFloorPassed = sharedReaderArms.every((arm) =>
     (metrics.get(arm)?.mustAnswerGroundedSuccessCases as number) >=
@@ -235,8 +245,40 @@ export async function scoreSharedReader(input: Readonly<{
     readerSecurityRegressions <= readerContract.maximumReaderSecurityRegressions &&
     foldGroundedRegressionCases <= readerContract.maximumFoldReaderGroundedRegressionCases &&
     readerUtilityFloorPassed;
+  const execution = observation.schemaVersion === 1
+    ? Object.freeze({
+      localModelCalls: modelCalls,
+      reusedArmCount: observedArms.filter((arm) => arm.reusedFromArm !== null).length,
+      externalNetworkCalls: observation.reader.externalNetworkCalls,
+      totalPromptBytes: observedArms.filter((arm) => armModelCalls(arm) > 0)
+        .reduce((sum, arm) => sum + arm.promptBytes, 0),
+      totalDurationMs: observedArms.reduce((sum, arm) => sum + arm.durationMs, 0),
+    })
+    : (() => {
+      const receipts = observedArms.flatMap((arm) =>
+        "callReceipts" in arm ? arm.callReceipts : []);
+      const inputTokens = receipts.reduce((sum, receipt) => sum + receipt.inputTokens, 0);
+      const cachedInputTokens = receipts.reduce((sum, receipt) =>
+        sum + receipt.cachedInputTokens, 0);
+      const outputTokens = receipts.reduce((sum, receipt) => sum + receipt.outputTokens, 0);
+      return Object.freeze({
+        modelCalls,
+        reusedArmCount: observedArms.filter((arm) => arm.reusedFromArm !== null).length,
+        externalNetworkCalls: observation.reader.externalNetworkCalls,
+        totalPromptBytes: observedArms.filter((arm) => armModelCalls(arm) > 0)
+          .reduce((sum, arm) => sum + arm.promptBytes, 0),
+        totalDurationMs: observedArms.reduce((sum, arm) => sum + arm.durationMs, 0),
+        inputTokens,
+        cachedInputTokens,
+        uncachedInputTokens: inputTokens - cachedInputTokens,
+        outputTokens,
+        totalTokens: receipts.reduce((sum, receipt) => sum + receipt.totalTokens, 0),
+        estimatedCostUsdMicros: receipts.reduce((sum, receipt) =>
+          sum + receipt.estimatedCostUsdMicros, 0),
+      });
+    })();
   const content = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: observation.schemaVersion,
     benchmarkId: observation.benchmarkId,
     split: observation.split,
     scoredAt: input.scoredAt,
@@ -267,17 +309,7 @@ export async function scoreSharedReader(input: Readonly<{
         "promotion_evidence_disallowed",
       ]),
     }),
-    execution: Object.freeze({
-      localModelCalls,
-      reusedArmCount: observation.timelines.flatMap((timeline) => timeline.arms)
-        .filter((arm) => arm.reusedFromArm !== null).length,
-      externalNetworkCalls: observation.reader.externalNetworkCalls,
-      totalPromptBytes: observation.timelines.flatMap((timeline) => timeline.arms)
-        .filter((arm) => arm.localModelCalls > 0)
-        .reduce((sum, arm) => sum + arm.promptBytes, 0),
-      totalDurationMs: observation.timelines.flatMap((timeline) => timeline.arms)
-        .reduce((sum, arm) => sum + arm.durationMs, 0),
-    }),
+    execution,
     diagnostics: Object.freeze({
       oracleEvidenceReader: "not_run",
       noMemoryReader: "not_run",

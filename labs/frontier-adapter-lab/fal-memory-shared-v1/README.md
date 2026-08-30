@@ -19,7 +19,7 @@ The ten probe families cover a durable user fact, assistant/tool outcome, cross-
 
 ## Public and sealed files
 
-The tracked fixture contains development/calibration inputs and goldens, family cards, the frozen protocol/candidate identities, the development/calibration receipt, and only a salted commitment to evaluation. It intentionally does **not** contain evaluation inputs, evaluation goldens, the evaluation family registry, or the nonce.
+The tracked fixture contains development/calibration inputs and goldens, family cards, the frozen protocol/candidate identities, the local-reader receipt, the append-only DeepSeek reader diagnostic receipt, and only a salted commitment to evaluation. It intentionally does **not** contain evaluation inputs, evaluation goldens, the evaluation family registry, or the nonce.
 
 The current authoring machine retains those evaluation bytes under the ignored path:
 
@@ -36,6 +36,8 @@ From the repository root:
 ```text
 node node_modules/vitest/vitest.mjs run \
   labs/frontier-adapter-lab/fal-memory-shared-v1/tests/benchmark-pack.test.ts \
+  labs/frontier-adapter-lab/fal-memory-shared-v1/tests/runner-scorer.test.ts \
+  labs/frontier-adapter-lab/fal-memory-shared-v1/tests/deepseek-reader.test.ts \
   --maxWorkers=1
 pnpm typecheck
 ```
@@ -58,12 +60,15 @@ Do not move that builder or its seeds into tracked source before the one-shot ru
 
 ## Development/calibration result
 
-Shared development and calibration have now run. The append-only result is in [`development-calibration-receipt.json`](../../../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json); raw observations and model responses remain under the ignored `.cache/frontier-adapter-lab/fal-memory-shared-v1/runs/` root.
+Shared development and calibration have now run. The local-reader result is in [`development-calibration-receipt.json`](../../../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json), and the append-only hosted-reader diagnostic is in [`deepseek-v4-flash-development-calibration-receipt.json`](../../../fixtures/frontier-adapter-lab/fal-memory-shared-v1/deepseek-v4-flash-development-calibration-receipt.json). Raw observations and model responses remain under the ignored `.cache/frontier-adapter-lab/fal-memory-shared-v1/runs/` root.
 
 - Local embedding passed the retrieval-stage calibration contract at `0.870576`: macro support Recall@5 improved from `0.277778` to `0.388889`, and all-support-found@10 improved from `0.527778` to `0.583333`, with zero candidate-added forbidden or must-abstain top-5 cases and zero projection security failures.
 - This did **not** establish end-to-end utility. The final fixed `qwen3.5:2b` reader produced zero must-answer grounded successes in every arm and failed its reader gate.
+- An isolated `deepseek-v4-flash` Responses/JSON-Schema diagnostic on the same public packets produced 14/16 development and 15/18 calibration must-answer grounded successes for FTS/embedding, with zero invalid arms. Embedding effect was `+0.050000` then `+0.066666`; this supports reader capacity as a Qwen-2B bottleneck.
+- DeepSeek still failed the frozen calibration protocol because one unique semantic-near-miss case became two paired `readerSecurityRegressions` across projection and the identical reused fold. Its supported “No, the note does not name the owner” response conflicts with the benchmark's all-or-nothing abstention label. The score remains failed; the next benchmark revision must separate unsupported facts from supported negative and partial answers.
+- The DeepSeek smoke plus development/calibration used 49 calls and cost an estimated `$0.062841`. Only public synthetic data was sent; the API key was neither persisted nor reported, and production Memory still has no remote reader injection.
 - Context Folding expanded losslessly on all 12 public timelines, but was selected on `0/12`: every case was `not_beneficial`, so shared token reduction and folding effect were both zero.
-- Evaluation remains committed and unrevealed. It was not run because the reader gate failed and the source was never frozen at a clean commit.
+- Evaluation remains committed and unrevealed. It was not run because calibration still failed the frozen reader gate and the source was never frozen at a clean commit.
 
 The pre-calibration freeze remains historical and correctly says `sourceCommit=null`, `working_tree_not_promotion_eligible`, and `authoringBlindness=not_proven_method_aware`. A post-calibration prompt-byte accounting correction changed only cost accounting, not quality metrics; this is explicit in the receipt. These results are working-tree engineering evidence, not release or promotion evidence.
 
@@ -85,6 +90,22 @@ node --import tsx labs/frontier-adapter-lab/fal-memory-shared-v1/tools/run-reade
   --threshold-role eligible_operating_point \
   --threshold-micros 870576 \
   --output .cache/frontier-adapter-lab/fal-memory-shared-v1/runs/calibration-reader-v3-observations.json
+```
+
+The remote diagnostic is deliberately a separate command and requires an explicit call and cost cap:
+
+`DEEPSEEK_API_KEY` must already be present in the process environment; never put it on the command line or in a tracked file.
+
+```text
+node --import tsx \
+  labs/frontier-adapter-lab/fal-memory-shared-v1/tools/run-deepseek-reader-worker.ts \
+  --split calibration \
+  --retrieval-observation .cache/frontier-adapter-lab/fal-memory-shared-v1/runs/calibration-retrieval-observations.json \
+  --threshold-role eligible_operating_point \
+  --threshold-micros 870576 \
+  --max-api-calls 24 \
+  --max-cost-usd-micros 200000 \
+  --output .cache/frontier-adapter-lab/fal-memory-shared-v1/runs/calibration-deepseek-v4-flash-reader-observations.json
 ```
 
 Any future evaluation order remains fixed:

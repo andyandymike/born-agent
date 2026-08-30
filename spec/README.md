@@ -4,7 +4,7 @@
 
 > 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且remote provider injection为0。CF2与EM-R1都保留disabled；旧EM-R1 holdout已由append-only correction降级为known exposed。新的FAL Memory Shared Benchmark v1已完成public development/calibration：embedding只通过retrieval-stage gate，CF在12/12 timeline都未被收益规则选中，fixed reader四arm must-answer grounded success均为0；evaluation 120 probes仍只公开salted commitment且未运行。当前`sourceCommit=null`，结果不是promotion evidence。
+> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且production remote provider injection为0。CF2与EM-R1都保留disabled；旧EM-R1 holdout已由append-only correction降级为known exposed。FAL Memory Shared Benchmark v1已完成public development/calibration：embedding通过retrieval-stage gate，CF在12/12 timeline都未被收益规则选中；固定Qwen 2B reader四arm must-answer success为0，而独立DeepSeek Flash synthetic diagnostic恢复到development 14/16、calibration 15/18并观察到embedding effect `+0.050000`/`+0.066666`。DeepSeek calibration仍因一个unique abstention-semantics case在两条paired comparison形成2个security regressions而按冻结协议失败；evaluation 120 probes保持salted commitment、未运行。当前`sourceCommit=null`，结果不是promotion evidence。
 
 ## 当前阅读顺序
 

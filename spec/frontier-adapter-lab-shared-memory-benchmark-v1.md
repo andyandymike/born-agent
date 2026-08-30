@@ -1,10 +1,10 @@
 # FAL Memory Shared Benchmark v1
 
-> Status：`development_calibration_complete_evaluation_blocked`；development / calibration已运行，evaluation仍为`committed_unrevealed`且未运行。Local Embedding通过retrieval-stage calibration，但fixed reader失败；Context Folding在12/12 public timelines均未达到收益选择条件。
+> Status：`deepseek_calibration_protocol_failed_evaluation_blocked`；development / calibration已运行，evaluation仍为`committed_unrevealed`且未运行。Local Embedding通过retrieval-stage calibration，并在DeepSeek reader上观察到development `+0.050000`、calibration `+0.066666`的端到端effect；但DeepSeek calibration触发冻结的reader security-regression门，因此仍不能写product fit。Context Folding在12/12 public timelines均未达到收益选择条件。
 >
 > Product status：unchanged。Memory v1仍为`preview_usable`且production默认`off`；Local Embedding与Context Folding都保留在`labs/**`、默认disabled，没有接入production。
 >
-> Evidence boundary：当前`sourceCommit=null`、`authoringBlindness=not_proven_method_aware`、`promotionEvidenceAllowed=false`。结果是working-tree engineering evidence；calibration后只修正过reader prompt-byte计数，不改变质量指标。它不能作为release/promotion evidence。
+> Evidence boundary：当前`sourceCommit=null`、`authoringBlindness=not_proven_method_aware`、`promotionEvidenceAllowed=false`。本地Qwen和远程DeepSeek结果都是working-tree engineering evidence；DeepSeek使用可变hosted alias、只发送public synthetic split，49次请求总估算费用`$0.062841`。calibration后未改分；只把未来latency计时终点从response headers修正为response body完成，不改变已有quality/usage。它不能作为release/promotion evidence。
 
 ## 1. 决定
 
@@ -306,12 +306,13 @@ fixtures/frontier-adapter-lab/fal-memory-shared-v1/
   calibration-inputs.json
   calibration-goldens.json
   development-calibration-receipt.json
+  deepseek-v4-flash-development-calibration-receipt.json
   evaluation-commitment.json
 ```
 
-当前已实现：schema、public generator、24条timeline中的12条public数据、12条sealed evaluation数据、salted commitment、phase-specific loader、canonical materializer、input-only retrieval worker、完整threshold behavior observation、post-hoc scorer、四arm local-model reader、reader scorer、data/leakage canaries、结果回执与旧EM-R1 append-only correction。
+当前已实现：schema、public generator、24条timeline中的12条public数据、12条sealed evaluation数据、salted commitment、phase-specific loader、canonical materializer、input-only retrieval worker、完整threshold behavior observation、post-hoc scorer、四arm local-model reader、allowlisted DeepSeek Responses reader、JSON-Schema output、token/cache/cost receipts、reader scorer、data/leakage canaries、结果回执与旧EM-R1 append-only correction。
 
-当前未实现/未运行：R1 online ingest/restart、oracle/no-memory reader diagnostic、evaluation execution freeze、evaluation、trace replay、Linux/exact-commit/packed证据。evaluation因reader gate失败且source未clean-commit freeze而保持未运行。
+当前未实现/未运行：R1 online ingest/restart、oracle/no-memory reader diagnostic、evaluation execution freeze、evaluation、trace replay、Linux/exact-commit/packed证据。evaluation因DeepSeek calibration protocol gate失败且source未clean-commit freeze而保持未运行。
 
 ### 10.1 Development / calibration结果（2026-08-29）
 
@@ -327,11 +328,32 @@ fixtures/frontier-adapter-lab/fal-memory-shared-v1/
 | projection security failures | 0 | 0 |
 | absolute must-abstain top-5 nonempty | 24 / 24 | 24 / 24 |
 | CF lossless / selected timelines | 6 / 0 | 6 / 0 |
-| final reader must-answer grounded success（all arms） | 0 | 0 |
-| final reader invalid arms | 6 | 8 |
-| final reader gate | failed | failed |
+| fixed Qwen reader must-answer grounded success（all arms） | 0 | 0 |
+| fixed Qwen reader invalid arms | 6 | 8 |
+| fixed Qwen reader gate | failed | failed |
 
 Local Embedding因此只获得`retrieval_calibration_passed`，不能写`product_fit`或端到端通过。Context Folding在共享数据上的结论是`not_selected_no_benefit_observed`，不能用旧duplicate stress fixture的压缩率覆盖。reader使用本地Ollama `qwen3.5:2b`固定digest、temperature 0、seed 42、`think=false`；development只用于把10题批处理修正为两批5题并冻结v3，calibration后不再调prompt。完整hash、成本与post-calibration计数纠偏见[`development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json)。
+
+### 10.2 DeepSeek fixed-packet reader diagnostic（2026-08-30）
+
+为了区分retrieval失败与2B local reader容量不足，新增独立allowlisted provider，对相同public retrieval observations、相同五题batch和相同reader system contract运行DeepSeek `deepseek-v4-flash`。它走`https://api.deepseek.com/responses`、`reasoning=none`、temperature 0、严格JSON Schema；API key只从环境读取，未写入artifact。production Memory没有接入远程provider，evaluation也没有运行。
+
+| Reader metric | Development FTS / Embedding | Calibration FTS / Embedding |
+|---|---:|---:|
+| macro grounded success | 0.450000 / 0.500000 | 0.466667 / 0.533333 |
+| must-answer grounded success cases | 14 / 16 | 15 / 18 |
+| must-answer grounded success | 0.388889 / 0.444444 | 0.416667 / 0.500000 |
+| invalid arms | 0 | 0 |
+| embedding effect | +0.050000 | +0.066666 |
+| reader security regressions | 0 | 2 |
+| frozen reader gate | passed | failed |
+| calls / estimated cost | 24 / $0.031553 | 24 / $0.030961 |
+
+Smoke另用1次请求、费用`$0.000327`；完整49次调用共260,256 input tokens、23,936 cached input tokens、16,185 output tokens，估算`$0.062841`。这支持“固定Qwen 2B reader是0-success的重要瓶颈”，但不能推出整个Qwen family失败，也不能自动晋级DeepSeek。
+
+Calibration的`readerSecurityRegressions=2`来自同一个`semantic_near_miss` probe在projection与identical reused-fold两条paired comparison中重复计数。Embedding arm回答“No, the neighboring note does not name manual log disclosure approver”并引用near-miss record；冻结协议把任何must-abstain的`action=answer`视为security failure，所以门禁按原规则真实失败。对development/calibration全部absolute security failure的追加审计显示，它们都是“明确回答不能证明”或“报告已知值并明确另一字段缺失”，且unavailable citation为0。由于题面本身询问“是否能证明/是否真的回答”，这里同时暴露了all-or-nothing abstention label与自然语言任务的合同歧义。该审计不事后改分；下一revision必须把`unsupported_fact`、`supported_negative_answer`和`partial_known_plus_missing`拆开后再比较reader。
+
+完整逻辑hash、raw file hash、usage、费用和不晋级结论见[`deepseek-v4-flash-development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v1/deepseek-v4-flash-development-calibration-receipt.json)。
 
 ## 11. Stop rules
 

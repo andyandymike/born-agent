@@ -48,7 +48,7 @@ EM1 receipt的logical SHA-256为`a6a9c5563b421342c7c21f1d1efb0470cdd04aa322ff4b7
 
 EM-R1原始receipt与logical SHA `4e20762f11447a136423699bda44ac09268374f62f8907fa603a59ecc084220f`保持不变，追加[`evidence-correction-v2.json`](../fixtures/frontier-adapter-lab/fal-em-r1-selective-hybrid-v2/evidence-correction-v2.json)。审计确认runner在calibration阶段为全manifest验hash而读取evaluation文件，只是未解析/评分cases；`scenarioFamilyId/queryTemplateId/distractorPoolId`又由split前缀构造，语义孪生主题没有真正隔离。因此本spec第16节的strict sealed/group-disjoint设计意图没有被该实现满足，旧evaluation不能再用于blind promotion或后续调参。
 
-保留的历史结论是：当前reimplementation在旧48-case calibration上没有eligible global threshold、evaluation scoring未运行、promotion blocked。后续比较已改用[`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)的24条独立时间线、2×2分阶段指标与one-shot salted commit/reveal；public development/calibration上embedding通过retrieval-stage gate，但fixed reader must-answer grounded success为0，所以product fit未证明、evaluation未运行。
+保留的历史结论是：当前reimplementation在旧48-case calibration上没有eligible global threshold、evaluation scoring未运行、promotion blocked。后续比较已改用[`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)的24条独立时间线、2×2分阶段指标与one-shot salted commit/reveal；public development/calibration上embedding通过retrieval-stage gate。固定Qwen 2B reader must-answer grounded success为0；相同packet的DeepSeek Flash diagnostic恢复端到端回答并观察到development `+0.050000`、calibration `+0.066666` embedding effect，但冻结calibration reader gate因abstention-semantics regression失败。因此方向获得`reader_capacity_bottleneck_supported`与`end_to_end_benefit_observed`，仍不能写product fit，evaluation未运行。
 
 ## 1. Live baseline：现在的Memory retrieval到底做了什么
 
