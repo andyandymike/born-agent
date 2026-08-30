@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { sha256Canonical } from "../../../../src/completion/canonical-json.js";
 import { benchmarkSplits, SHARED_MEMORY_BENCHMARK_ID } from "./benchmark-schema.js";
+import { SHARED_MEMORY_ANSWER_POLICY_V2_ID } from "./answer-policy-v2.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const identifier = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u).max(160);
@@ -194,6 +195,60 @@ const readerObservationContentV2Schema = z.object({
   }
 });
 
+const readerObservationContentV3Schema = z.object({
+  schemaVersion: z.literal(3),
+  benchmarkId: z.literal(SHARED_MEMORY_ANSWER_POLICY_V2_ID),
+  executorSha256: sha256,
+  answerPolicyProtocolSha256: sha256,
+  split: z.enum(benchmarkSplits),
+  generatedAt: z.string().datetime({ offset: true }),
+  executionBoundary: z.literal(
+    "executor_inputs_plus_retrieval_observations_no_goldens_allowlisted_remote_model_only",
+  ),
+  retrievalObservationSha256: sha256,
+  thresholdRole: z.enum(["eligible_operating_point", "diagnostic_only"]),
+  thresholdSimilarityMicros: z.number().int().min(-1_000_000).max(1_000_001),
+  reader: z.object({
+    provider: z.literal("deepseek"),
+    api: z.literal("responses"),
+    endpoint: z.literal("https://api.deepseek.com/responses"),
+    modelAlias: z.literal("deepseek-v4-flash"),
+    documentedModelVersion: z.literal("DeepSeek-V4-Flash-0731"),
+    reportedModels: z.array(z.string().min(1).max(256)).min(1).max(8),
+    promptContractSha256: sha256,
+    outputSchemaSha256: sha256,
+    temperature: z.literal(0),
+    seed: z.null(),
+    maxOutputTokens: z.literal(4_096),
+    reasoningEffort: z.literal("none"),
+    maximumAttempts: z.literal(1),
+    plannedApiCalls: z.number().int().positive().max(96),
+    externalNetworkCalls: z.number().int().positive().max(96),
+    inputPolicy: z.literal(
+      "public_synthetic_answer_policy_v2_development_calibration_only",
+    ),
+    pricing: deepSeekPricingSnapshotSchema,
+  }).strict(),
+  timelines: z.array(z.object({
+    timelineId: identifier,
+    arms: z.array(deepSeekReaderArmObservationSchema).length(4),
+  }).strict()).min(1).max(12),
+}).strict().superRefine((value, context) => {
+  const calls = value.timelines.flatMap((timeline) => timeline.arms)
+    .reduce((sum, arm) => sum + arm.modelCalls, 0);
+  if (calls !== value.reader.externalNetworkCalls || calls !== value.reader.plannedApiCalls) {
+    context.addIssue({
+      code: "custom",
+      message: "DeepSeek v2 planned, external, and model calls must match",
+    });
+  }
+  const reportedModels = [...new Set(value.timelines.flatMap((timeline) => timeline.arms)
+    .flatMap((arm) => arm.callReceipts.map((receipt) => receipt.reportedModel)))].sort();
+  if (JSON.stringify(reportedModels) !== JSON.stringify([...value.reader.reportedModels].sort())) {
+    context.addIssue({ code: "custom", message: "DeepSeek v2 reported model summary is inconsistent" });
+  }
+});
+
 const readerObservationPackV1Schema = readerObservationContentV1Schema.extend({
   readerObservationSha256: sha256,
 }).strict().superRefine((value, context) => {
@@ -212,15 +267,31 @@ const readerObservationPackV2Schema = readerObservationContentV2Schema.extend({
   }
 });
 
+const readerObservationPackV3Schema = readerObservationContentV3Schema.extend({
+  readerObservationSha256: sha256,
+}).strict().superRefine((value, context) => {
+  const { readerObservationSha256, ...content } = value;
+  if (sha256Canonical(content) !== readerObservationSha256) {
+    context.addIssue({
+      code: "custom",
+      message: "DeepSeek answer-policy v2 reader observation logical hash mismatch",
+    });
+  }
+});
+
 export const readerObservationPackSchema = z.union([
   readerObservationPackV1Schema,
   readerObservationPackV2Schema,
+  readerObservationPackV3Schema,
 ]);
 
 export type ReaderAnswer = Readonly<z.infer<typeof readerAnswerSchema>>;
 export type ReaderObservationPack = Readonly<z.infer<typeof readerObservationPackSchema>>;
 export type LocalReaderObservationPack = Readonly<z.infer<typeof readerObservationPackV1Schema>>;
 export type DeepSeekReaderObservationPack = Readonly<z.infer<typeof readerObservationPackV2Schema>>;
+export type DeepSeekAnswerPolicyV2ReaderObservationPack = Readonly<
+  z.infer<typeof readerObservationPackV3Schema>
+>;
 export type DeepSeekCallReceipt = Readonly<z.infer<typeof deepSeekCallReceiptSchema>>;
 export type SharedReaderArm = typeof sharedReaderArms[number];
 
@@ -235,6 +306,16 @@ export function createReaderObservationPack(input: unknown): LocalReaderObservat
 export function createDeepSeekReaderObservationPack(input: unknown): DeepSeekReaderObservationPack {
   const content = readerObservationContentV2Schema.parse(input);
   return Object.freeze(readerObservationPackV2Schema.parse({
+    ...content,
+    readerObservationSha256: sha256Canonical(content),
+  }));
+}
+
+export function createDeepSeekAnswerPolicyV2ReaderObservationPack(
+  input: unknown,
+): DeepSeekAnswerPolicyV2ReaderObservationPack {
+  const content = readerObservationContentV3Schema.parse(input);
+  return Object.freeze(readerObservationPackV3Schema.parse({
     ...content,
     readerObservationSha256: sha256Canonical(content),
   }));

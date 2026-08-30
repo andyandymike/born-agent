@@ -21,7 +21,12 @@ import {
   loadSharedExecutorSplit,
   type BenchmarkSplit,
 } from "./benchmark-schema.js";
-import { createRetrievalObservationPack, type RetrievalObservationPack } from "./observation-schema.js";
+import { answerPolicyV2ExecutorPackSchema } from "./answer-policy-v2.js";
+import {
+  createAnswerPolicyV2RetrievalObservationPack,
+  createRetrievalObservationPack,
+  type RetrievalObservationPack,
+} from "./observation-schema.js";
 import {
   materializeSharedTimeline,
   sharedFixtureTitle,
@@ -67,6 +72,7 @@ function behaviorThresholds(
 }
 
 export async function runSharedRetrievalWorker(input: Readonly<{
+  readonly answerPolicyV2ExecutorInput?: unknown;
   readonly generatedAt: string;
   readonly onProgress?: (progress: SharedRetrievalWorkerProgress) => void;
   readonly repositoryRoot: string;
@@ -74,7 +80,15 @@ export async function runSharedRetrievalWorker(input: Readonly<{
   readonly stateParent: string;
 }>): Promise<RetrievalObservationPack> {
   const repositoryRoot = resolve(input.repositoryRoot);
-  const executor = await loadSharedExecutorSplit(repositoryRoot, input.split);
+  const executor = input.answerPolicyV2ExecutorInput === undefined
+    ? await loadSharedExecutorSplit(repositoryRoot, input.split)
+    : answerPolicyV2ExecutorPackSchema.parse(input.answerPolicyV2ExecutorInput);
+  if (executor.split !== input.split) {
+    throw new Error("shared retrieval executor split mismatch");
+  }
+  if (executor.benchmarkId === "fal-memory-shared-v2" && executor.split === "evaluation") {
+    throw new Error("answer-policy v2 evaluation is not sealed and cannot run");
+  }
   const labRoot = join(repositoryRoot, "labs", "frontier-adapter-lab", "fal-em-r1");
   const loaded = await LocalE5EmbeddingProvider.load(labRoot);
   await mkdir(input.stateParent, { recursive: true });
@@ -205,8 +219,7 @@ export async function runSharedRetrievalWorker(input: Readonly<{
       });
     }
 
-    return createRetrievalObservationPack({
-      schemaVersion: 1,
+    const observationContent = {
       benchmarkId: executor.benchmarkId,
       split: executor.split,
       generatedAt: input.generatedAt,
@@ -219,7 +232,18 @@ export async function runSharedRetrievalWorker(input: Readonly<{
       },
       coldEmbeddingModelLoadMs: loaded.coldLoadMs,
       timelines,
-    });
+    } as const;
+    return executor.benchmarkId === "fal-memory-shared-v2"
+      ? createAnswerPolicyV2RetrievalObservationPack({
+          ...observationContent,
+          schemaVersion: 2,
+          executorSha256: executor.executorSha256,
+          answerPolicyProtocolSha256: executor.answerPolicyProtocolSha256,
+        })
+      : createRetrievalObservationPack({
+          ...observationContent,
+          schemaVersion: 1,
+        });
   } finally {
     await loaded.provider.dispose();
   }

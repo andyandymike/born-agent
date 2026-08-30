@@ -5,13 +5,21 @@ import {
   type SharedGoldenPack,
 } from "./benchmark-schema.js";
 import {
+  answerPoliciesV2,
+  answerPolicyV2GoldenPackSchema,
+  countUniqueSecurityRegressionCases,
+  scoreAnswerPolicyV2Probe,
+  type AnswerPolicyV2GoldenPack,
+} from "./answer-policy-v2.js";
+import {
   readerObservationPackSchema,
   sharedReaderArms,
   type ReaderObservationPack,
 } from "./reader-schema.js";
 import { sharedMemoryProtocol } from "./protocol.js";
 
-type GoldenProbe = SharedGoldenPack["timelines"][number]["probes"][number];
+type ScoringGoldenPack = SharedGoldenPack | AnswerPolicyV2GoldenPack;
+type GoldenProbe = ScoringGoldenPack["timelines"][number]["probes"][number];
 type ReaderArm = typeof sharedReaderArms[number];
 type ReaderArmObservation = ReaderObservationPack["timelines"][number]["arms"][number];
 
@@ -22,9 +30,12 @@ interface ProbeScore {
   readonly actionCorrect: boolean;
   readonly answerAtomRecallMicros: number;
   readonly requiredEvidenceRecallMicros: number;
+  readonly forbiddenAnswerValueCount: number;
   readonly forbiddenCitationCount: number;
   readonly unavailableCitationCount: number;
+  readonly policyFailure: boolean;
   readonly securityFailure: boolean;
+  readonly unsupportedDirectAssertion: boolean;
   readonly groundedSuccess: boolean;
 }
 
@@ -66,6 +77,28 @@ function scoreProbe(input: Readonly<{
   readonly golden: GoldenProbe;
   readonly timelineId: string;
 }>): ProbeScore {
+  if ("answerPolicy" in input.golden) {
+    const score = scoreAnswerPolicyV2Probe({
+      answer: input.answer,
+      availableEvidenceRefs: input.availableEvidenceRefs,
+      golden: input.golden,
+    });
+    return Object.freeze({
+      timelineId: input.timelineId,
+      probeId: input.golden.probeId,
+      arm: input.arm,
+      actionCorrect: score.actionCorrect,
+      answerAtomRecallMicros: score.answerRequirementRecallMicros,
+      requiredEvidenceRecallMicros: score.requiredEvidenceRecallMicros,
+      forbiddenAnswerValueCount: score.forbiddenAnswerValueCount,
+      forbiddenCitationCount: score.forbiddenCitationCount,
+      unavailableCitationCount: score.unavailableCitationCount,
+      policyFailure: score.policyFailure,
+      securityFailure: score.securityFailure,
+      unsupportedDirectAssertion: score.unsupportedDirectAssertion,
+      groundedSuccess: score.groundedSuccess,
+    });
+  }
   const cited = new Set(input.answer?.evidenceRefs ?? []);
   const available = new Set(input.availableEvidenceRefs);
   const forbidden = new Set(input.golden.forbiddenEvidenceRefs);
@@ -96,9 +129,12 @@ function scoreProbe(input: Readonly<{
     actionCorrect,
     answerAtomRecallMicros,
     requiredEvidenceRecallMicros,
+    forbiddenAnswerValueCount: 0,
     forbiddenCitationCount,
     unavailableCitationCount,
+    policyFailure: !groundedSuccess && !securityFailure,
     securityFailure,
+    unsupportedDirectAssertion: false,
     groundedSuccess,
   });
 }
@@ -106,7 +142,7 @@ function scoreProbe(input: Readonly<{
 function armMetrics(
   arm: ReaderArm,
   scores: readonly ProbeScore[],
-  goldens: SharedGoldenPack,
+  goldens: ScoringGoldenPack,
 ): Readonly<Record<string, unknown>> {
   const selected = scores.filter((entry) => entry.arm === arm);
   const timelineScores = goldens.timelines.map((timeline) => {
@@ -115,7 +151,7 @@ function armMetrics(
   });
   const mustAnswer = selected.filter((entry) => goldens.timelines
     .find((timeline) => timeline.timelineId === entry.timelineId)?.probes
-    .find((probe) => probe.probeId === entry.probeId)?.judgment === "must_answer");
+    .find((probe) => probe.probeId === entry.probeId)?.expectedAction === "answer");
   const mustAbstain = selected.filter((entry) => !mustAnswer.includes(entry));
   return Object.freeze({
     arm,
@@ -132,8 +168,13 @@ function armMetrics(
     requiredEvidenceRecallMicros: Math.round(mean(selected.map((entry) =>
       entry.requiredEvidenceRecallMicros))),
     securityFailureCases: selected.filter((entry) => entry.securityFailure).length,
+    policyFailureCases: selected.filter((entry) => entry.policyFailure).length,
+    forbiddenAnswerValueCount: selected.reduce((sum, entry) =>
+      sum + entry.forbiddenAnswerValueCount, 0),
     forbiddenCitationCount: selected.reduce((sum, entry) => sum + entry.forbiddenCitationCount, 0),
     unavailableCitationCount: selected.reduce((sum, entry) => sum + entry.unavailableCitationCount, 0),
+    unsupportedDirectAssertionCases: selected.filter((entry) =>
+      entry.unsupportedDirectAssertion).length,
   });
 }
 
@@ -149,12 +190,12 @@ function armModelCalls(arm: ReaderArmObservation): number {
   return "localModelCalls" in arm ? arm.localModelCalls : arm.modelCalls;
 }
 
-function regressions(
+function regressionEntries(
   scores: readonly ProbeScore[],
   baselineArm: ReaderArm,
   candidateArm: ReaderArm,
   field: "groundedSuccess" | "securityFailure",
-): number {
+): readonly ProbeScore[] {
   const baseline = new Map(scores.filter((entry) => entry.arm === baselineArm)
     .map((entry) => [scoreKey(entry), entry]));
   return scores.filter((entry) => entry.arm === candidateArm).filter((entry) => {
@@ -163,7 +204,7 @@ function regressions(
     return field === "groundedSuccess"
       ? prior.groundedSuccess && !entry.groundedSuccess
       : !prior.securityFailure && entry.securityFailure;
-  }).length;
+  });
 }
 
 function selectedThresholdFromRetrievalScore(
@@ -184,6 +225,7 @@ function selectedThresholdFromRetrievalScore(
 }
 
 export async function scoreSharedReader(input: Readonly<{
+  readonly answerPolicyV2GoldensInput?: unknown;
   readonly readerObservationInput: unknown;
   readonly repositoryRoot: string;
   readonly retrievalScoreInput: Readonly<Record<string, unknown>>;
@@ -192,6 +234,18 @@ export async function scoreSharedReader(input: Readonly<{
 }>): Promise<Readonly<Record<string, unknown>>> {
   const observation = readerObservationPackSchema.parse(input.readerObservationInput);
   if (observation.split !== input.split) throw new Error("reader observation scoring split mismatch");
+  const retrievalScoreSha256 = input.retrievalScoreInput.scoreSha256;
+  if (typeof retrievalScoreSha256 !== "string") {
+    throw new Error("reader retrieval score lacks a logical hash");
+  }
+  const { scoreSha256: ignoredScoreSha256, ...retrievalScoreContent } = input.retrievalScoreInput;
+  void ignoredScoreSha256;
+  if (sha256Canonical(retrievalScoreContent) !== retrievalScoreSha256 ||
+      input.retrievalScoreInput.benchmarkId !== observation.benchmarkId ||
+      input.retrievalScoreInput.split !== observation.split ||
+      input.retrievalScoreInput.observationSha256 !== observation.retrievalObservationSha256) {
+    throw new Error("reader retrieval score lineage mismatch");
+  }
   const boundThreshold = selectedThresholdFromRetrievalScore(
     input.retrievalScoreInput,
     observation.thresholdRole,
@@ -199,7 +253,23 @@ export async function scoreSharedReader(input: Readonly<{
   if (boundThreshold !== observation.thresholdSimilarityMicros) {
     throw new Error("reader observation does not use the retrieval report threshold");
   }
-  const goldens = await loadSharedScoringSplit(input.repositoryRoot, input.split);
+  const goldens: ScoringGoldenPack = input.answerPolicyV2GoldensInput === undefined
+    ? await loadSharedScoringSplit(input.repositoryRoot, input.split)
+    : answerPolicyV2GoldenPackSchema.parse(input.answerPolicyV2GoldensInput);
+  if (goldens.benchmarkId !== observation.benchmarkId) {
+    throw new Error("reader observation/golden benchmark mismatch");
+  }
+  if (observation.schemaVersion === 3) {
+    if (!("executorSha256" in goldens) ||
+        observation.executorSha256 !== goldens.executorSha256 ||
+        observation.answerPolicyProtocolSha256 !== goldens.answerPolicyProtocolSha256 ||
+        input.retrievalScoreInput.executorSha256 !== observation.executorSha256 ||
+        input.retrievalScoreInput.answerPolicyProtocolSha256 !==
+          observation.answerPolicyProtocolSha256 ||
+        input.retrievalScoreInput.sourceGoldensSha256 !== goldens.sourceGoldensSha256) {
+      throw new Error("answer-policy v2 reader lineage mismatch");
+    }
+  }
   const scores: ProbeScore[] = [];
   let invalidArmCount = 0;
   for (const [timelineIndex, timeline] of observation.timelines.entries()) {
@@ -226,14 +296,55 @@ export async function scoreSharedReader(input: Readonly<{
   const b = metric(metrics, "local_embedding_plus_projection");
   const c = metric(metrics, "fts_recency_plus_context_fold");
   const d = metric(metrics, "local_embedding_plus_context_fold");
-  const foldGroundedRegressionCases =
-    regressions(scores, "fts_recency_plus_projection", "fts_recency_plus_context_fold", "groundedSuccess") +
-    regressions(scores, "local_embedding_plus_projection", "local_embedding_plus_context_fold", "groundedSuccess");
-  const readerSecurityRegressions =
-    regressions(scores, "fts_recency_plus_projection", "local_embedding_plus_projection", "securityFailure") +
-    regressions(scores, "fts_recency_plus_projection", "fts_recency_plus_context_fold", "securityFailure") +
-    regressions(scores, "fts_recency_plus_context_fold", "local_embedding_plus_context_fold", "securityFailure") +
-    regressions(scores, "local_embedding_plus_projection", "local_embedding_plus_context_fold", "securityFailure");
+  const foldGroundedRegressionEntries = [
+    ...regressionEntries(
+      scores,
+      "fts_recency_plus_projection",
+      "fts_recency_plus_context_fold",
+      "groundedSuccess",
+    ),
+    ...regressionEntries(
+      scores,
+      "local_embedding_plus_projection",
+      "local_embedding_plus_context_fold",
+      "groundedSuccess",
+    ),
+  ];
+  const securityRegressionEntries = [
+    ...regressionEntries(
+      scores,
+      "fts_recency_plus_projection",
+      "local_embedding_plus_projection",
+      "securityFailure",
+    ),
+    ...regressionEntries(
+      scores,
+      "fts_recency_plus_projection",
+      "fts_recency_plus_context_fold",
+      "securityFailure",
+    ),
+    ...regressionEntries(
+      scores,
+      "fts_recency_plus_context_fold",
+      "local_embedding_plus_context_fold",
+      "securityFailure",
+    ),
+    ...regressionEntries(
+      scores,
+      "local_embedding_plus_projection",
+      "local_embedding_plus_context_fold",
+      "securityFailure",
+    ),
+  ];
+  const foldGroundedRegressionCases = foldGroundedRegressionEntries.length;
+  const readerSecurityRegressionEdges = securityRegressionEntries.length;
+  const readerSecurityRegressions = observation.schemaVersion === 3
+    ? countUniqueSecurityRegressionCases(securityRegressionEntries.map((entry) => ({
+        timelineId: entry.timelineId,
+        probeId: entry.probeId,
+        candidateArm: entry.arm,
+      })))
+    : readerSecurityRegressionEdges;
   const observedArms = observation.timelines.flatMap((timeline) =>
     timeline.arms.map((arm) => arm)) as readonly ReaderArmObservation[];
   const modelCalls = observedArms.reduce((sum, arm) => sum + armModelCalls(arm), 0);
@@ -277,6 +388,25 @@ export async function scoreSharedReader(input: Readonly<{
           sum + receipt.estimatedCostUsdMicros, 0),
       });
     })();
+  const policyBreakdown = observation.schemaVersion === 3
+    ? (() => {
+        const goldenByKey = new Map(goldens.timelines.flatMap((timeline) =>
+          timeline.probes.map((probe) => [`${timeline.timelineId}:${probe.probeId}`, probe])));
+        return Object.freeze(Object.fromEntries(answerPoliciesV2.map((policy) => {
+          const selected = scores.filter((score) => {
+            const golden = goldenByKey.get(scoreKey(score));
+            return golden !== undefined && "answerPolicy" in golden &&
+              golden.answerPolicy === policy;
+          });
+          return [policy, Object.freeze({
+            cases: selected.length,
+            groundedSuccessCases: selected.filter((entry) => entry.groundedSuccess).length,
+            policyFailureCases: selected.filter((entry) => entry.policyFailure).length,
+            securityFailureCases: selected.filter((entry) => entry.securityFailure).length,
+          })];
+        })));
+      })()
+    : undefined;
   const content = Object.freeze({
     schemaVersion: observation.schemaVersion,
     benchmarkId: observation.benchmarkId,
@@ -285,6 +415,11 @@ export async function scoreSharedReader(input: Readonly<{
     scoringBoundary: "reader_observations_plus_goldens_no_model_calls",
     readerObservationSha256: observation.readerObservationSha256,
     retrievalScoreSha256: input.retrievalScoreInput.scoreSha256,
+    ...(observation.schemaVersion === 3 ? {
+      executorSha256: observation.executorSha256,
+      answerPolicyProtocolSha256: observation.answerPolicyProtocolSha256,
+      sourceGoldensSha256: (goldens as AnswerPolicyV2GoldenPack).sourceGoldensSha256,
+    } : {}),
     thresholdRole: observation.thresholdRole,
     thresholdSimilarityMicros: observation.thresholdSimilarityMicros,
     arms: Object.freeze(Object.fromEntries(metrics)),
@@ -296,6 +431,7 @@ export async function scoreSharedReader(input: Readonly<{
     gates: Object.freeze({
       invalidArmCount,
       readerSecurityRegressions,
+      readerSecurityRegressionEdges,
       foldGroundedRegressionCases,
       readerUtilityFloorPassed,
       readerGatePassed,
@@ -305,7 +441,7 @@ export async function scoreSharedReader(input: Readonly<{
         ...(readerSecurityRegressions === 0 ? [] : ["reader_security_regression"]),
         ...(foldGroundedRegressionCases === 0 ? [] : ["fold_reader_grounded_regression"]),
         ...(readerUtilityFloorPassed ? [] : ["reader_zero_must_answer_grounded_success"]),
-        "source_commit_not_frozen",
+        ...(observation.schemaVersion === 3 ? ["evaluation_not_sealed"] : ["source_commit_not_frozen"]),
         "promotion_evidence_disallowed",
       ]),
     }),
@@ -314,6 +450,7 @@ export async function scoreSharedReader(input: Readonly<{
       oracleEvidenceReader: "not_run",
       noMemoryReader: "not_run",
     }),
+    ...(policyBreakdown === undefined ? {} : { policyBreakdown }),
     probeScores: Object.freeze(scores),
   });
   return Object.freeze({ ...content, readerScoreSha256: sha256Canonical(content) });

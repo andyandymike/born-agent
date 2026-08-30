@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { sha256Canonical } from "../../../../src/completion/canonical-json.js";
 import { memoryRecordRevisionId } from "../../../../src/memory/core/memory-record-v1.js";
 import {
   loadSharedExecutorSplit,
@@ -202,12 +203,18 @@ describe("FAL shared memory runner and scorer", () => {
         })),
       })),
     });
+    const retrievalScoreContent = {
+      benchmarkId: observation.benchmarkId,
+      split: observation.split,
+      observationSha256: observation.retrievalObservationSha256,
+      selection: { selectedOperatingPoint: { thresholdSimilarityMicros: 500_000 } },
+    } as const;
     const report = await scoreSharedReader({
       readerObservationInput: observation,
       repositoryRoot,
       retrievalScoreInput: {
-        scoreSha256: "6".repeat(64),
-        selection: { selectedOperatingPoint: { thresholdSimilarityMicros: 500_000 } },
+        ...retrievalScoreContent,
+        scoreSha256: sha256Canonical(retrievalScoreContent),
       },
       scoredAt: "2026-08-29T06:03:00.000Z",
       split: "development",

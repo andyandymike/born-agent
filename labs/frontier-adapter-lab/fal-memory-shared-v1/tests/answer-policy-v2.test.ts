@@ -59,7 +59,7 @@ describe("FAL shared memory answer policy v2", () => {
     for (const split of [development, calibration]) {
       expect(split.executor.benchmarkId).toBe("fal-memory-shared-v2");
       expect(split.goldens.sourceExecutorSha256).toBe(split.executor.sourceExecutorSha256);
-      expect(split.goldens.sourceGoldensSha256).toBe(split.executor.sourceGoldensSha256);
+      expect(split.goldens.sourceGoldensSha256).toMatch(/^[a-f0-9]{64}$/u);
       for (const timeline of split.goldens.timelines) {
         const policies = timeline.probes.map((probe) => probe.answerPolicy);
         expect(policies.filter((entry) => entry === "full_answer")).toHaveLength(6);
@@ -180,6 +180,18 @@ describe("FAL shared memory answer policy v2", () => {
     expect(explicitUnknownWrongShape.groundedSuccess).toBe(false);
     expect(explicitUnknownWrongShape.policyFailure).toBe(true);
     expect(explicitUnknownWrongShape.securityFailure).toBe(false);
+
+    const mixedUnknownAndAssertion = scoreAnswerPolicyV2Probe({
+      answer: {
+        action: "answer",
+        answer: "The requested owner is not recorded, but the owner is the release lead.",
+        evidenceRefs: [],
+      },
+      availableEvidenceRefs: [],
+      golden,
+    });
+    expect(mixedUnknownAndAssertion.unsupportedDirectAssertion).toBe(true);
+    expect(mixedUnknownAndAssertion.securityFailure).toBe(true);
 
     const unsupportedPositive = scoreAnswerPolicyV2Probe({
       answer: {

@@ -5,6 +5,7 @@ import {
   benchmarkSplits,
   SHARED_MEMORY_BENCHMARK_ID,
 } from "./benchmark-schema.js";
+import { SHARED_MEMORY_ANSWER_POLICY_V2_ID } from "./answer-policy-v2.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const identifier = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u).max(160);
@@ -96,9 +97,7 @@ const timelineObservationSchema = z.object({
   probes: z.array(retrievalProbeObservationSchema).length(10),
 }).strict();
 
-const retrievalObservationContentSchema = z.object({
-  schemaVersion: z.literal(1),
-  benchmarkId: z.literal(SHARED_MEMORY_BENCHMARK_ID),
+const retrievalObservationSharedShape = {
   split: z.enum(benchmarkSplits),
   generatedAt: z.string().datetime({ offset: true }),
   executionBoundary: z.literal("executor_inputs_plus_frozen_candidates_no_goldens_no_network"),
@@ -110,9 +109,23 @@ const retrievalObservationContentSchema = z.object({
   }).strict(),
   coldEmbeddingModelLoadMs: finiteDuration,
   timelines: z.array(timelineObservationSchema).min(1).max(12),
+} as const;
+
+const retrievalObservationContentV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  benchmarkId: z.literal(SHARED_MEMORY_BENCHMARK_ID),
+  ...retrievalObservationSharedShape,
 }).strict();
 
-export const retrievalObservationPackSchema = retrievalObservationContentSchema.extend({
+const retrievalObservationContentV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  benchmarkId: z.literal(SHARED_MEMORY_ANSWER_POLICY_V2_ID),
+  executorSha256: sha256,
+  answerPolicyProtocolSha256: sha256,
+  ...retrievalObservationSharedShape,
+}).strict();
+
+const retrievalObservationPackV1Schema = retrievalObservationContentV1Schema.extend({
   observationSha256: sha256,
 }).strict().superRefine((value, context) => {
   const { observationSha256, ...content } = value;
@@ -125,13 +138,41 @@ export const retrievalObservationPackSchema = retrievalObservationContentSchema.
   }
 });
 
+const retrievalObservationPackV2Schema = retrievalObservationContentV2Schema.extend({
+  observationSha256: sha256,
+}).strict().superRefine((value, context) => {
+  const { observationSha256, ...content } = value;
+  if (sha256Canonical(content) !== observationSha256) {
+    context.addIssue({
+      code: "custom",
+      message: "answer-policy v2 retrieval observation logical hash mismatch",
+      path: ["observationSha256"],
+    });
+  }
+});
+
+export const retrievalObservationPackSchema = z.union([
+  retrievalObservationPackV1Schema,
+  retrievalObservationPackV2Schema,
+]);
+
 export type RetrievalObservationPack = Readonly<
   z.infer<typeof retrievalObservationPackSchema>
 >;
 
 export function createRetrievalObservationPack(input: unknown): RetrievalObservationPack {
-  const content = retrievalObservationContentSchema.parse(input);
-  return Object.freeze(retrievalObservationPackSchema.parse({
+  const content = retrievalObservationContentV1Schema.parse(input);
+  return Object.freeze(retrievalObservationPackV1Schema.parse({
+    ...content,
+    observationSha256: sha256Canonical(content),
+  }));
+}
+
+export function createAnswerPolicyV2RetrievalObservationPack(
+  input: unknown,
+): RetrievalObservationPack {
+  const content = retrievalObservationContentV2Schema.parse(input);
+  return Object.freeze(retrievalObservationPackV2Schema.parse({
     ...content,
     observationSha256: sha256Canonical(content),
   }));

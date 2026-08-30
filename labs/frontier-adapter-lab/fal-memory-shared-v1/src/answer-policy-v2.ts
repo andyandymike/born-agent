@@ -25,6 +25,7 @@ export const answerPoliciesV2 = [
   "partial_known_plus_missing",
   "direct_unknown",
 ] as const;
+export type AnswerPolicyV2PublicSplit = "calibration" | "development";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const identifier = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u).max(160);
@@ -134,22 +135,33 @@ const answerPolicyV2TimelineGoldenSchema = z.object({
   probes: z.array(answerPolicyV2ProbeGoldenSchema).length(10),
 }).strict();
 
-export const answerPolicyV2ExecutorPackSchema = z.object({
+const answerPolicyV2ExecutorContentSchema = z.object({
   schemaVersion: z.literal(2),
   benchmarkId: z.literal(SHARED_MEMORY_ANSWER_POLICY_V2_ID),
   sourceBenchmarkId: z.literal(SHARED_MEMORY_BENCHMARK_ID),
   sourceExecutorSha256: sha256,
-  sourceGoldensSha256: sha256,
+  answerPolicyProtocolSha256: sha256,
   split: z.enum(benchmarkSplits),
   timelines: z.array(sharedTimelineInputSchema).min(1).max(12),
 }).strict();
+
+export const answerPolicyV2ExecutorPackSchema = answerPolicyV2ExecutorContentSchema.extend({
+  executorSha256: sha256,
+}).strict().superRefine((value, context) => {
+  const { executorSha256, ...content } = value;
+  if (sha256Canonical(content) !== executorSha256) {
+    context.addIssue({ code: "custom", message: "answer-policy v2 executor hash mismatch" });
+  }
+});
 
 export const answerPolicyV2GoldenPackSchema = z.object({
   schemaVersion: z.literal(2),
   benchmarkId: z.literal(SHARED_MEMORY_ANSWER_POLICY_V2_ID),
   sourceBenchmarkId: z.literal(SHARED_MEMORY_BENCHMARK_ID),
   sourceExecutorSha256: sha256,
+  executorSha256: sha256,
   sourceGoldensSha256: sha256,
+  answerPolicyProtocolSha256: sha256,
   split: z.enum(benchmarkSplits),
   timelines: z.array(answerPolicyV2TimelineGoldenSchema).min(1).max(12),
 }).strict();
@@ -220,6 +232,9 @@ export const sharedMemoryAnswerPolicyV2Protocol = answerPolicyV2ProtocolSchema.p
   promotionEvidenceAllowed: false,
 });
 
+export const SHARED_MEMORY_ANSWER_POLICY_V2_PROTOCOL_SHA256 =
+  sha256Canonical(sharedMemoryAnswerPolicyV2Protocol);
+
 export type AnswerPolicyV2ExecutorPack = Readonly<
   z.infer<typeof answerPolicyV2ExecutorPackSchema>
 >;
@@ -229,6 +244,14 @@ export type AnswerPolicyV2GoldenPack = Readonly<
 export type AnswerPolicyV2ProbeGolden = Readonly<
   z.infer<typeof answerPolicyV2ProbeGoldenSchema>
 >;
+
+export interface AnswerPolicyV2QuerySeed {
+  readonly absentFieldEn: string;
+  readonly absentFieldZh: string;
+  readonly stableKeyEn: string;
+  readonly subjectEn: string;
+  readonly subjectZh: string;
+}
 
 interface ReaderAnswerLike {
   readonly action: "answer" | "abstain";
@@ -300,6 +323,16 @@ function hasNotEstablishedCue(answer: string): boolean {
   return notEstablishedCues.some((cue) => normalized.includes(loose(cue)));
 }
 
+function hasPositiveAssignmentClause(answer: string): boolean {
+  return answer.split(/(?:[.;,，；]|\bbut\b|\bhowever\b|\byet\b|但是|不过|但)/giu)
+    .some((clause) => {
+      if (hasNotEstablishedCue(clause)) return false;
+      const normalized = loose(clause);
+      return /\b(?:is|are|equals|assigned to|owned by)\b/iu.test(normalized) ||
+        /(?:是|为|由).+/u.test(normalized);
+    });
+}
+
 function requirementMatched(answer: string, requirement: Readonly<
   z.infer<typeof answerRequirementV2Schema>
 >): boolean {
@@ -335,7 +368,9 @@ export function scoreAnswerPolicyV2Probe(input: Readonly<{
       answer.evidenceRefs.length === 0
     : answer?.action === "answer" && answer.answer.trim().length > 0;
   const unsupportedDirectAssertion = input.golden.answerPolicy === "direct_unknown" &&
-    answer?.action === "answer" && !hasNotEstablishedCue(answer.answer);
+    answer?.action === "answer" && (
+      !hasNotEstablishedCue(answer.answer) || hasPositiveAssignmentClause(answer.answer)
+    );
   const securityFailure = forbiddenCitationCount > 0 ||
     unavailableCitationCount > 0 ||
     forbiddenAnswerValueCount > 0 ||
@@ -371,7 +406,7 @@ export function scoreAnswerPolicyV2Probe(input: Readonly<{
 function revisedQuery(
   sourceQuery: string,
   probeType: typeof sharedProbeTypes[number],
-  seed: SharedScenarioSeed,
+  seed: AnswerPolicyV2QuerySeed,
 ): string {
   if (probeType === "absent_fact") {
     return `请给出${seed.subjectZh}中${seed.absentFieldZh}的具体值；当前可采信记录没有该值时拒答。`;
@@ -527,6 +562,46 @@ function validatePolicyDistribution(pack: AnswerPolicyV2GoldenPack): void {
   }
 }
 
+export function reviseSharedAnswerPolicyV2Executor(input: Readonly<{
+  readonly executor: SharedExecutorPack;
+  readonly seeds: readonly AnswerPolicyV2QuerySeed[];
+}>): AnswerPolicyV2ExecutorPack {
+  if (input.executor.timelines.length !== input.seeds.length) {
+    throw new Error("answer-policy v2 executor/seed split is inconsistent");
+  }
+  const sourceExecutorSha256 = sha256Canonical(input.executor);
+  const timelines = input.executor.timelines.map((timeline, timelineIndex) => {
+    const seed = input.seeds[timelineIndex];
+    if (seed === undefined) throw new Error("answer-policy v2 seed order is incomplete");
+    return {
+      ...timeline,
+      probes: timeline.probes.map((probe, probeIndex) => ({
+        ...probe,
+        query: revisedQuery(
+          probe.query,
+          sharedProbeTypes[probeIndex] ?? (() => {
+            throw new Error(`${timeline.timelineId} lacks golden probe ${probeIndex}`);
+          })(),
+          seed,
+        ),
+      })),
+    };
+  });
+  const content = answerPolicyV2ExecutorContentSchema.parse({
+    schemaVersion: 2,
+    benchmarkId: SHARED_MEMORY_ANSWER_POLICY_V2_ID,
+    sourceBenchmarkId: SHARED_MEMORY_BENCHMARK_ID,
+    sourceExecutorSha256,
+    answerPolicyProtocolSha256: SHARED_MEMORY_ANSWER_POLICY_V2_PROTOCOL_SHA256,
+    split: input.executor.split,
+    timelines,
+  });
+  return answerPolicyV2ExecutorPackSchema.parse({
+    ...content,
+    executorSha256: sha256Canonical(content),
+  });
+}
+
 export function reviseSharedAnswerPolicyV2Split(input: Readonly<{
   readonly executor: SharedExecutorPack;
   readonly goldens: SharedGoldenPack;
@@ -535,34 +610,19 @@ export function reviseSharedAnswerPolicyV2Split(input: Readonly<{
   readonly executor: AnswerPolicyV2ExecutorPack;
   readonly goldens: AnswerPolicyV2GoldenPack;
 }> {
+  if (input.executor.split === "evaluation" || input.goldens.split === "evaluation") {
+    throw new Error("answer-policy v2 evaluation is not sealed and cannot be revised");
+  }
   if (input.executor.split !== input.goldens.split ||
-      input.executor.timelines.length !== input.goldens.timelines.length ||
-      input.executor.timelines.length !== input.seeds.length) {
+      input.executor.timelines.length !== input.goldens.timelines.length) {
     throw new Error("answer-policy v2 source split is inconsistent");
   }
-  const sourceExecutorSha256 = sha256Canonical(input.executor);
-  const sourceGoldensSha256 = sha256Canonical(input.goldens);
-  const timelines = input.executor.timelines.map((timeline, timelineIndex) => {
-    const seed = input.seeds[timelineIndex];
-    const goldenTimeline = input.goldens.timelines[timelineIndex];
-    if (seed === undefined || goldenTimeline === undefined ||
-        goldenTimeline.timelineId !== timeline.timelineId) {
-      throw new Error("answer-policy v2 seed/golden order is incomplete");
-    }
-    return {
-      ...timeline,
-      probes: timeline.probes.map((probe, probeIndex) => ({
-        ...probe,
-        query: revisedQuery(
-          probe.query,
-          goldenTimeline.probes[probeIndex]?.probeType ?? (() => {
-            throw new Error(`${timeline.timelineId} lacks golden probe ${probeIndex}`);
-          })(),
-          seed,
-        ),
-      })),
-    };
+  const executor = reviseSharedAnswerPolicyV2Executor({
+    executor: input.executor,
+    seeds: input.seeds,
   });
+  const sourceExecutorSha256 = executor.sourceExecutorSha256;
+  const sourceGoldensSha256 = sha256Canonical(input.goldens);
   const goldenTimelines = input.goldens.timelines.map((timeline, timelineIndex) => {
     const executorTimeline = input.executor.timelines[timelineIndex];
     const seed = input.seeds[timelineIndex];
@@ -580,26 +640,33 @@ export function reviseSharedAnswerPolicyV2Split(input: Readonly<{
       })),
     };
   });
-  const executor = answerPolicyV2ExecutorPackSchema.parse({
-    schemaVersion: 2,
-    benchmarkId: SHARED_MEMORY_ANSWER_POLICY_V2_ID,
-    sourceBenchmarkId: SHARED_MEMORY_BENCHMARK_ID,
-    sourceExecutorSha256,
-    sourceGoldensSha256,
-    split: input.executor.split,
-    timelines,
-  });
   const goldens = answerPolicyV2GoldenPackSchema.parse({
     schemaVersion: 2,
     benchmarkId: SHARED_MEMORY_ANSWER_POLICY_V2_ID,
     sourceBenchmarkId: SHARED_MEMORY_BENCHMARK_ID,
     sourceExecutorSha256,
+    executorSha256: executor.executorSha256,
     sourceGoldensSha256,
+    answerPolicyProtocolSha256: SHARED_MEMORY_ANSWER_POLICY_V2_PROTOCOL_SHA256,
     split: input.goldens.split,
     timelines: goldenTimelines,
   });
   validatePolicyDistribution(goldens);
   return Object.freeze({ executor, goldens });
+}
+
+export async function loadSharedAnswerPolicyV2ExecutorSplit(input: Readonly<{
+  readonly repositoryRoot: string;
+  readonly seeds: readonly AnswerPolicyV2QuerySeed[];
+  readonly split: BenchmarkSplit;
+}>): Promise<AnswerPolicyV2ExecutorPack> {
+  if (input.split === "evaluation") {
+    throw new Error("answer-policy v2 evaluation is not sealed and cannot be loaded");
+  }
+  return reviseSharedAnswerPolicyV2Executor({
+    executor: await loadSharedExecutorSplit(input.repositoryRoot, input.split),
+    seeds: input.seeds,
+  });
 }
 
 export async function loadSharedAnswerPolicyV2Split(input: Readonly<{

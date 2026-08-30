@@ -6,12 +6,17 @@ import {
   type SharedGoldenPack,
 } from "./benchmark-schema.js";
 import {
+  answerPolicyV2GoldenPackSchema,
+  type AnswerPolicyV2GoldenPack,
+} from "./answer-policy-v2.js";
+import {
   retrievalObservationPackSchema,
   type RetrievalObservationPack,
 } from "./observation-schema.js";
 import { sharedMemoryProtocol } from "./protocol.js";
 
-type GoldenTimeline = SharedGoldenPack["timelines"][number];
+type ScoringGoldenPack = SharedGoldenPack | AnswerPolicyV2GoldenPack;
+type GoldenTimeline = ScoringGoldenPack["timelines"][number];
 type GoldenProbe = GoldenTimeline["probes"][number];
 type ObservationTimeline = RetrievalObservationPack["timelines"][number];
 type ObservationProbe = ObservationTimeline["probes"][number];
@@ -106,7 +111,7 @@ function behaviorAtThreshold(
 
 function pairedTimelines(
   observation: RetrievalObservationPack,
-  goldens: SharedGoldenPack,
+  goldens: ScoringGoldenPack,
 ): readonly Readonly<{
   readonly golden: GoldenTimeline;
   readonly observation: ObservationTimeline;
@@ -191,8 +196,8 @@ function absoluteCounts(ranked: readonly RankedProbe[]): Readonly<{
   readonly forbiddenTop5Hits: number;
   readonly mustAbstainTop5NonemptyCases: number;
 }> {
-  const answerable = ranked.filter((entry) => entry.golden.judgment === "must_answer");
-  const abstain = ranked.filter((entry) => entry.golden.judgment === "must_abstain");
+  const answerable = ranked.filter((entry) => entry.golden.expectedAction === "answer");
+  const abstain = ranked.filter((entry) => entry.golden.expectedAction === "abstain");
   const forbidden = ranked.map((entry) => forbiddenSelected(entry.golden, entry.top5));
   return Object.freeze({
     answerableTop5EmptyCases: answerable.filter((entry) => entry.top5.length === 0).length,
@@ -219,7 +224,7 @@ function candidateAddedCounts(
       throw new Error("baseline/candidate probe order mismatch");
     }
     if (
-      entry.golden.judgment === "must_abstain" &&
+      entry.golden.expectedAction === "abstain" &&
       baselineEntry.top5.length === 0 &&
       entry.top5.length > 0
     ) mustAbstainCases += 1;
@@ -238,7 +243,7 @@ function selectiveMetrics(ranked: readonly RankedProbe[]): Readonly<{
 }> {
   const admitted = ranked.filter((entry) => entry.top5.length > 0);
   const failures = admitted.filter((entry) => {
-    if (entry.golden.judgment === "must_abstain") return true;
+    if (entry.golden.expectedAction === "abstain") return true;
     return allSupportFound(entry.golden, entry.top5) !== 1;
   }).length;
   return Object.freeze({
@@ -317,6 +322,7 @@ function selectDiagnostic(points: readonly ThresholdScore[]): ThresholdScore {
 }
 
 export async function scoreSharedRetrieval(input: Readonly<{
+  readonly answerPolicyV2GoldensInput?: unknown;
   readonly observationInput: unknown;
   readonly repositoryRoot: string;
   readonly scoredAt: string;
@@ -324,7 +330,19 @@ export async function scoreSharedRetrieval(input: Readonly<{
 }>): Promise<Readonly<Record<string, unknown>>> {
   const observation = retrievalObservationPackSchema.parse(input.observationInput);
   if (observation.split !== input.split) throw new Error("requested scoring split mismatch");
-  const goldens = await loadSharedScoringSplit(input.repositoryRoot, input.split);
+  const goldens: ScoringGoldenPack = input.answerPolicyV2GoldensInput === undefined
+    ? await loadSharedScoringSplit(input.repositoryRoot, input.split)
+    : answerPolicyV2GoldenPackSchema.parse(input.answerPolicyV2GoldensInput);
+  if (observation.benchmarkId !== goldens.benchmarkId) {
+    throw new Error("retrieval observation/golden benchmark mismatch");
+  }
+  if (observation.schemaVersion === 2) {
+    if (!("executorSha256" in goldens) ||
+        observation.executorSha256 !== goldens.executorSha256 ||
+        observation.answerPolicyProtocolSha256 !== goldens.answerPolicyProtocolSha256) {
+      throw new Error("answer-policy v2 retrieval lineage mismatch");
+    }
+  }
   const timelines = pairedTimelines(observation, goldens);
   const baseline = baselineRanked(timelines);
   const baselineFlat = flattened(baseline);
@@ -378,12 +396,17 @@ export async function scoreSharedRetrieval(input: Readonly<{
   const selectedContextTokens = folding.reduce((sum, entry) =>
     sum + (entry.selected ? entry.candidateTokens! : entry.baselineTokens), 0);
   const content = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: observation.schemaVersion,
     benchmarkId: observation.benchmarkId,
     split: observation.split,
     scoredAt: input.scoredAt,
     scoringBoundary: "retrieval_observations_plus_goldens_no_candidate_execution",
     observationSha256: observation.observationSha256,
+    ...(observation.schemaVersion === 2 ? {
+      executorSha256: observation.executorSha256,
+      answerPolicyProtocolSha256: observation.answerPolicyProtocolSha256,
+      sourceGoldensSha256: (goldens as AnswerPolicyV2GoldenPack).sourceGoldensSha256,
+    } : {}),
     baseline: Object.freeze({
       macroSupportRecallAt5Micros: baselineMacro.supportRecallAt5Micros,
       macroAllSupportFoundAt10Micros: baselineMacro.allSupportFoundAt10Micros,
