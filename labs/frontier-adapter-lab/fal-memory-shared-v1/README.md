@@ -17,6 +17,12 @@ The frozen design is `24 timelines × 10 probes = 240 probes`:
 
 The ten probe families cover a durable user fact, assistant/tool outcome, cross-session synthesis, chronology, knowledge update, mixed memory-plus-receipt evidence, absent fact, semantic near miss, filtered scope/lifecycle target, and incomplete evidence chain.
 
+## Answer-policy v2 repair
+
+The frozen v1 bytes and scores remain unchanged. A separate `fal-memory-shared-v2` semantic contract now derives public development/calibration from those tracked v1 packs while binding their executor/golden hashes. It separates six full answers, one evidence-supported negative, one known-plus-missing partial answer, and two genuinely direct unknowns per timeline. Security failures are also separated from output-policy failures, and duplicated paired regression edges aggregate by unique timeline/probe.
+
+The v2 implementation is [`answer-policy-v2.ts`](src/answer-policy-v2.ts), its frozen protocol is [`protocol.json`](../../../fixtures/frontier-adapter-lab/fal-memory-shared-v2/protocol.json), and its regression suite is [`answer-policy-v2.test.ts`](tests/answer-policy-v2.test.ts). No model call or v2 rescore has been made, and v2 evaluation is explicitly not sealed or runnable. See [`FAL Memory Shared Benchmark — Answer Policy v2`](../../../spec/frontier-adapter-lab-shared-memory-answer-policy-v2.md).
+
 ## Public and sealed files
 
 The tracked fixture contains development/calibration inputs and goldens, family cards, the frozen protocol/candidate identities, the local-reader receipt, the append-only DeepSeek reader diagnostic receipt, and only a salted commitment to evaluation. It intentionally does **not** contain evaluation inputs, evaluation goldens, the evaluation family registry, or the nonce.
@@ -38,6 +44,7 @@ node node_modules/vitest/vitest.mjs run \
   labs/frontier-adapter-lab/fal-memory-shared-v1/tests/benchmark-pack.test.ts \
   labs/frontier-adapter-lab/fal-memory-shared-v1/tests/runner-scorer.test.ts \
   labs/frontier-adapter-lab/fal-memory-shared-v1/tests/deepseek-reader.test.ts \
+  labs/frontier-adapter-lab/fal-memory-shared-v1/tests/answer-policy-v2.test.ts \
   --maxWorkers=1
 pnpm typecheck
 ```

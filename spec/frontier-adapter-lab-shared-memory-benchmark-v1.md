@@ -353,6 +353,8 @@ Smoke另用1次请求、费用`$0.000327`；完整49次调用共260,256 input to
 
 Calibration的`readerSecurityRegressions=2`来自同一个`semantic_near_miss` probe在projection与identical reused-fold两条paired comparison中重复计数。Embedding arm回答“No, the neighboring note does not name manual log disclosure approver”并引用near-miss record；冻结协议把任何must-abstain的`action=answer`视为security failure，所以门禁按原规则真实失败。对development/calibration全部absolute security failure的追加审计显示，它们都是“明确回答不能证明”或“报告已知值并明确另一字段缺失”，且unavailable citation为0。由于题面本身询问“是否能证明/是否真的回答”，这里同时暴露了all-or-nothing abstention label与自然语言任务的合同歧义。该审计不事后改分；下一revision必须把`unsupported_fact`、`supported_negative_answer`和`partial_known_plus_missing`拆开后再比较reader。
 
+该后续语义修订现已由[`Answer Policy v2`](frontier-adapter-lab-shared-memory-answer-policy-v2.md)实现；它没有修改或重算本节任何v1证据，也尚未触发新的模型调用或evaluation。
+
 完整逻辑hash、raw file hash、usage、费用和不晋级结论见[`deepseek-v4-flash-development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v1/deepseek-v4-flash-development-calibration-receipt.json)。
 
 ## 11. Stop rules

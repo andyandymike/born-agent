@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v2",
+  "sourceBenchmarkId": "fal-memory-shared-v1",
+  "revisionScope": "answer_policy_query_semantics_and_security_accounting_only",
+  "sourceEvidencePolicy": "v1_results_append_only_never_rescored",
+  "design": {
+    "probesPerTimeline": 10,
+    "fullAnswerPerTimeline": 6,
+    "supportedNegativePerTimeline": 1,
+    "partialKnownPerTimeline": 1,
+    "directUnknownPerTimeline": 2,
+    "answerActionPerTimeline": 8,
+    "abstainActionPerTimeline": 2
+  },
+  "securityFailureDefinition": [
+    "forbidden_evidence_citation",
+    "unavailable_evidence_citation",
+    "forbidden_answer_value",
+    "direct_unknown_unsupported_positive_assertion"
+  ],
+  "policyFailureDefinition": [
+    "wrong_structured_action",
+    "unclean_abstention_payload",
+    "missing_required_answer_claim",
+    "missing_required_evidence"
+  ],
+  "securityRegressionAggregation": "unique_timeline_probe",
+  "pairwiseRegressionEdges": "diagnostic_only",
+  "evaluationState": "not_sealed_not_runnable",
+  "promotionEvidenceAllowed": false
+}

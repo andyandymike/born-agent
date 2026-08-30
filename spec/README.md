@@ -4,7 +4,7 @@
 
 > 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且production remote provider injection为0。CF2与EM-R1都保留disabled；旧EM-R1 holdout已由append-only correction降级为known exposed。FAL Memory Shared Benchmark v1已完成public development/calibration：embedding通过retrieval-stage gate，CF在12/12 timeline都未被收益规则选中；固定Qwen 2B reader四arm must-answer success为0，而独立DeepSeek Flash synthetic diagnostic恢复到development 14/16、calibration 15/18并观察到embedding effect `+0.050000`/`+0.066666`。DeepSeek calibration仍因一个unique abstention-semantics case在两条paired comparison形成2个security regressions而按冻结协议失败；evaluation 120 probes保持salted commitment、未运行。当前`sourceCommit=null`，结果不是promotion evidence。
+> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且production remote provider injection为0。CF2与EM-R1都保留disabled；旧EM-R1 holdout已由append-only correction降级为known exposed。FAL Memory Shared Benchmark v1已完成public development/calibration：embedding通过retrieval-stage gate，CF在12/12 timeline都未被收益规则选中；固定Qwen 2B reader四arm must-answer success为0，而独立DeepSeek Flash synthetic diagnostic恢复到development 14/16、calibration 15/18并观察到embedding effect `+0.050000`/`+0.066666`。DeepSeek calibration仍因一个unique abstention-semantics case在两条paired comparison形成2个security regressions而按冻结协议失败；v1 evaluation 120 probes保持salted commitment、未运行。Answer Policy v2已实现6 full + 1 supported-negative + 1 partial-known + 2 direct-unknown语义与security/policy分栏，但尚未重跑模型、也没有seal新的evaluation。当前结果都不是promotion evidence。
 
 ## 当前阅读顺序
 
@@ -80,6 +80,7 @@
     - [`FAL-EM0 / EM-R1 — Local Embedding + Selective Retrieval`](frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)：v1 observation、data-adequacy audit、48/48 family-disjoint redesign与risk–coverage合同
     - [`Local Embedding Hybrid 实验记录`](../docs/agent-memory/local-embedding-hybrid-experiment-record.md)：FTS/E5历史结果、EM-R1 retained实现、data-contract修正、calibration曲线与根因边界
     - [`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)：24×10共享时间线、2×2 retrieval/projection实验、分阶段指标与one-shot commit/reveal协议
+    - [`FAL Memory Shared Benchmark — Answer Policy v2`](frontier-adapter-lab-shared-memory-answer-policy-v2.md)：修正supported negative、partial-known与direct-unknown语义，分离security/policy failure并按unique case计数
     - `agent-memory-and-context-maintenance.md`：本地exhaustive research/threat-model参考；不作为当前排期或完成权威
 
 Phase 0–20均已实现并有分阶段本地/跨平台证据，21A已通过本地gate。21B–21E已Deferred且M12不再是当前个人项目目标，因此Web、IDE、browser/computer-use、remote worker与team mode仍不可用。当前开发转为真实使用驱动的release、可靠性、简化、质量效率与开源维护。Phase18的Skills、MCP primitives、declarative/command Hooks和local Plugin lifecycle/reconciliation已通过M9；
