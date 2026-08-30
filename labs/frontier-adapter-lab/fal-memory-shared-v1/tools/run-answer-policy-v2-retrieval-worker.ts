@@ -31,6 +31,7 @@ const outputArgument = requiredArgument("--output");
 const outputPath = isAbsolute(outputArgument)
   ? resolve(outputArgument)
   : resolve(repositoryRoot, outputArgument);
+const stateParent = join(repositoryRoot, ".cache", "fal-memory-v2-state");
 const executor = await loadSharedAnswerPolicyV2ExecutorSplit({
   repositoryRoot,
   seeds: answerPolicyV2QuerySeedsFor(split),
@@ -45,7 +46,7 @@ const result = await runSharedRetrievalWorker({
   },
   repositoryRoot,
   split,
-  stateParent: join(dirname(outputPath), ".retrieval-worker-state"),
+  stateParent,
 });
 await writeFile(outputPath, canonicalPrettyJson(result), { encoding: "utf8", flag: "wx" });
 process.stdout.write(`${JSON.stringify({
