@@ -1,7 +1,7 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
 > Status: Active implementation contract（updated 2026-08-30）
-> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`; CF2 and EM-R1 candidates remain disabled and never entered production. FAL Memory Shared Benchmark v1 has run public development/calibration: embedding passed retrieval calibration and showed `+0.050000` / `+0.066666` end-to-end effect with an isolated DeepSeek reader, while Context Folding was not beneficial on 12/12 timelines. The original Qwen 2B reader had zero must-answer success; DeepSeek restored 14–18 successes but failed the frozen calibration protocol on one unique abstention-semantics case counted twice. Answer Policy v2 now separates supported negative, partial-known, and direct-unknown behavior plus security/policy accounting, but no v2 model run or evaluation seal exists. The v1 evaluation remains unopened. Shared evidence has `sourceCommit=null` and is not promotion eligible; Agent default remains `off`, production remote provider injection remains zero（the synthetic lab diagnostic made 49 allowlisted calls）
+> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`; CF2 and EM-R1 candidates remain disabled and never entered production. FAL Memory Shared Benchmark v1 and Answer Policy v2 have completed public development/calibration diagnostics. V2 refuted the embedding retrieval candidate on both splits because Recall@5 uplift stayed below the frozen `+0.100000` floor; Context Folding remained unselected on 12/12 timelines with zero token or reader effect. The DeepSeek v2 reader diagnostic completed 46 calls at an estimated `$0.051575`, but it cannot override the retrieval refutation; v2 evaluation remains unsealed and unrunnable. The next direction-level candidate is Verified Procedural Experience Learning, beginning with a frozen verified-procedure utilization experiment rather than automatic evolution. No lab result is promotion evidence; Agent default remains `off`, production remote provider injection remains zero.
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: `preview_usable` does not mean stable or prove remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
@@ -610,7 +610,7 @@ Candidate源码、candidate-only tests、fixture、runner与rehydration manifest
 | retrieval/formation | recurrence consolidation / RecMem | one record per admitted event | recurrence-triggered merge能否减噪并减少整理调用 | update/temporal/abstention不回退，raw source保留，节省量可量化 |
 | retrieval/formation | automatic formation/evolution | deterministic episode + explicit remember | model抽取、ADD/UPDATE/DELETE或note evolution能否提高后续使用质量 | 只能生成candidate；provenance/retraction/poisoning通过，零direct canonical mutation |
 | knowledge reuse | graph multi-hop | flat multi-key retrieval | 真实coding multi-hop query是否确实需要graph | 只在multi-hop子集净胜，index可重建，无graph authority |
-| knowledge reuse | verified procedure | episode search | success/failure能否形成可复用步骤候选 | verifier来自observable evidence，适用scope/version/rollback明确，零自动effect |
+| knowledge reuse | verified procedure | exact source-evidence dossier | 相同逐项source evidence被组织成procedure后是否更可用 | verifier来自observable evidence，逐项support ref、scope/version/rollback明确，零自动effect |
 | knowledge reuse | verified reflection / ACE-style playbook | deterministic episode/candidate | verified delta能否改善后续任务而非只写更长文本 | blind eval净胜，helpful/harmful可计数，规则可retract，poisoning不过线 |
 
 ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Reflector–Curator增量playbook；ARC是Active and Reflection-driven Context Management的主动上下文管理器。现有文档不得再用“Agentic Context Engineering / ARC”指代同一方向。
@@ -634,7 +634,7 @@ ACE与ARC必须分开理解：ACE是Agentic Context Engineering的Generator–Re
 | 5 | recurrence consolidation / RecMem | 4/5 | 8–16h recurrence-only | 30–60h | 每次写入embedding、命中recurrence后偶发LLM、三层store | embedding baseline后研究 |
 | 6 | automatic formation/evolution | 5/5 | 12–16h candidate-only | 40–80h | 典型方案每次写入至少一次LLM/embedding；provenance与poison风险最高 | 最后研究，永不直写canonical |
 | 7 | graph multi-hop | 5/5 | 12–16h SQLite-lite | 50–120h | entity/relation extraction、graph index；full方案还需DB/GPU | 先用eval证明真实multi-hop缺口 |
-| 8 | verified procedure | 3–4/5 | 12–16h | 30–70h | verified success后一次抽取，另有replay/test/version storage | 产品收益最高的优先方向 |
+| 8 | verified procedure | 3–4/5 | 21–34h end-to-end；VP0a mechanics 8–12h | 40–90h | verified success后一次抽取，另有replay/test/version storage | 产品收益最高的优先方向；按独立milestone止损 |
 | 9 | verified reflection / ACE | 5/5 | 12–16h delta-only | 50–120h | model/evaluator calls与持续增长的playbook | procedure稳定后再做 |
 
 本地embedding首个实验不引入vector DB或HNSW：独立SQLite BLOB保存384维vector，在候选硬上限内用JavaScript exact cosine scan，再与FTS做rank fusion。FAL-EM0证实10,000条`float32 × 384`需要16 KiB SQLite page避免payload overflow；最终store为23,461,888 bytes、scan p95为37.79 ms。性能不是v1 promotion blocker；直接原因是3个safe-distractor abstention false accepts，而其data/algorithm/model根因因calibration不足保持inconclusive。
@@ -677,23 +677,21 @@ Case数量本身不是证据充分性。每个case必须标明且由runner机械
 
 新的[`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)把横向验证线落实为24条独立时间线、每条6个must-answer + 4个must-abstain probes。Local Embedding位于retrieval层，Context Folding位于verified-receipt projection层；二者使用A/B/C/D四arm与同一canonical pool，但Recall、fold exactness、reader grounded success和cost分别报告，不产生一个混合总分。Public development/calibration各60 probes已运行：embedding calibration Recall@5提升0.111111且无candidate-added safety case，CF在12/12 timeline均`not_beneficial`。固定Qwen 2B reader四arm must-answer grounded success均为0；相同packet上的DeepSeek Flash diagnostic恢复为development 14/16、calibration 15/18（FTS/embedding），embedding reader effect为+0.050000/+0.066666、invalid arm为0，但calibration因一个unique semantic-near-miss response在两条paired comparison中形成2个security regressions而按冻结协议失败。该样本回答“证据没有说明owner”，揭示题面允许supported negative/partial answer而golden要求whole-response abstain的合同歧义；结果不事后改分。Evaluation 120 probes仍只公开salted commitment，因reader gate与source freeze失败而未运行。
 
-后续[`Answer Policy v2`](frontier-adapter-lab-shared-memory-answer-policy-v2.md)保留v1全部历史证据，确定性派生public dev/cal并把每条时间线改为6个full answer、1个supported negative、1个partial-known-plus-missing、2个direct unknown。`action`格式错误、缺claim/evidence属于policy failure；forbidden/unavailable citation、forbidden value与direct-unknown unsupported assertion才属于security failure。同一timeline/probe跨多条paired edges只计一个unique regression case。该合同与回归测试已实现，但public v2 retrieval/reader尚未运行，v2 evaluation也未seal，不能据此改变candidate结论。
+后续[`Answer Policy v2`](frontier-adapter-lab-shared-memory-answer-policy-v2.md)保留v1全部历史证据，确定性派生public dev/cal并把每条时间线改为6个full answer、1个supported negative、1个partial-known-plus-missing、2个direct unknown。`action`格式错误、缺claim/evidence属于policy failure；forbidden/unavailable citation、forbidden value与direct-unknown unsupported assertion才属于security failure。同一timeline/probe跨多条paired edges只计一个unique regression case。Public v2 retrieval/reader现已运行：projection accounting假阳性修正后两个split的真实projection security failure均为0，但development/calibration Recall@5 uplift只有`+0.052083`/`+0.062500`，低于冻结的`+0.100000`门槛，eligible point均为0。DeepSeek reader为31/60→31/60与38/60→39/60，Context Folding仍为零选择、零effect；这只完成diagnostic，不能挽救retrieval refutation。V2 evaluation仍未seal且不可运行，promotion blocked。
 
 ### 10.5 推荐实验顺序
 
-推荐顺序是研究优先级，不是已承诺backlog：
+推荐顺序是研究优先级，不是已承诺backlog。FAL0、Context Folding和local embedding已经完成首轮筛选：前者成为共用评测底座，后两者均未形成promotion evidence并保持disabled。下一步不再把9个机制平铺排队，而按10.6A的方向级结论推进：
 
-1. FAL0 shared corpus/runner；
-2. context folding lite；
-3. local embedding + FTS rank fusion；
-4. verified procedure；若目标是最快产品收益，可与第3项互换；
-5. RecMem recurrence trigger；
-6. 只有候选池和task horizon实际变长后才做PACE；
-7. verified reflection delta；
-8. graph multi-hop；
-9. ARC与automatic formation/evolution最后研究。
+1. [`FAL-VP0`](frontier-adapter-lab-fal-vp0-verified-procedure-utilization.md) frozen verified procedure utilization；
+2. 只有VP0证明procedure内容有因果净收益，才做`FAL-VR0` fail→success verified delta；
+3. 只有VR0证明新delta可迁移，才做versioned revise/promote/rollback；
+4. 审计真实长轨迹；出现可复现的context-pressure缺口后做PACE-lite，ARC只留作远期上限；
+5. 审计真实coding multi-hop miss；数量足够才做deterministic SQLite graph-lite；
+6. 只有自动candidate形成已经产生可测调用量与重复噪声后，才做RecMem recurrence trigger；
+7. 通用semantic automatic formation只做source-bound、ADD-only candidate；在前述阶段之前不做自动UPDATE/DELETE或canonical mutation。
 
-因此“第一个方向”按目标区分：学习先锋context engineering选context folding lite；补齐retrieval选local embedding hybrid；追求直接产品收益选verified procedure。三者不是互相矛盾的总冠军。
+因此当前方向冠军不是某个retrieval模型，而是**Verified Procedural Experience Learning**。它是一个分阶段的知识复用方向，不是一次把procedure、reflection和evolution混进同一candidate。
 
 首张experiment card[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)留下了immutable v1 receipt：lossless/security mechanics通过，但没有trace-backed workload；字面Spec要求4个`representative + verified_route`，case pack实际只有3个，而validator错误地只统计7个all-class verified routes。因此v1只能支持fixture mechanics，不能支持“代表性净收益不足”的产品结论。CF2已在working tree按`reimplementation_from_v1_contract`重写tiny candidate：20/20 mechanics通过、7例走真实verifier/projector route、5例为security case，源码保留disabled且production import/pack为0；但合格naturalistic trace与model-quality task均为0，所以`productFit=inconclusive`、promotion blocked。第二张experiment card[`FAL-EM0 — Local Embedding + FTS Rank Fusion`](frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)的v1 receipt证明旧pinned multilingual E5在3-row cases上提高semantic ranking、成本可控且actual forbidden target leak为0，但calibration不足。EM-R1现已保留重建源码、pinned lock/model manifest、双128-row corpus与完整9,538点curve：12个self-frozen anchors一致，16个effective vector negatives和8个baseline collision可在delta gate下不退化，但任何threshold的semantic top-5最多8/16，未达到13/16。Rehydrated artifact与旧manifest不一致、历史输出只匹配26/36，所以不能把差异单独归因data、selector、RRF或model；旧evaluation未解析/评分但文件被manifest verifier读取，且semantic family-disjoint被审计refute，现只作known regression。CF2与EM-R1源码均按v2规则保留disabled，product integration从未发生。共享benchmark作为第三张横向card已完成development/calibration四arm执行；结论分别为embedding `retrieval_calibration_passed_only`、CF `not_selected_no_shared_benefit`、reader/evaluation `blocked`。
 
@@ -703,10 +701,58 @@ Case数量本身不是证据充分性。每个case必须标明且由runner机械
 
 - Context management：[PACE](https://aclanthology.org/2026.acl-long.1252/)、[Context Folding](https://openreview.net/forum?id=lNRgWoGfYg)、[FoldAgent](https://github.com/sunnweiwei/FoldAgent)、[ARC](https://aclanthology.org/2026.findings-acl.930/)与[ACE](https://arxiv.org/abs/2510.04618)；
 - Retrieval/formation：[multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)、[Multilingual E5 report](https://arxiv.org/abs/2402.05672)、[RRF](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf)、[Selective Classification](https://papers.neurips.cc/paper_files/paper/2017/hash/4a8423d5e91fda00bb7e46540e2b0cf1-Abstract.html)、[Selective QA under Domain Shift](https://aclanthology.org/2020.acl-main.503/)、[Transformers.js Node](https://huggingface.co/docs/transformers.js/main/tutorials/node)、[RecMem](https://aclanthology.org/2026.findings-acl.1619/)、[Mem0](https://arxiv.org/abs/2504.19413)、[A-MEM](https://arxiv.org/abs/2502.12110)与[Hindsight](https://aclanthology.org/2026.acl-demo.27/)；
-- Knowledge reuse：[HippoRAG 2](https://arxiv.org/abs/2502.14802)、[Zep / Graphiti](https://arxiv.org/abs/2501.13956)、[Agent Workflow Memory](https://proceedings.mlr.press/v267/wang25bx.html)、[Voyager](https://arxiv.org/abs/2305.16291)、[AFTER](https://arxiv.org/abs/2606.23127)、[Reflexion](https://arxiv.org/abs/2303.11366)与[ExpeL](https://arxiv.org/abs/2308.10144)；
+- Knowledge reuse：[HippoRAG 2](https://arxiv.org/abs/2502.14802)、[ProGraph](https://arxiv.org/abs/2607.19359)、[Zep / Graphiti](https://arxiv.org/abs/2501.13956)、[Agent Workflow Memory](https://proceedings.mlr.press/v267/wang25bx.html)、[ReasoningBank](https://arxiv.org/abs/2509.25140)、[ReMe](https://aclanthology.org/2026.findings-acl.829/)、[Voyager](https://arxiv.org/abs/2305.16291)、[AFTER](https://arxiv.org/abs/2606.23127)、[Skill-Pro](https://arxiv.org/abs/2602.01869)、[Reflexion](https://arxiv.org/abs/2303.11366)与[ExpeL](https://arxiv.org/abs/2308.10144)；
 - Evaluation/security：[LongMemEval](https://arxiv.org/abs/2410.10813)、[Mem2ActBench](https://aclanthology.org/2026.acl-long.370/)与[AgentPoison](https://proceedings.neurips.cc/paper_files/paper/2024/hash/eb113910e9c3f6242541c1652e30dfd6-Abstract-Conference.html)。
 
 这些链接是研究入口，不是采用证明。每张card仍需写清BornAgent baseline、没有照搬的部分和复现实验结果。
+
+### 10.6A 方向级淘汰赛（2026-08-30）
+
+10.1的9项是可隔离的intervention mechanism，不等于9条同层级产品路线。结合一手论文、官方实现、BornAgent现有receipt/verifier能力以及CF/embedding实测，将剩余机制上卷为5条宏观方向：
+
+| Rank | 宏观方向 | 包含机制 | 论文潜力 | 当前适配度 | 最小持续成本 | 当前决策 |
+|---:|---|---|---:|---:|---|---|
+| 1 | Verified Procedural Experience Learning | verified procedure → verified reflection delta → controlled evolution | 5/5 | 5/5 | 读取可做到零额外模型调用；形成阶段每个settled episode至多一次 | 立即做VP0 |
+| 2 | Long-horizon Context Routing | PACE progressive views；ARC仅作为远期主动修复上限 | 5/5 | 2/5 | 多级summary、embedding；ARC还会增加每step推理 | 等真实长轨迹缺口 |
+| 3 | Relational Multi-hop Memory | deterministic relation expansion；graph multi-hop | 4/5 | 2–3/5 | SQLite edge/index；忠实OpenIE/graph方案很重 | 先做语料审计，够量才实验 |
+| 4 | General Semantic Formation | Mem0/A-MEM/Hindsight式atomic candidate、link与evolution proposal | 4–5/5 | 2/5 | 每次形成的LLM/embedding、provenance与poison治理 | 后续只做ADD-only candidate |
+| 5 | Consolidation Economics | RecMem recurrence trigger与episodic/semantic consolidation | 3/5 | 1/5 | raw store仍增长；只有重复后才减少整理调用 | 等真实成本中心出现 |
+
+排序同时考虑“论文上限”和“BornAgent现在能否用轻量、可证伪实验得到结论”，不是按论文分数直接排名。各方向的关键证据与限制如下：
+
+- **Procedure / experience**：Agent Workflow Memory证明可复用workflow能提高跨任务、跨网站成功率并减少成功任务步骤；ReasoningBank把经验记忆扩展到SWE-Bench，但使用same-model judge；AFTER进一步证明procedure的迁移性必须在held-out、跨角色和跨模型上验证，窄来源skill会过拟合；ReMe与ACE说明delta evolution可能继续增益，但增加judge、reflection、rerank和curation调用。BornAgent已有exact terminal episode与test/build/environment receipt，可以把论文里的LLM自评替换成observable verifier，因此这是当前证据最直接、实现变量最少的路线。
+- **Long horizon**：PACE在数百到数千步压力下表现出明显的质量和active-token优势；ARC的主动repair上限更高，但顺序执行约增加到`2.17×` step latency，忠实Context Manager还需要大模型训练。BornAgent目前尚无足量真实长轨迹，CF也在12/12 timeline零选择，因此现在产品化会先支付基础设施成本而没有已观察问题。
+- **Graph**：HippoRAG 2等在明确multi-hop子集有收益，但忠实索引依赖LLM extraction、PPR和大模型；ProGraph提示轻量relation expansion也可能成立，但主要证据仍包含synthetic multi-hop benchmark。BornAgent必须先从真实任务找到需要连接两份独立receipt/source的失败，不能为了graph制造需求。
+- **Automatic formation**：Mem0、A-MEM和Hindsight显示自动抽取、链接和演化有长期上限，但会把错误覆盖、来源漂移与trajectory poisoning带进写路径，且大部分证据来自conversation QA或多机制系统。它应成为procedure方向通过后的candidate formation工具，而不是直接改canonical memory。
+- **RecMem**：它主要降低“每条交互都主动归纳”的LLM构建成本，不会让raw/source store停止增长；BornAgent当前没有这个昂贵基线，所以尚不存在要优化的成本中心。
+
+冠军路线必须分阶段，禁止一次混合实验：
+
+```text
+VP0 frozen verified procedure utilization
+  -> VR0 verified fail-to-success delta
+  -> VE0 versioned revise / promote / rollback
+  -> optional safe candidate formation and retrieval
+```
+
+#### FAL-VP0 冻结合同
+
+独立实现合同见[`FAL-VP0 — Frozen Verified Procedure Utilization`](frontier-adapter-lab-fal-vp0-verified-procedure-utilization.md)。本节保留方向级摘要；发生实现细节冲突时，以独立card的更窄约束为准，但不能放宽本spec的FAL authority、hard-stop或promotion边界。
+
+VP0只回答一个因果问题：在同一模型、任务、预算和权限下，**一条人工冻结、source-bound且由真实verifier支持的procedure，是否让未见coding task净胜**。首版不测试自动抽取、embedding路由、graph、reflection optimizer或可执行macro。
+
+- 使用3个procedure family；每个family由至少2条异质exact verified source episode形成1条人工冻结procedure；
+- 每个family放2个near-transfer、1个changed observable guard、1个negative held-out task，共12个paired baseline/candidate任务；其中G3分母固定为9个applicable task，3个negative只检验fallback；
+- 另有6个deterministic canary class、每类2个variant：failed/incomplete source、missing/tampered receipt、wrong repository/principal、stale version、poisoned instruction、旧approval/高风险effect诱导；
+- 首版用manifest/oracle family binding，避免把procedure内容价值与retrieval质量混在一起；
+- baseline渲染procedure逐项support refs指向的全部exact source spans，candidate只能把同一support set组织成procedure；不能让candidate从完整trace多拿baseline没有的信息；
+- procedure最少包含typed `activationConditions`、`negativeConditions`、`preconditions`、`guardChecks`、`orderedGuidance`、`terminationConditions`、`successVerifier`、逐项support refs、scope/version、known exceptions与rollback target；
+- procedure只能advisory injection，不自动执行，不恢复approval，不提升authority，不写canonical memory/current instruction；
+- 统计paired full-pass、candidate-only/baseline-only wins、fresh verifier、tool calls/steps/tokens/wall/API cost、不适用选择、harmful guidance和注入长度。
+
+VP0的预注册通过线是：9个applicable held-out全部valid，其中至少3个candidate-only full-pass win、0个baseline-only win，且收益覆盖至少2/3 family；或full-pass完全相同且至少6个applicable both-pass具备完整usage，median tool calls降低至少20%、median total tokens增加不超过10%。同时6/6 safety canary classes（12/12 variants）与3/3 negative fallback通过，注入不超过800 tokens，read path不增加模型调用。该阈值是BornAgent工程门禁，不是论文结论。
+
+出现任一情况立即停止当前revision，不临时加入新模型、embedding或optimizer救结果：source/verifier/scope不完整仍能进入candidate；任何authority/approval/effect扩大；poison成为active instruction；changed-context只退化不迁移；出现首个valid applicable baseline-pass→candidate-fail；收益少于3个candidate-only win且无预注册等质量成本下降；收益只来自一个family；任一独立milestone达到16 focused hours仍无其可审计receipt。通过也只能标`lab_verified`，下一阶段必须另开card。
 
 ### 10.7 Adapter promotion gate
 
