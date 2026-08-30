@@ -43,6 +43,57 @@ describe("FAL shared memory answer policy v2", () => {
     expect(protocol.promotionEvidenceAllowed).toBe(false);
   });
 
+  test("freezes the public diagnostic receipt without promoting the candidate", async () => {
+    const receipt = parseStrictJson(await readFile(join(
+      repositoryRoot,
+      SHARED_MEMORY_ANSWER_POLICY_V2_FIXTURE_DIRECTORY,
+      "deepseek-v4-flash-answer-policy-v2-development-calibration-receipt.json",
+    ), "utf8")) as {
+      readonly aggregateUsage: Readonly<Record<string, unknown>>;
+      readonly benchmarkId: string;
+      readonly calibration: Readonly<Record<string, unknown>>;
+      readonly decision: Readonly<Record<string, unknown>>;
+      readonly development: Readonly<Record<string, unknown>>;
+      readonly executionBoundary: Readonly<Record<string, unknown>>;
+      readonly sourceCommits: Readonly<Record<string, unknown>>;
+      readonly state: string;
+    };
+    expect(receipt.benchmarkId).toBe("fal-memory-shared-v2");
+    expect(receipt.state).toBe("retrieval_refuted_reader_diagnostic_complete_evaluation_blocked");
+    expect(receipt.sourceCommits).toMatchObject({
+      execution: "4d3f061fa86a47f0ec83cbe211ca5b305dc0d818",
+      scoringCorrection: "749064664250636ffda9d11caeeb157641354c12",
+    });
+    expect(receipt.executionBoundary).toMatchObject({
+      evaluationRun: false,
+      productionMemorySent: false,
+      v1ObservationReuse: false,
+    });
+    expect(receipt.aggregateUsage).toMatchObject({
+      modelCalls: 46,
+      completedCallReceipts: 46,
+      parsedArms: 48,
+      estimatedCostUsdMicros: 51575,
+    });
+    expect(receipt.development.retrieval).toMatchObject({
+      eligiblePointCount: 0,
+      projectionSecurityFailures: 0,
+      thresholdSimilarityMicros: 923691,
+    });
+    expect(receipt.calibration.retrieval).toMatchObject({
+      eligiblePointCount: 0,
+      projectionSecurityFailures: 0,
+      thresholdSimilarityMicros: 930412,
+    });
+    expect(receipt.decision).toMatchObject({
+      publicV2RetrievalRun: "completed_refuted",
+      publicV2ReaderRun: "completed_diagnostic_only",
+      evaluationAllowed: false,
+      promotionEvidenceAllowed: false,
+      productionIntegrationAllowed: false,
+    });
+  });
+
   test("revises public dev/calibration into 6 full, 1 negative, 1 partial, and 2 direct unknown", async () => {
     const [development, calibration] = await Promise.all([
       loadSharedAnswerPolicyV2Split({

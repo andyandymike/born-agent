@@ -1,6 +1,6 @@
 # FAL Memory Shared Benchmark — Answer Policy v2
 
-> Status（2026-08-30）：语义合同、版本化派生器、scorer与本地回归测试已实现；public development/calibration尚未按v2重跑，evaluation尚未生成或seal。v1输入、goldens、receipt、分数与salted evaluation commitment保持原样，不做事后重算。
+> Status（2026-08-30）：语义合同、版本化派生器、独立执行链与scorer已实现；public development/calibration已完成v2 retrieval与DeepSeek reader诊断。两套retrieval均被硬门禁否决，reader结果仅为diagnostic，evaluation仍未生成或seal。v1输入、goldens、receipt、分数与salted evaluation commitment保持原样，不做事后重算。
 
 ## 1. 修正目标
 
@@ -81,15 +81,17 @@ v2的security failure只有：
 
 ## 8. 执行与费用边界
 
-本次修正只运行本地schema/scorer/tests：
+本轮public重跑遵守以下边界：
 
-- 不读取或打开v1 sealed evaluation；
-- 不调用Ollama或DeepSeek；
-- 不产生API费用；
-- 不把production Memory接入远程reader；
-- 不把v2 contract test结果写成candidate benefit或promotion evidence。
+- 只运行`development`与`calibration`，不读取或打开v1 sealed evaluation；
+- retrieval使用v2 query生成新的observation，reader使用明确允许supported negative与partial-known的冻结prompt，score使用v2 goldens；
+- 只把public synthetic benchmark packets发给DeepSeek，production Memory未发送，API key未持久化或回显；
+- DeepSeek共46次调用，provider usage估算费用为`$0.051575`，低于授权的`$0.20`上限；该数字不是账单实扣证明；
+- execution绑定commit`4d3f061fa86a47f0ec83cbe211ca5b305dc0d818`；projection accounting假阳性修正绑定commit`749064664250636ffda9d11caeeb157641354c12`；
+- scoring correction只重新读取原observation计分，没有新增模型调用、没有改reader response、没有覆盖旧score；
+- 不把public diagnostic写成candidate promotion或production integration证据。
 
-后续若重跑public development/calibration，retrieval必须使用v2 query生成新的observation，reader必须使用明确允许supported negative与partial-known的冻结prompt，score必须使用v2 goldens；禁止拿v1 retrieval/reader output直接换golden重算。
+Append-only摘要见[`deepseek-v4-flash-answer-policy-v2-development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/deepseek-v4-flash-answer-policy-v2-development-calibration-receipt.json)。原始observation/model responses和superseded/corrected scores保留在ignored run目录。
 
 ## 9. 本地验收
 
@@ -109,13 +111,31 @@ pnpm typecheck
 - 重复pairwise edges按一个unique case计数；
 - v2 evaluation loader始终拒绝运行，直到建立新的sealed pack。
 
-## 10. 完成边界
+## 10. Public development/calibration结果
 
-本spec完成表示“测试语义已修正且可本地验证”，不表示模型或candidate已经通过v2：
+Retrieval的projection accounting先发现并修正了一个计分假阳性：query-level禁止引用的active poison note不能自动等同于source-level projection exclusion。修正后两个split的真实projection security failure均为0，诊断阈值不变，retrieval结论也不变：
+
+| Split | Diagnostic threshold | Recall@5 delta | Required | Eligible points | Result |
+|---|---:|---:|---:|---:|---|
+| development | `923691` | `+52083` | `+100000` | 0 | refuted |
+| calibration | `930412` | `+62500` | `+100000` | 0 | refuted |
+
+DeepSeek reader共46/46 call receipts completed，48/48 arms parsed：
+
+| Split | FTS grounded | Embedding grounded | Embedding effect | Absolute security | Reader gate |
+|---|---:|---:|---:|---:|---|
+| development | 31/60 | 31/60 | 0 | 8 arm-probe / 2 unique | passed |
+| calibration | 38/60 | 39/60 | `+16667` | 0 | passed |
+
+`readerGatePassed`只表示candidate没有相对baseline新增security regression，不能覆盖development的绝对security failure，更不能覆盖retrieval refutation。四臂展开的calibration policy结果为supported-negative `24/24`、partial-known `24/24`、direct-unknown `48/48`；主要瓶颈仍是full-answer，仅`58/144`。Context Folding在12条timeline中选择0条，token reduction与reader effect均为0。
+
+## 11. 完成边界
+
+本spec完成表示“语义、执行链与public diagnostic已实现且留有可审计证据”，不表示candidate已经通过v2：
 
 - `answer_policy_v2_contract = implemented`；
-- `public_v2_retrieval_run = not_run`；
-- `public_v2_reader_run = not_run`；
+- `public_v2_retrieval_run = completed_refuted`；
+- `public_v2_reader_run = completed_diagnostic_only`；
+- `reader_gate = passed`；
 - `v2_evaluation = not_sealed_not_runnable`；
 - `promotion = blocked`。
-

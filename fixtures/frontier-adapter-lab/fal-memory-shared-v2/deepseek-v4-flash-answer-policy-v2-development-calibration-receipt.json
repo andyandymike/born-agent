@@ -1,0 +1,404 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "fal-memory-shared-v2",
+  "sourceBenchmarkId": "fal-memory-shared-v1",
+  "experimentId": "deepseek-v4-flash-answer-policy-v2-reader-diagnostic-v1",
+  "createdAt": "2026-08-30T10:00:21.174Z",
+  "runId": "20260830-4d3f061",
+  "state": "retrieval_refuted_reader_diagnostic_complete_evaluation_blocked",
+  "evidenceState": "exact_execution_commit_with_post_run_scoring_correction_public_synthetic_not_promotion_eligible",
+  "sourceCommits": {
+    "execution": "4d3f061fa86a47f0ec83cbe211ca5b305dc0d818",
+    "scoringCorrection": "749064664250636ffda9d11caeeb157641354c12",
+    "executionHeadWasClean": true,
+    "scoringCorrectionHeadWasClean": true
+  },
+  "executionBoundary": {
+    "splits": [
+      "development",
+      "calibration"
+    ],
+    "inputPolicy": "public_synthetic_answer_policy_v2_development_calibration_only",
+    "evaluationRun": false,
+    "evaluationState": "not_sealed_not_runnable",
+    "goldensVisibleToReader": false,
+    "v1ObservationReuse": false,
+    "productionMemorySent": false,
+    "productionReaderIntegrationChanged": false,
+    "allowedEndpoint": "https://api.deepseek.com/responses",
+    "maximumAttemptsPerRequest": 1,
+    "apiKeyPersistedOrReported": false,
+    "authorizedMaximumModelCalls": 46,
+    "authorizedMaximumEstimatedCostUsdMicros": 200000
+  },
+  "lineage": {
+    "answerPolicyProtocolLogicalSha256": "f5ac47af52fa65f9edea820f7a82ef0721c624546b640095fd3b38090682d839",
+    "answerPolicyProtocolRawFileSha256": "2cad4b8a9a6163c8e149da58e06dd70156a01c5833e8eb27e26badc171bd2545",
+    "sourceManifestLogicalSha256": "b966cee0c44bf791fd10f562828173d3cd404e6c2a5127a8972fc9027e651a1e",
+    "sourceManifestRawFileSha256": "7be0584ea8815d7688fadfefeca755a6fd4b43c9cdfc0aab4cd3f4b272bf8847",
+    "development": {
+      "sourceExecutorSha256": "41c780625055346cc737531339ae693affe88193345e1716aa50da713a8a609e",
+      "executorContentSha256": "091d7de947063915cfcc0613ff41cecba148408aae9e0810a1bb08c16b45201b",
+      "derivedExecutorPackSha256": "caa37ddaf8229d5cd912f7bab050366f8840c849380ec0c8c2e60dbd880b28b3",
+      "sourceGoldensSha256": "ee30f7fac12caa59f9f20d84fd7d9a1adf9f5adc001f4ebdb5a1cac151f38b2e",
+      "derivedGoldensPackSha256": "6dfd889c39e7e2362cc2ed816195943032858cf05906f09cef592ddb117543a1"
+    },
+    "calibration": {
+      "sourceExecutorSha256": "a06f443f487d832d3d2e5e5ad4dfe970d4f857473e113853c4f2f190527d6e60",
+      "executorContentSha256": "13df2b1e2f484bafe0094d9c10fe03fcffb42d7159dcb496af7039fbb8529d6f",
+      "derivedExecutorPackSha256": "8a91762dc7c80b8b3d85265a42091a938cf7526d46468f7992909d74d3caa5c2",
+      "sourceGoldensSha256": "c48715b3263b7bec85e496a28b37ba7ed14485ff0851c4d6734ba7e2e4db319f",
+      "derivedGoldensPackSha256": "ef0f45ee9052cc8712c835c1ca1edb1c77f8ef2da19f9bb2e1898e962b72020a"
+    }
+  },
+  "reader": {
+    "provider": "deepseek",
+    "api": "responses",
+    "modelAlias": "deepseek-v4-flash",
+    "apiReportedModels": [
+      "deepseek-v4-flash"
+    ],
+    "documentedModelVersion": "DeepSeek-V4-Flash-0731",
+    "reportedAliasDoesNotProveDocumentedVersion": true,
+    "temperature": 0,
+    "seed": null,
+    "reasoningEffort": "none",
+    "maxOutputTokens": 4096,
+    "promptContractSha256": "bf0e104ea89d0bf37f4def6d48ff6e589e2264fa11902e74d1771b846f250cd8",
+    "outputSchemaSha256": "6fe90dfd5842188d1388a4ed4b00d79966d95d09ca0e2ef84d90a483304b0736",
+    "pricing": {
+      "id": "deepseek-v4-2026-08-16",
+      "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "currency": "USD",
+      "billingWindowObserved": "off_peak",
+      "cacheHitUsdPerMillionTokens": 0.007,
+      "cacheMissUsdPerMillionTokens": 0.22,
+      "outputUsdPerMillionTokens": 0.66
+    }
+  },
+  "development": {
+    "retrieval": {
+      "eligiblePointCount": 0,
+      "thresholdRole": "diagnostic_only",
+      "thresholdSimilarityMicros": 923691,
+      "baselineMacroSupportRecallAt5Micros": 500000,
+      "macroSupportRecallAt5Micros": 552083,
+      "macroSupportRecallAt5DeltaMicros": 52083,
+      "minimumRequiredDeltaMicros": 100000,
+      "baselineMacroAllSupportFoundAt10Micros": 625000,
+      "macroAllSupportFoundAt10Micros": 625000,
+      "projectionSecurityFailures": 0,
+      "mustAbstainTop5NonemptyCases": 8,
+      "candidateAddedMustAbstainTop5Cases": 0,
+      "forbiddenTop5Cases": 14,
+      "candidateAddedForbiddenTop5Cases": 0,
+      "retrievalAurcMicros": 305596,
+      "state": "retrieval_refuted_evaluation_blocked_reader_diagnostic_allowed"
+    },
+    "folding": {
+      "timelineCount": 6,
+      "selectedTimelineCount": 0,
+      "losslessTimelineCount": 6,
+      "baselineContextTokens": 15750,
+      "selectedContextTokens": 15750,
+      "tokenReductionMicros": 0,
+      "modelCalls": 0,
+      "networkCalls": 0
+    },
+    "readerScore": {
+      "metricUnit": "arm_probe_case",
+      "readerGateMeaning": "candidate_regression_gate_not_absolute_security_cleanliness",
+      "ftsRecency": {
+        "macroGroundedSuccessMicros": 516667,
+        "groundedSuccessCases": 31,
+        "mustAnswerGroundedSuccessCases": 19,
+        "mustAnswerGroundedSuccessMicros": 395833,
+        "mustAbstainGroundedSuccessMicros": 1000000,
+        "securityFailureCases": 2,
+        "policyFailureCases": 27,
+        "forbiddenCitationCount": 2
+      },
+      "localEmbedding": {
+        "macroGroundedSuccessMicros": 516667,
+        "groundedSuccessCases": 31,
+        "mustAnswerGroundedSuccessCases": 19,
+        "mustAnswerGroundedSuccessMicros": 395833,
+        "mustAbstainGroundedSuccessMicros": 1000000,
+        "securityFailureCases": 2,
+        "policyFailureCases": 27,
+        "forbiddenCitationCount": 2
+      },
+      "embeddingEffectMicros": 0,
+      "foldingEffectMicros": 0,
+      "invalidArmCount": 0,
+      "readerSecurityRegressions": 0,
+      "readerSecurityRegressionEdges": 0,
+      "absoluteSecurityArmProbeCases": 8,
+      "absoluteUniqueSecurityCases": 2,
+      "absoluteUniqueSecurityCaseIds": [
+        "timeline-2556e46a7ff3fd5c:probe-e191e21bbcd312d5",
+        "timeline-2556e46a7ff3fd5c:probe-f7a8518255da961a"
+      ],
+      "readerUtilityFloorPassed": true,
+      "readerGatePassed": true,
+      "evaluationAllowed": false
+    },
+    "policyBreakdown": {
+      "metricUnit": "four_arm_probe_case",
+      "fullAnswer": {
+        "cases": 144,
+        "groundedSuccessCases": 36,
+        "policyFailureCases": 108,
+        "securityFailureCases": 0
+      },
+      "supportedNegative": {
+        "cases": 24,
+        "groundedSuccessCases": 20,
+        "policyFailureCases": 0,
+        "securityFailureCases": 4
+      },
+      "partialKnownPlusMissing": {
+        "cases": 24,
+        "groundedSuccessCases": 20,
+        "policyFailureCases": 0,
+        "securityFailureCases": 4
+      },
+      "directUnknown": {
+        "cases": 48,
+        "groundedSuccessCases": 48,
+        "policyFailureCases": 0,
+        "securityFailureCases": 0
+      }
+    },
+    "execution": {
+      "plannedApiCalls": 22,
+      "modelCalls": 22,
+      "externalNetworkCalls": 22,
+      "completedCallReceipts": 22,
+      "parsedArms": 24,
+      "reusedArmCount": 13,
+      "inputTokens": 113862,
+      "cachedInputTokens": 31360,
+      "uncachedInputTokens": 82502,
+      "outputTokens": 9727,
+      "totalTokens": 123589,
+      "estimatedCostUsdMicros": 24787
+    },
+    "artifacts": {
+      "retrievalObservation": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/development/retrieval-observations.json",
+        "logicalSha256": "4be9d1f09d35a3bfe57a1d1074ff645f78dd26df0d317592514795e93a78f520",
+        "rawFileSha256": "7e925a1874184c5ab4c71ddfdd7887a12d4a4f13bfe38f3682b18f9958e1f0e0"
+      },
+      "correctedRetrievalScore": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/scoring-correction-7490646/development/retrieval-score.json",
+        "logicalSha256": "1811f8059ca78e5685b70d7d6de00659cd8183aa9de938e92385756cf5b1d7aa",
+        "rawFileSha256": "d356af6d8945a0c2e2e6c9969e1247b3fe6ca5c7d69ef6aa88aaf50e3650c26a"
+      },
+      "readerObservation": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/development/deepseek-v4-flash-reader-observations.json",
+        "logicalSha256": "1a0530ab26c4ba8c49a8050ab496f6c8e5ece83da72ea460ba76d31bbc46e96b",
+        "rawFileSha256": "dd5d56183f9c3b0130f8632d12e4ed60c8fbea2906eee7a332244aaf4e34e6d4"
+      },
+      "correctedReaderScore": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/scoring-correction-7490646/development/deepseek-v4-flash-reader-score.json",
+        "logicalSha256": "b1cf7263ae6cb86c089472baaa93cad65f183aa997726549fe9eb76b1e64476d",
+        "rawFileSha256": "5060c94722f94580af81739200bf99a8412328c0eef2f67b8d42bdee040ef9fb"
+      }
+    }
+  },
+  "calibration": {
+    "retrieval": {
+      "eligiblePointCount": 0,
+      "thresholdRole": "diagnostic_only",
+      "thresholdSimilarityMicros": 930412,
+      "baselineMacroSupportRecallAt5Micros": 458333,
+      "macroSupportRecallAt5Micros": 520833,
+      "macroSupportRecallAt5DeltaMicros": 62500,
+      "minimumRequiredDeltaMicros": 100000,
+      "baselineMacroAllSupportFoundAt10Micros": 645833,
+      "macroAllSupportFoundAt10Micros": 645833,
+      "projectionSecurityFailures": 0,
+      "answerableTop5EmptyCases": 4,
+      "mustAbstainTop5NonemptyCases": 8,
+      "candidateAddedMustAbstainTop5Cases": 0,
+      "forbiddenTop5Cases": 13,
+      "candidateAddedForbiddenTop5Cases": 0,
+      "retrievalAurcMicros": 330721,
+      "state": "retrieval_refuted_evaluation_blocked_reader_diagnostic_allowed"
+    },
+    "folding": {
+      "timelineCount": 6,
+      "selectedTimelineCount": 0,
+      "losslessTimelineCount": 6,
+      "baselineContextTokens": 15616,
+      "selectedContextTokens": 15616,
+      "tokenReductionMicros": 0,
+      "modelCalls": 0,
+      "networkCalls": 0
+    },
+    "readerScore": {
+      "metricUnit": "arm_probe_case",
+      "readerGateMeaning": "candidate_regression_gate_not_absolute_security_cleanliness",
+      "ftsRecency": {
+        "macroGroundedSuccessMicros": 633333,
+        "groundedSuccessCases": 38,
+        "mustAnswerGroundedSuccessCases": 26,
+        "mustAnswerGroundedSuccessMicros": 541667,
+        "mustAbstainGroundedSuccessMicros": 1000000,
+        "securityFailureCases": 0,
+        "policyFailureCases": 22,
+        "forbiddenCitationCount": 0
+      },
+      "localEmbedding": {
+        "macroGroundedSuccessMicros": 650000,
+        "groundedSuccessCases": 39,
+        "mustAnswerGroundedSuccessCases": 27,
+        "mustAnswerGroundedSuccessMicros": 562500,
+        "mustAbstainGroundedSuccessMicros": 1000000,
+        "securityFailureCases": 0,
+        "policyFailureCases": 21,
+        "forbiddenCitationCount": 0
+      },
+      "embeddingEffectMicros": 16667,
+      "foldingEffectMicros": 0,
+      "invalidArmCount": 0,
+      "readerSecurityRegressions": 0,
+      "readerSecurityRegressionEdges": 0,
+      "absoluteSecurityArmProbeCases": 0,
+      "absoluteUniqueSecurityCases": 0,
+      "absoluteUniqueSecurityCaseIds": [],
+      "readerUtilityFloorPassed": true,
+      "readerGatePassed": true,
+      "evaluationAllowed": false
+    },
+    "policyBreakdown": {
+      "metricUnit": "four_arm_probe_case",
+      "fullAnswer": {
+        "cases": 144,
+        "groundedSuccessCases": 58,
+        "policyFailureCases": 86,
+        "securityFailureCases": 0
+      },
+      "supportedNegative": {
+        "cases": 24,
+        "groundedSuccessCases": 24,
+        "policyFailureCases": 0,
+        "securityFailureCases": 0
+      },
+      "partialKnownPlusMissing": {
+        "cases": 24,
+        "groundedSuccessCases": 24,
+        "policyFailureCases": 0,
+        "securityFailureCases": 0
+      },
+      "directUnknown": {
+        "cases": 48,
+        "groundedSuccessCases": 48,
+        "policyFailureCases": 0,
+        "securityFailureCases": 0
+      }
+    },
+    "execution": {
+      "plannedApiCalls": 24,
+      "modelCalls": 24,
+      "externalNetworkCalls": 24,
+      "completedCallReceipts": 24,
+      "parsedArms": 24,
+      "reusedArmCount": 12,
+      "inputTokens": 126856,
+      "cachedInputTokens": 40448,
+      "uncachedInputTokens": 86408,
+      "outputTokens": 11353,
+      "totalTokens": 138209,
+      "estimatedCostUsdMicros": 26788
+    },
+    "artifacts": {
+      "retrievalObservation": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/calibration/retrieval-observations.json",
+        "logicalSha256": "e6060bd6acdc44cfd18a5943427923c64a53211ea5f170927669c9a327cc4dae",
+        "rawFileSha256": "f2eccf7db651e9475b81d823f809fdc4f3d0ebf6e1ee652097fa1bb28c28ce0f"
+      },
+      "correctedRetrievalScore": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/scoring-correction-7490646/calibration/retrieval-score.json",
+        "logicalSha256": "1d966aebf4365e49933302691648b23272dc66c5c944bb476b2e86801bd6af13",
+        "rawFileSha256": "7079738b143d3a811fb8135252cab76d311d93d91403a6ca00a93db80f059dca"
+      },
+      "readerObservation": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/calibration/deepseek-v4-flash-reader-observations.json",
+        "logicalSha256": "fdf2226f549c6b94e14a64824e3aceed262cd8f65b39a69aa70f2dcfad8382be",
+        "rawFileSha256": "29e7f43e12199f1c133a07d637abe96b142885bcc3f29472d1eed3329ec4e525"
+      },
+      "correctedReaderScore": {
+        "path": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061/scoring-correction-7490646/calibration/deepseek-v4-flash-reader-score.json",
+        "logicalSha256": "3d56eb8556598eb66e3939263585fb4c5e61aa4fd91cb941dd19a72c7e223433",
+        "rawFileSha256": "56921172363b6fb258f5dde2216d9bf71002c95974a4dae9986faf38dbcd0c8f"
+      }
+    }
+  },
+  "aggregateUsage": {
+    "modelCalls": 46,
+    "externalNetworkCalls": 46,
+    "completedCallReceipts": 46,
+    "parsedArms": 48,
+    "reusedArmCount": 25,
+    "inputTokens": 240718,
+    "cachedInputTokens": 71808,
+    "uncachedInputTokens": 168910,
+    "outputTokens": 21080,
+    "totalTokens": 261798,
+    "estimatedCostUsdMicros": 51575,
+    "estimatedCostUsd": 0.051575,
+    "costIsProviderUsageEstimateNotInvoice": true,
+    "allCallReceiptsCompleted": true,
+    "allResponseIdsUnique": true,
+    "allReaderArmsParsed": true
+  },
+  "postRunScoringCorrection": {
+    "required": true,
+    "scope": "projection_security_accounting_only",
+    "cause": "v2 query-level poison citations were incorrectly treated as source-level projection exclusions",
+    "correction": "hash-verified v1 source goldens now define projection eligibility while v2 goldens continue to define query and reader security",
+    "modelCallsAdded": 0,
+    "rawObservationsChanged": false,
+    "readerResponsesChanged": false,
+    "diagnosticThresholdsChanged": false,
+    "readerMetricsOrGatesChanged": false,
+    "retrievalDecisionChanged": false,
+    "projectionSecurityFailures": {
+      "developmentBefore": 6,
+      "developmentAfter": 0,
+      "calibrationBefore": 6,
+      "calibrationAfter": 0
+    },
+    "supersededScoreArtifacts": {
+      "developmentRetrievalScoreLogicalSha256": "a26b5066602396fa1b18c6c9b21f212b24806e26a16cf9375d6233b6f667f8b2",
+      "developmentRetrievalScoreRawFileSha256": "087444f5b90886670e895353606d40e3893d99cd6d9974ca31c52d0935d03b40",
+      "developmentReaderScoreLogicalSha256": "1f4d5f72b491d68f9c2112232c27daa3df6f5f0508cbb80bf20575c8502b6284",
+      "developmentReaderScoreRawFileSha256": "05acae17a8b0cadd4b0b08ffea43a1c2bf667184998cdbdc645e0665e6c91692",
+      "calibrationRetrievalScoreLogicalSha256": "e87148d1afd2bba28eb88b74c9b618af5048a5a447de7d75c3f1c1860d57cc59",
+      "calibrationRetrievalScoreRawFileSha256": "0d35423563276cd8073eb8b90974a67c4e4208c18fdef1f6b9e9d698c61f78b1",
+      "calibrationReaderScoreLogicalSha256": "d4a3dd54a09e4cf5a6fd0686f974e157fab7a1e2bee1a28dfdfe852d95fc1c00",
+      "calibrationReaderScoreRawFileSha256": "871918077320bfbad713a013623903ee8ba170cef1f454a129f1d8a1c723db6c"
+    }
+  },
+  "decision": {
+    "answerPolicyV2ContractImplemented": true,
+    "publicV2RetrievalRun": "completed_refuted",
+    "publicV2ReaderRun": "completed_diagnostic_only",
+    "developmentReaderGatePassed": true,
+    "calibrationReaderGatePassed": true,
+    "localEmbeddingRetrievalBenefitObserved": false,
+    "localEmbeddingReaderCalibrationEffectMicros": 16667,
+    "contextFoldingBenefitObserved": false,
+    "evaluationAllowed": false,
+    "evaluationState": "not_sealed_not_runnable",
+    "promotionEvidenceAllowed": false,
+    "productionIntegrationAllowed": false,
+    "nextStep": "improve_retrieval_recall_without_new_forbidden_or_must_abstain_top5_cases_before_any_v2_evaluation"
+  },
+  "rawArtifacts": {
+    "policy": "ignored_local_append_only_engineering_evidence",
+    "root": ".cache/frontier-adapter-lab/fal-memory-shared-v2/runs/20260830-4d3f061"
+  }
+}
