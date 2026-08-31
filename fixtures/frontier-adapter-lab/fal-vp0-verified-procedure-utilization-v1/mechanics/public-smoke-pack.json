@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-vp0-verified-procedure-utilization-v1",
+  "lane": "in_process_fake",
+  "qualityEvidenceEligible": false,
+  "taskId": "public_smoke_nonlineage_v1",
+  "requiredCapabilities": [
+    "repository_read",
+    "edit_persisted",
+    "exact_verifier_argv",
+    "finish_task",
+    "fresh_completion_evidence"
+  ],
+  "exactVerifierArgv": [
+    "node",
+    "verify-public-smoke.mjs",
+    "--manifest",
+    "public-smoke-manifest.json"
+  ],
+  "exactVerifierArgvSha256": "46349ee6cf28b790f252ffd8bc1664350f23ad3991e01af7e8ce648e76d3fc78",
+  "actorConfig": {
+    "actorImplementationId": "fal-vp0-structural-actor-v1",
+    "runtimePortId": "fal-vp0-structural-runtime-v1",
+    "providerId": "in_process_fake",
+    "modelId": "deterministic_structural_actor",
+    "endpointId": "none",
+    "systemInstructionId": "fal-vp0-public-smoke-system-v1",
+    "toolIds": [
+      "repository.read",
+      "workspace.edit",
+      "command.exact_argv",
+      "task.finish"
+    ],
+    "casePolicyAdapterId": "fal-vp0-exact-argv-policy-v1",
+    "runtimePolicy": {
+      "network": "none",
+      "approval": "none",
+      "effects": "deny_pending_or_unknown"
+    },
+    "budget": {
+      "maximumModelCalls": 0,
+      "maximumTotalTokens": 0,
+      "maximumEstimatedCostUsdMicros": 0
+    },
+    "temperatureMode": "provider_default_not_exposed",
+    "seedControl": "unsupported",
+    "maxRetries": 0,
+    "usageCapability": "not_reported"
+  },
+  "packSha256": "3cb2746681bcd37e7b99b73172e951d58b092778a7eaa81441e68c66a638c0a8"
+}

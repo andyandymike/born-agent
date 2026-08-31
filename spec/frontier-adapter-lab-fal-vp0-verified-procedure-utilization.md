@@ -1,6 +1,6 @@
 # FAL-VP0 — Frozen Verified Procedure Utilization Experiment Spec
 
-> Status（2026-08-30）：`draft / implementation_not_started / actor_backend_not_selected`
+> Status（2026-08-30）：`draft / vp0a_mechanics_implemented / exact_commit_receipt_pending`
 >
 > Parent contract：[`BornAgent Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md) §10、§10.6A
 >
@@ -18,13 +18,15 @@ VP0 frozen verified procedure utilization     # 本card
   -> VE0 versioned revise/promote/rollback    # 不在本card
 ```
 
-本文件处于authoring阶段，尚不存在experiment receipt。初始文档状态固定为：
+VP0a mechanics已产生claim-specific working-tree observation并冻结public structural smoke evidence；尚未生成exact-commit milestone receipt。当前文档状态固定为：
 
 ```text
 documentStatus = draft
-implementation = not_started
-actorBackend   = not_selected
+implementation = vp0a_mechanics_implemented
+actorBackend   = in_process_fake_mechanics_only
 remoteRun      = not_authorized
+mechanicsRun   = passed_unfrozen
+vp0aReceipt    = pending_exact_commit_freeze
 ```
 
 只有实现至少产生一条claim-specific observation后，才能创建符合parent Evidence protocol v2枚举的receipt。未运行的claim在`claimResults[]`中写`not_run`；不得把`not_assessed`塞入`evidenceValidity`，也不得用一个`overall=passed`覆盖source、authority、mechanics、quality、cost和promotion的正交结论。
@@ -97,7 +99,7 @@ Skill只是VP0的等价运输层，不是产品形态结论。`selected_by=user`
 
 每个arm使用独立temp `userStateRoot`，其中恰好一个carrier package；两个不同content的package不能同时进入同一registry。Actor workspace禁止自带`.bornagent/capabilities.json`，避免额外workspace-source capability进入snapshot。
 
-两臂最终完整ContextItem（包含Skill canonical envelope）都不得超过800 deterministic estimated tokens。Observation中的`carrierBytes`固定为该canonical ContextItem UTF-8 bytes长度，`estimatedTokens`由冻结的Host token estimator对同一完整bytes计算；不得只量`SKILL.md`正文或混用provider usage。candidate不得通过更高priority、更大budget、额外resource或更多context items取得优势。
+两臂`SKILL.md`正文都不得超过800 deterministic estimated tokens，最终完整ContextItem（包含Skill canonical envelope）都不得超过1800。实现在VP0a真实注入时测得空载附近的production envelope已约占770 tokens，因此单一“完整ContextItem≤800”没有可用procedure预算。Observation中的`carrierBytes`固定为完整canonical ContextItem UTF-8 bytes长度，`estimatedTokens`对同一完整bytes计算，并另记`payloadEstimatedTokens`；两者都由同一冻结Host token estimator产生，不能只量正文或混用provider usage。candidate不得通过更高priority、更大budget、额外resource或更多context items取得优势。
 
 ### 3.2 Equal-information source dossier
 
@@ -108,7 +110,7 @@ Candidate每个activation、negative、precondition、guard、guidance、checkpo
 - candidate所有support refs规范化去重后的span set与baseline dossier span set相同；
 - 每个span的raw bytes、range与SHA可由source verifier重读；
 - candidate没有unsupported semantic atom；
-- dossier与procedure各自连同envelope均不超过800 estimated tokens；超限则该family不合格，不能截断其中一臂；
+- dossier与procedure正文各自不超过800 estimated tokens、连同envelope均不超过1800；任一门槛超限则该family不合格，不能截断其中一臂；
 - baseline不是当前ML1摘要，也不是更弱的task/outcome元数据。VP0结论严格限定为“exact support dossier vs structured procedure representation”，不外推为“当前产品episode search vs procedure”。
 
 ### 3.3 Arms
@@ -365,7 +367,7 @@ Schema必须`strict`，并机械限制：
 
 - identity为1–128个ASCII字节；普通描述单项最多512 UTF-8 bytes；
 - activation 1–8、negative 1–8、precondition 1–12、guard 1–8、guidance 2–12、termination 1–8、known exception 0–8；
-- canonical procedure不超过8 KiB，最终完整Skill ContextItem不超过800 estimated tokens；
+- canonical procedure存储合同不超过32 KiB，最终Skill正文不超过800、完整ContextItem不超过1800 estimated tokens；canonical对象保留双源逐原子provenance，renderer负责形成紧凑provider payload，不能用删除provenance换取上下文预算；
 - `procedureId`由experiment/family/revision/source binding identities确定；
 - `procedureSha256 = sha256Canonical(content_without_procedureSha256)`；
 - normalization固定为NFC与LF，array order有语义，不自动排序；
@@ -766,6 +768,7 @@ interface FalVp0PublicSmokeVerificationV1 {
   };
   readonly freshVerifierImplementationSha256: string;
   readonly freshVerifierObservationSha256: string;
+  readonly toolCallsObserved: number;
   readonly completionMode: string | null;
   readonly pendingOrUnknownEffects: number;
   readonly status: "passed" | "failed";
@@ -843,6 +846,7 @@ interface FalVp0ArmObservationV1 {
     readonly contextItemCanonicalSha256: string;
     readonly carrierBytes: number;
     readonly estimatedTokens: number;
+    readonly payloadEstimatedTokens: number;
     readonly expectedModelTurnCount: number;
     readonly includedModelTurnCount: number;
     readonly turnInclusions: readonly FalVp0TurnInclusionV1[];
@@ -1027,7 +1031,7 @@ Hard gate：
 - strict schema、canonical encode/decode、procedure/source/observation/receipt hashes；
 - 两臂support set相同，carrier `skill.json`/metadata/priority/authority/selection path相同；
 - oracle只选择family，applicability由frozen fact registry/typed Host gate决定；
-- typed predicate与lineage comparator可重算；renderer deterministic且完整ContextItem不超过800 tokens；
+- typed predicate与lineage comparator可重算；renderer deterministic且正文不超过800、完整ContextItem不超过1800 tokens；
 - candidate read path额外model/tool/network calls均为0；
 - AB/BA、workspace/config equality与fresh verifier机械检查；
 - repeated scorer对相同observations生成相同logical score/receipt；
@@ -1452,7 +1456,7 @@ Tracked receipt不得包含raw session、private task/user text、provider reaso
 | `FAL-VP09` | oracle family only | applicability gate仍拥有最终注入决定 |
 | `FAL-VP10` | disabled | source-dossier fallback与baseline首个semantic Host request hash相同 |
 | `FAL-VP11` | deadline/throw/invalid/oversize | Host-only typed diagnostic + fresh baseline relaunch；provider前失败 |
-| `FAL-VP12` | deterministic render | full ContextItem ≤800 tokens、hash稳定 |
+| `FAL-VP12` | deterministic render | payload ≤800且full ContextItem ≤1800 tokens、hash稳定 |
 | `FAL-VP13` | paired workspace/config | same before hash/config；zero shared state |
 | `FAL-VP14` | worker blindness | cannot read goldens/scorer/sealed registry |
 | `FAL-VP15` | supervisor fresh verifier | self-judge/source receipt不能决定full-pass |

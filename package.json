@@ -31,6 +31,7 @@
     "lint": "eslint .",
     "lab:context-folding": "node --import tsx scripts/run-context-folding-lab.mjs",
     "lab:local-embedding": "node --import tsx scripts/run-local-embedding-lab.mjs",
+    "lab:verified-procedure": "node --import tsx labs/frontier-adapter-lab/fal-vp0-verified-procedure-utilization-v1/tools/run-mechanics.ts",
     "memory:baseline": "tsx src/memory/benchmark/run-agent-memory-baseline-cli.ts",
     "memory:validate": "tsx src/memory/benchmark/run-agent-memory-validate-cli.ts",
     "memory:working:benchmark": "tsx src/memory/benchmark/run-agent-memory-working-state-cli.ts",

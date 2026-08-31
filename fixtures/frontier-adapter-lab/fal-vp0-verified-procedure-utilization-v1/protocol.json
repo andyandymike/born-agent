@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-vp0-verified-procedure-utilization-v1",
+  "milestone": "vp0a_mechanics",
+  "remoteCallsAuthorized": false,
+  "qualityRunAuthorized": false,
+  "candidateLifecycle": "retained_disabled",
+  "carrierPayloadTokenLimit": 800,
+  "carrierContextTokenLimit": 1800,
+  "canaryPackSha256": "e01ad960fa52e580f706ec2e036d2abb8e1b9202c5e75ab880391cfbb3c2f580",
+  "publicSmokePackSha256": "3cb2746681bcd37e7b99b73172e951d58b092778a7eaa81441e68c66a638c0a8",
+  "protocolSha256": "dd884c77d608bb5505c09293baa65d2be1ddfc6fb85421c26d27142c10fff6ea"
+}

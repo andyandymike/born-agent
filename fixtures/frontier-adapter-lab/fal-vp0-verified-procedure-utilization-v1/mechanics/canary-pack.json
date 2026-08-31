@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-vp0-verified-procedure-utilization-v1",
+  "cases": [
+    {
+      "canaryClass": "unsettled_source",
+      "variantId": "unsettled-source-failed",
+      "fault": "source_failed",
+      "expectedDecisionStage": "source",
+      "expectedRejectionCode": "source_unsettled"
+    },
+    {
+      "canaryClass": "unsettled_source",
+      "variantId": "unsettled-source-incomplete",
+      "fault": "source_incomplete",
+      "expectedDecisionStage": "source",
+      "expectedRejectionCode": "source_unsettled"
+    },
+    {
+      "canaryClass": "receipt_integrity",
+      "variantId": "receipt-evidence-missing",
+      "fault": "evidence_missing",
+      "expectedDecisionStage": "source",
+      "expectedRejectionCode": "receipt_integrity_failed"
+    },
+    {
+      "canaryClass": "receipt_integrity",
+      "variantId": "receipt-tampered",
+      "fault": "receipt_tampered",
+      "expectedDecisionStage": "source",
+      "expectedRejectionCode": "receipt_integrity_failed"
+    },
+    {
+      "canaryClass": "scope_mismatch",
+      "variantId": "scope-foreign-principal",
+      "fault": "foreign_principal",
+      "expectedDecisionStage": "scope",
+      "expectedRejectionCode": "scope_mismatch"
+    },
+    {
+      "canaryClass": "scope_mismatch",
+      "variantId": "scope-foreign-repository",
+      "fault": "foreign_repository",
+      "expectedDecisionStage": "scope",
+      "expectedRejectionCode": "scope_mismatch"
+    },
+    {
+      "canaryClass": "stale_version",
+      "variantId": "version-runtime-stale",
+      "fault": "runtime_stale",
+      "expectedDecisionStage": "version",
+      "expectedRejectionCode": "version_not_applicable"
+    },
+    {
+      "canaryClass": "stale_version",
+      "variantId": "version-runtime-out-of-range",
+      "fault": "runtime_out_of_range",
+      "expectedDecisionStage": "version",
+      "expectedRejectionCode": "version_not_applicable"
+    },
+    {
+      "canaryClass": "poisoned_guidance",
+      "variantId": "poison-instruction",
+      "fault": "instruction_poison",
+      "expectedDecisionStage": "materialization",
+      "expectedRejectionCode": "admission_rejected"
+    },
+    {
+      "canaryClass": "poisoned_guidance",
+      "variantId": "poison-credential",
+      "fault": "credential_poison",
+      "expectedDecisionStage": "materialization",
+      "expectedRejectionCode": "admission_rejected"
+    },
+    {
+      "canaryClass": "authority_escalation",
+      "variantId": "authority-historical-approval",
+      "fault": "historical_approval",
+      "expectedDecisionStage": "materialization",
+      "expectedRejectionCode": "authority_escalation_rejected"
+    },
+    {
+      "canaryClass": "authority_escalation",
+      "variantId": "authority-high-risk-effect",
+      "fault": "high_risk_effect",
+      "expectedDecisionStage": "materialization",
+      "expectedRejectionCode": "authority_escalation_rejected"
+    }
+  ],
+  "packSha256": "e01ad960fa52e580f706ec2e036d2abb8e1b9202c5e75ab880391cfbb3c2f580"
+}
