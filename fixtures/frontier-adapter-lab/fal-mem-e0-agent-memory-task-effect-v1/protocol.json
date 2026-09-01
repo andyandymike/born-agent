@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "fixtureRevision": 1,
+  "evidenceClass": "contract_mechanics",
+  "effectClaimAllowed": false,
+  "providerCallsExpected": 0,
+  "caseCounts": {
+    "total": 4,
+    "memoryDependent": 3,
+    "harmControl": 1
+  },
+  "caseOrder": [
+    "mem-e0-output-contract",
+    "mem-e0-retry-schedule",
+    "mem-e0-path-convention",
+    "mem-e0-harm-control"
+  ],
+  "cases": [
+    {
+      "caseId": "mem-e0-output-contract",
+      "caseClass": "memory_dependent",
+      "relativePath": "cases/mem-e0-output-contract/case.json",
+      "caseRawSha256": "d768ca56616ff5fb1b3142810b59d675ed241cdfed230b2bfedaa3739bf56468",
+      "caseSha256": "0be6762ee8ccab637d117d174d6fa02b791bf9a125c0ecf0898488e71686573e"
+    },
+    {
+      "caseId": "mem-e0-retry-schedule",
+      "caseClass": "memory_dependent",
+      "relativePath": "cases/mem-e0-retry-schedule/case.json",
+      "caseRawSha256": "c2962236122c49a77cc5d39e376332b8465d75c205a0109566db7bd788b7e4de",
+      "caseSha256": "3836bb6db05c052073fb3ad335704440640f24f2a1a377598a11cc4ae8b7ebb9"
+    },
+    {
+      "caseId": "mem-e0-path-convention",
+      "caseClass": "memory_dependent",
+      "relativePath": "cases/mem-e0-path-convention/case.json",
+      "caseRawSha256": "a411b2a9d13b172cdfb5016a72cf2f3506543823e923a521a78c9b2567d6385a",
+      "caseSha256": "b0540712a0f6a5c429cc451a60043829cf5a432bfae9c52a57589e110fa94bec"
+    },
+    {
+      "caseId": "mem-e0-harm-control",
+      "caseClass": "harm_control",
+      "relativePath": "cases/mem-e0-harm-control/case.json",
+      "caseRawSha256": "c7a23b53de0d503489b5ec14910dfe777325f6944227e161575cb12ad42e8f9d",
+      "caseSha256": "928fa58bc6c2a27d745e163f7ec4ae95a2292d0f6a214a19fadb49a6c2af42f2"
+    }
+  ],
+  "securityBoundary": {
+    "publicSyntheticOnly": true,
+    "hiddenVerifierCopiedToWorkspace": false,
+    "hiddenValueAllowedInTaskOrPublicWorkspace": false,
+    "providerCallsAuthorized": false
+  },
+  "nonClaims": [
+    "This fixture is contract mechanics and cannot establish Agent memory task effect.",
+    "The public synthetic records do not authorize private or ordinary remote memory disclosure.",
+    "The hidden verifier and acceptance values are Host-side evaluation inputs, not Agent context.",
+    "Provider calls, paid execution, model quality, product promotion, and default changes are not authorized."
+  ],
+  "protocolSha256": "8f991ff370e5fd24e4b29b0b5f1154572a59865833e4c10822bc4107d24f5e3b"
+}

@@ -67,7 +67,7 @@ function protocolFailure(code: string): ModelEvent {
 
 function assertIdentity(identity: BackendIdentity): void {
   if (
-    !["openai", "anthropic", "ollama"].includes(identity.provider) ||
+    !["openai", "anthropic", "deepseek", "ollama"].includes(identity.provider) ||
     identity.model.trim().length === 0 ||
     identity.adapter.trim().length === 0 ||
     identity.adapterVersion.trim().length === 0 ||

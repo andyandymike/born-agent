@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "fixtureRevision": 1,
+  "caseId": "mem-e0-retry-schedule",
+  "caseClass": "memory_dependent",
+  "task": {
+    "text": "Implement src/retry-schedule.mjs according to the repository retry decision saved earlier. Do not invent or guess the integer schedule. Run node verify.mjs, then finish after the public shape check passes.",
+    "taskSha256": "84b942c6d0ff8adc227a2ba3324b98a4f0417c852dd8c44a328d5adbd0703f4d"
+  },
+  "memory": {
+    "kind": "decision",
+    "disclosureClass": "public_synthetic",
+    "recordText": "Public synthetic repository decision: retrySchedule() must return the exact frozen millisecond sequence [1739,4253,7919].",
+    "recordLogicalSha256": "26e6fff6d0121a7ab27ae2fddb2408a795b5525f8b3a070ecd1792f7f826c117",
+    "requiredAcceptanceValue": "1739,4253,7919",
+    "requiredAcceptanceValueSha256": "18f722a6d712cce32cdbefbfbb91bba472c04e2978de6e5ca732fe56dd1885da",
+    "forbiddenPublicSubstrings": ["1739,4253,7919", "1739, 4253, 7919"]
+  },
+  "publicWorkspace": {
+    "relativeDirectory": "cases/mem-e0-retry-schedule/public-workspace",
+    "targetRelativePath": "src/retry-schedule.mjs",
+    "publicVerifierRelativePath": "verify.mjs",
+    "publicVerifierArgv": ["node", "verify.mjs"],
+    "orderedFiles": [
+      { "byteLength": 12, "path": ".gitignore", "rawSha256": "a0560325d63d40e0ef2bb9918fce3a58a97c6c2f658a8517f3170064b1bb75e7" },
+      { "byteLength": 64, "path": "src/retry-schedule.mjs", "rawSha256": "3fc224bcab4fd821b0c698e6fa3f8efe67c4e90258881e9dfcb40572b1b7724e" },
+      { "byteLength": 413, "path": "verify.mjs", "rawSha256": "30bfc98aba57d545056e1fec997762fda9fe29501893f92046878c5c6e60257b" }
+    ],
+    "manifestSha256": "838ad9c484bc973a798f1f8f0f6b1ad581cb95fec63b47664057804f7a117228",
+    "initialTargetRawSha256": "3fc224bcab4fd821b0c698e6fa3f8efe67c4e90258881e9dfcb40572b1b7724e",
+    "allowedChangedPaths": ["src/retry-schedule.mjs"]
+  },
+  "hiddenVerifier": {
+    "relativePath": "cases/mem-e0-retry-schedule/hidden/verifier.mjs",
+    "implementationRawSha256": "176f43ab4aa2b96c9365a58ca963e91471148e9ed34f14b63fc7a35e2dd4e389",
+    "argvIdentitySha256": "04f2416fe887bab187e7be03fe690afccfe56369346c1940ddff6020557cb6b1",
+    "initialExpected": "nonzero_exit",
+    "successExitCode": 0,
+    "successStdoutSha256": "1eac2eaf2af6171dc0a09fa00879001ffadea968a1a23f4c01a7bddf82249a38"
+  },
+  "caseSha256": "3836bb6db05c052073fb3ad335704440640f24f2a1a377598a11cc4ae8b7ebb9"
+}

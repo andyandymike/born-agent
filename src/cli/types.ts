@@ -54,6 +54,10 @@ import type { DelegationGroupLeaseRecordV1 } from "../delegation/delegation-grou
 import type { DelegationGroupTakeoverResultV1 } from "../delegation/delegation-group-takeover.js";
 import type { SurfaceIO } from "../presentation/surface-io.js";
 import type { DomainHarnessV1 } from "../coordination/domain-harness.js";
+import type {
+  PublicSyntheticRemoteMemoryGrantRequestV1,
+  PublicSyntheticRemoteMemoryGrantV1,
+} from "../memory/recall/public-synthetic-remote-memory-grant.js";
 
 export type { OutputWriter } from "../presentation/surface-io.js";
 export type CliIO = SurfaceIO;
@@ -63,6 +67,13 @@ export interface CliRuntime extends StreamingChatRuntime, DoctorRuntime {
   readonly controlPlaneStateRoot?: string;
   /** AS4.1: explicit test/eval-only direct-domain authority. */
   readonly domainHarness?: DomainHarnessV1;
+  /**
+   * Lab-only Host capability for one exact public-synthetic remote-memory run.
+   * Product Node runtimes omit it, preserving the provider-network zero-recall default.
+   */
+  readonly createPublicSyntheticRemoteMemoryGrant?: (
+    input: PublicSyntheticRemoteMemoryGrantRequestV1,
+  ) => Promise<PublicSyntheticRemoteMemoryGrantV1 | null>;
   readonly hooksSuppressed?: boolean;
   readonly supportsDelegationProposalTool?: true;
   agentModelEvidence(provider: ChatProvider): ModelEvidence | null;

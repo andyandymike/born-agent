@@ -17,6 +17,7 @@ import {
   credentialSecretsForPolicy,
   ProviderRequestLedger,
 } from "../../src/policy/provider-access-policy.js";
+import { parseUserPolicyConfig } from "../../src/policy/runtime-policy-schema.js";
 
 const roots: string[] = [];
 
@@ -93,6 +94,42 @@ function localFullConfig(): string {
   });
 }
 
+function deepSeekRemoteConfig(
+  baseUrl = "https://api.deepseek.com",
+): string {
+  return JSON.stringify({
+    schema_version: 1,
+    profiles: [
+      {
+        schema_version: 1,
+        id: "remote-deepseek-limited",
+        mode: "remote_explicit",
+        model_access: {
+          kind: "remote_explicit",
+          providers: [
+            {
+              provider: "deepseek",
+              models: ["deepseek-v4-flash"],
+              base_urls: [baseUrl],
+            },
+          ],
+          credential_access: "selected_provider_only",
+          limits: {
+            max_provider_requests_per_run: 2,
+            max_output_tokens_per_request: 2048,
+            max_reported_total_tokens_per_run: 20_000,
+          },
+        },
+        eval_access: {
+          allowed_suites: ["targeted", "smoke"],
+          max_attempts_per_run: 2,
+        },
+        docker_acquisition: { kind: "deny" },
+      },
+    ],
+  });
+}
+
 describe("Phase 15 runtime policy core", () => {
   it("loads the package local-free asset as the only implicit default", async () => {
     const workspace = await root();
@@ -158,6 +195,63 @@ describe("Phase 15 runtime policy core", () => {
       provider: "openai",
       source: "provider_network",
     });
+  });
+
+  it("allows only explicit DeepSeek identity and reads only its selected key", async () => {
+    const workspace = await root();
+    const config = join(await root(), "policy.json");
+    await writeFile(config, deepSeekRemoteConfig(), "utf8");
+    const registry = await loadRuntimePolicyRegistry({
+      configPath: config,
+      env: {},
+      platform: "win32",
+      workspace,
+    });
+    const effective = resolveEffectiveRuntimePolicy(
+      registry,
+      "remote-deepseek-limited",
+    );
+
+    expect(
+      resolveProviderPolicyRequest(effective, {
+        model: "deepseek-v4-flash",
+        provider: "deepseek",
+      }),
+    ).toEqual({
+      endpoint: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+      source: "provider_network",
+    });
+
+    const reads: PropertyKey[] = [];
+    const environment = new Proxy<Record<string, string | undefined>>(
+      {
+        ANTHROPIC_API_KEY: "must-not-be-read",
+        DEEPSEEK_API_KEY: "selected-deepseek-secret",
+        OPENAI_API_KEY: "must-not-be-read",
+      },
+      {
+        get: (target, property, receiver) => {
+          reads.push(property);
+          return Reflect.get(target, property, receiver) as string | undefined;
+        },
+      },
+    );
+    expect(
+      credentialSecretsForPolicy(effective, "deepseek", environment),
+    ).toEqual(["selected-deepseek-secret"]);
+    expect(reads).toEqual(["DEEPSEEK_API_KEY"]);
+  });
+
+  it.each([
+    "https://api.deepseek.com/",
+    "https://api.deepseek.com/v1",
+    "https://deepseek.example.com",
+  ])("rejects non-canonical DeepSeek base URL %s", (baseUrl) => {
+    expect(() =>
+      parseUserPolicyConfig(JSON.parse(deepSeekRemoteConfig(baseUrl))),
+    ).toThrowError(/policy_config_invalid/u);
   });
 
   it("rejects remote authority stored inside the workspace", async () => {

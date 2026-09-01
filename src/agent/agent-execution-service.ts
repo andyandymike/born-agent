@@ -46,6 +46,12 @@ import type {
 import type { BackendCreationRequest } from "../model/backend-factory.js";
 import type { SessionWriter } from "../sessions/jsonl-session-writer.js";
 import type { SqliteEpisodeStore } from "../memory/store/sqlite-episode-store.js";
+import {
+  PublicSyntheticRemoteMemoryGrantError,
+  assertPublicSyntheticRemoteMemoryGrantAllowsPreparedRecall,
+  assertPublicSyntheticRemoteMemoryGrantIdentity,
+  type PublicSyntheticRemoteMemoryGrantV1,
+} from "../memory/recall/public-synthetic-remote-memory-grant.js";
 import { V2SessionWriter } from "../sessions/v2-session-writer.js";
 import { createTurnBoundaryRecorder } from "../sessions/turn-boundary-recorder.js";
 import {
@@ -229,6 +235,7 @@ export interface FreshTaskExecution {
   readonly localMemory?: Readonly<{
     readonly canonicalRootIdentitySha256: string;
     readonly ownerPrincipalId: string;
+    readonly publicSyntheticRemoteMemoryGrant?: PublicSyntheticRemoteMemoryGrantV1;
     readonly repositoryId: string;
     readonly stateRoot: string;
     readonly workspace: string;
@@ -863,7 +870,10 @@ export async function executeAgentExecution(
   const historicalContext =
     options.memoryMode === "local" &&
     freshTaskExecution?.localMemory !== undefined &&
-    policyRequest.source !== "provider_network"
+    (
+      policyRequest.source !== "provider_network" ||
+      freshTaskExecution.localMemory.publicSyntheticRemoteMemoryGrant !== undefined
+    )
       ? async (request: Parameters<NonNullable<AgentContextControllerOptions["historicalContext"]>>[0]) => {
           const localMemory = freshTaskExecution.localMemory!;
           let store: SqliteEpisodeStore | undefined;
@@ -887,6 +897,28 @@ export async function executeAgentExecution(
               canonicalRootIdentitySha256: localMemory.canonicalRootIdentitySha256,
               ownerPrincipalId: localMemory.ownerPrincipalId,
             });
+            const remoteGrant = localMemory.publicSyntheticRemoteMemoryGrant;
+            if (policyRequest.source === "provider_network") {
+              if (remoteGrant === undefined) {
+                throw new PublicSyntheticRemoteMemoryGrantError(
+                  "provider-network memory recall requires an exact public synthetic grant",
+                );
+              }
+              assertPublicSyntheticRemoteMemoryGrantIdentity({
+                grant: remoteGrant,
+                model: config.model,
+                policyProfileId: effectivePolicy.entry.profile.id,
+                provider: config.provider,
+                runId,
+                scope,
+                sessionId,
+                task: resumedExecution?.modelTask ?? freshTaskExecution.modelTask,
+              });
+            } else if (remoteGrant !== undefined) {
+              throw new PublicSyntheticRemoteMemoryGrantError(
+                "a public synthetic remote memory grant cannot authorize a local transport",
+              );
+            }
             store = await SqliteEpisodeStore.create({ stateRoot: localMemory.stateRoot });
             const memory = new Ml1MemoryService({
               repositoryId: localMemory.repositoryId,
@@ -919,6 +951,12 @@ export async function executeAgentExecution(
               sessionId,
               step: request.step,
             });
+            if (remoteGrant !== undefined) {
+              assertPublicSyntheticRemoteMemoryGrantAllowsPreparedRecall({
+                grant: remoteGrant,
+                prepared,
+              });
+            }
             if (config.verbose) {
               renderer.renderVerbose(
                 `memory_recall selection=${prepared.selection.selectionSha256} selected=${String(prepared.items.length)} tokens=${String(prepared.selection.budget.estimatedTokensUsed)}/${String(prepared.selection.budget.injectedTokenLimit)} status=${prepared.selection.status}\n`,
@@ -926,6 +964,7 @@ export async function executeAgentExecution(
             }
             return prepared.items;
           } catch (error) {
+            if (error instanceof PublicSyntheticRemoteMemoryGrantError) throw error;
             const code = typeof error === "object" && error !== null && "code" in error &&
                 typeof error.code === "string" && /^memory_[a-z0-9_]+$/u.test(error.code)
               ? error.code
@@ -2551,6 +2590,26 @@ export async function executeAgentExecution(
             },
             type: "run.failed",
           },
+        );
+        exitCode = 1;
+        break;
+      case "memory_disclosure":
+        await publishFallback(
+          { exitCode: 1, type: "failed" },
+          {
+            data: {
+              category: "permission",
+              code: classification.error.code,
+              duration_ms: snapshot.elapsedMs,
+              message: "public synthetic remote memory disclosure was denied",
+              output_chars: publisher.outputLength,
+              retryable: false,
+              steps: snapshot.steps,
+              tool_calls: publisher.completedToolCalls,
+            },
+            type: "run.failed",
+          },
+          "public synthetic remote memory disclosure was denied",
         );
         exitCode = 1;
         break;

@@ -14,7 +14,11 @@ export type ModelEvidenceStatus =
 
 export interface ModelCatalogEntry {
   readonly capabilities: ModelCapabilities;
-  readonly credentialVariable: "ANTHROPIC_API_KEY" | "OPENAI_API_KEY" | null;
+  readonly credentialVariable:
+    | "ANTHROPIC_API_KEY"
+    | "DEEPSEEK_API_KEY"
+    | "OPENAI_API_KEY"
+    | null;
   readonly contextCapacity?: ContextCapacity;
   readonly displayName: string;
   readonly evidenceStatus: ModelEvidenceStatus;
@@ -27,6 +31,7 @@ export interface ModelCatalogEntry {
 export const KNOWN_PROVIDER_IDS = [
   "openai",
   "anthropic",
+  "deepseek",
   "ollama",
 ] as const satisfies readonly ProviderId[];
 
@@ -79,6 +84,27 @@ const CATALOG = [
     evidenceStatus: "contract_verified",
     modelId: "claude-sonnet-5",
     provider: "anthropic",
+    sourcePackage: PI_AI_PACKAGE_NAME,
+    sourcePackageVersion: PI_AI_PACKAGE_VERSION,
+  },
+  {
+    // pi-ai's DeepSeek provider uses the OpenAI-compatible completions API.
+    // Tool generation is best-effort; the local ToolRegistry remains the
+    // execution-time schema authority and live qualification is separate.
+    capabilities: {
+      ...COMPLETE_STRICT_CAPABILITIES,
+      tools: "best_effort",
+    },
+    credentialVariable: "DEEPSEEK_API_KEY",
+    contextCapacity: {
+      contextWindowTokens: 1_000_000,
+      maximumOutputTokens: 384_000,
+      source: "pinned_catalog",
+    },
+    displayName: "DeepSeek V4 Flash",
+    evidenceStatus: "contract_verified",
+    modelId: "deepseek-v4-flash",
+    provider: "deepseek",
     sourcePackage: PI_AI_PACKAGE_NAME,
     sourcePackageVersion: PI_AI_PACKAGE_VERSION,
   },

@@ -161,6 +161,28 @@ describe("BackendFactory preflight", () => {
     expect(onRuntime).not.toHaveBeenCalled();
   });
 
+  it("requires the dedicated DeepSeek key before runtime/socket creation", () => {
+    const guard = new ProviderNetworkGuard();
+    const onRuntime = vi.fn();
+    const factory = createFactory({ guard, onRuntime });
+
+    expect(() =>
+      factory.create({
+        model: "deepseek-v4-flash",
+        provider: "deepseek",
+        requirement: AGENT_REQUIREMENT,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "configuration_credential_missing",
+        exitCode: 4,
+        message: expect.stringContaining("DEEPSEEK_API_KEY"),
+      }),
+    );
+    expect(guard.report().blockedRemoteAttemptCount).toBe(0);
+    expect(onRuntime).not.toHaveBeenCalled();
+  });
+
   it("blocks a configured remote provider before runtime construction", () => {
     const guard = new ProviderNetworkGuard();
     const onRuntime = vi.fn();
@@ -230,6 +252,35 @@ describe("BackendFactory preflight", () => {
     expect(JSON.stringify(backend.identity)).not.toContain(sentinel);
     expect(runtimeInputs).toHaveLength(1);
     expect(runtimeInputs[0]?.credential?.reveal()).toBe(sentinel);
+    expect(runtimeInputs[0]?.transportScope).toBe("in_process_contract");
+  });
+
+  it("routes DeepSeek through its exact endpoint and selected credential only", () => {
+    const sentinel = "synthetic-deepseek-handle";
+    const runtimeInputs: PiRuntimeFactoryInput[] = [];
+    const factory = createFactory({
+      environment: {
+        ANTHROPIC_API_KEY: "must-not-be-selected",
+        DEEPSEEK_API_KEY: sentinel,
+        OPENAI_API_KEY: "must-not-be-selected",
+      },
+      onRuntime: (input) => runtimeInputs.push(input),
+    });
+
+    const backend = factory.create({
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+      requirement: AGENT_REQUIREMENT,
+      transportScope: "in_process_contract",
+    });
+
+    expect(backend.identity).toMatchObject({
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+    });
+    expect(runtimeInputs).toHaveLength(1);
+    expect(runtimeInputs[0]?.credential?.reveal()).toBe(sentinel);
+    expect(runtimeInputs[0]?.endpoint).toBe("https://api.deepseek.com");
     expect(runtimeInputs[0]?.transportScope).toBe("in_process_contract");
   });
 

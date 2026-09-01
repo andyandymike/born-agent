@@ -3,7 +3,7 @@ import type { ModelEvent } from "./model-events.js";
 import type { BackendResumeDeclaration } from "./backend-resume.js";
 import type { ContextCapacity } from "./model-context-capacity.js";
 
-export type ProviderId = "openai" | "anthropic" | "ollama";
+export type ProviderId = "anthropic" | "deepseek" | "ollama" | "openai";
 
 export interface BackendIdentity {
   readonly adapter: string;

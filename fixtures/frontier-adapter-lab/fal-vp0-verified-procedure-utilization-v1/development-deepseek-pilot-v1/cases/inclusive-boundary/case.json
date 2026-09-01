@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "caseId": "inclusive-boundary",
+  "family": "boundary-projection",
+  "publicRoot": "public",
+  "targetRelativePath": "src/inclusive-boundary.mjs",
+  "verifier": { "cwd": ".", "argv": ["node", "verify.mjs"] },
+  "task": "Repair the public synthetic package so a reading below its ordered inclusive interval maps to the lower boundary, a reading inside remains unchanged, and a reading above maps to the upper boundary. Locate the relevant implementation and repository verifier yourself. Change only the necessary implementation, do not weaken verification, and finish only after a fresh verifier pass.",
+  "exactFinalSource": "export function constrainReading(reading, lower, upper) {\n  return Math.min(upper, Math.max(lower, reading));\n}\n"
+}

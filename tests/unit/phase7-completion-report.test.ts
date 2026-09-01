@@ -9,11 +9,15 @@ import {
 import type {
   CompletionEvidence,
   IncompleteEvidence,
+  RemoteLiveQualifiedModelEvidence,
   VerificationEvidence,
   VerificationSnapshot,
 } from "../../src/completion/completion-types.js";
 import { EvidenceLedger } from "../../src/completion/evidence-ledger.js";
-import { createPersistedCompletionEvidence } from "../../src/completion/completion-evidence-schema.js";
+import {
+  completionEvidenceSchema,
+  createPersistedCompletionEvidence,
+} from "../../src/completion/completion-evidence-schema.js";
 import {
   hashVerificationSnapshot,
   verificationSnapshotsEqual,
@@ -126,6 +130,34 @@ function completedEvidence(): CompletionEvidence {
   };
 }
 
+function remoteModelEvidence(): RemoteLiveQualifiedModelEvidence {
+  return {
+    backend: "deepseek",
+    baseUrl: "https://api.deepseek.com",
+    endpointScope: "remote_https",
+    kind: "remote_live_qualified",
+    model: "deepseek-v4-flash",
+    provider: "deepseek",
+    qualificationCompletedRequestCount: 2,
+    qualificationEvidenceKind: "model_capability_probe_suite",
+    qualificationEvidenceRef: "artifacts/vp0/deepseek-public-smoke.json",
+    qualificationEvidenceSha256: sha("8"),
+    qualificationRequestCount: 2,
+    qualificationStatus: "passed",
+    qualificationUsageCapability: "complete",
+    remoteBillableRequests: 2,
+    remoteQualificationRequests: 2,
+    requestCountScope: "qualification_only",
+  };
+}
+
+function remoteCompletedEvidence(): CompletionEvidence {
+  return {
+    ...completedEvidence(),
+    modelEvidence: remoteModelEvidence(),
+  };
+}
+
 describe("Phase 7 evidence ledger and deterministic reports", () => {
   it("uses identical ledger facts in text and JSON without trusting narrative claims", () => {
     const report = createCompletedRunReport(completedEvidence());
@@ -171,6 +203,86 @@ describe("Phase 7 evidence ledger and deterministic reports", () => {
     });
     const tampered = { ...first, model_narrative: "different" };
     expect(verifyRunReportHash(tampered)).toBe(false);
+  });
+
+  it("preserves exact DeepSeek qualification evidence in canonical reports and hashes", () => {
+    const evidence = remoteCompletedEvidence();
+    const report = createCompletedRunReport(evidence);
+    const text = renderRunReport(report, "text");
+    const persisted = createPersistedCompletionEvidence(evidence);
+
+    expect(runReportSchema.parse(report)).toEqual(report);
+    expect(persisted.report).toEqual(report);
+    expect(report.model_evidence).toEqual({
+      backend: "deepseek",
+      base_url: "https://api.deepseek.com",
+      endpoint_scope: "remote_https",
+      kind: "remote_live_qualified",
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+      qualification_completed_request_count: 2,
+      qualification_evidence_kind: "model_capability_probe_suite",
+      qualification_evidence_ref: "artifacts/vp0/deepseek-public-smoke.json",
+      qualification_evidence_sha256: sha("8"),
+      qualification_request_count: 2,
+      qualification_status: "passed",
+      qualification_usage_capability: "complete",
+      remote_billable_requests: 2,
+      remote_qualification_requests: 2,
+      request_count_scope: "qualification_only",
+    });
+    expect(text).toContain(
+      "provider=deepseek model=deepseek-v4-flash base_url=https://api.deepseek.com",
+    );
+    expect(text).toContain(
+      "request_count_scope=qualification_only completed_requests=2/2",
+    );
+    expect(text).toContain("usage_capability=complete");
+    expect(report.model_evidence).not.toHaveProperty("input_tokens");
+    expect(report.model_evidence).not.toHaveProperty("estimated_cost_usd");
+
+    const changedQualificationHash = createCompletedRunReport({
+      ...evidence,
+      modelEvidence: {
+        ...remoteModelEvidence(),
+        qualificationEvidenceSha256: sha("9"),
+      },
+    });
+    expect(changedQualificationHash.report_hash).not.toBe(report.report_hash);
+  });
+
+  it("rejects disguised, zero-call, inconsistent, or current-run remote evidence", () => {
+    const base = remoteCompletedEvidence();
+    const remote = remoteModelEvidence();
+    const invalidModelEvidence = [
+      { ...remote, backend: "fake" },
+      {
+        ...remote,
+        qualificationCompletedRequestCount: 0,
+        qualificationRequestCount: 0,
+        remoteBillableRequests: 0,
+        remoteQualificationRequests: 0,
+      },
+      { ...remote, remoteQualificationRequests: 1 },
+      { ...remote, currentRunInputTokens: 1 },
+    ];
+
+    for (const modelEvidence of invalidModelEvidence) {
+      expect(
+        completionEvidenceSchema.safeParse({ ...base, modelEvidence }).success,
+      ).toBe(false);
+    }
+
+    const report = createCompletedRunReport(base);
+    expect(
+      runReportSchema.safeParse({
+        ...report,
+        model_evidence: {
+          ...report.model_evidence,
+          remote_qualification_requests: 1,
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("renders incomplete evidence without inventing a successful verification", () => {

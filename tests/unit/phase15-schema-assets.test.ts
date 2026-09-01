@@ -60,6 +60,44 @@ function remoteProfile(): Record<string, unknown> {
   };
 }
 
+function deepSeekRemoteProfile(): Record<string, unknown> {
+  const profile = remoteProfile();
+  profile.id = "remote-deepseek-contract";
+  const access = profile.model_access as {
+    providers: Array<Record<string, unknown>>;
+  };
+  access.providers = [
+    {
+      provider: "deepseek",
+      models: ["deepseek-v4-flash"],
+      base_urls: ["https://api.deepseek.com"],
+    },
+  ];
+  return profile;
+}
+
+function allRemoteProvidersProfile(): Record<string, unknown> {
+  const profile = remoteProfile();
+  profile.id = "remote-all-providers-contract";
+  const access = profile.model_access as {
+    providers: Array<Record<string, unknown>>;
+  };
+  access.providers = [
+    ...access.providers,
+    {
+      provider: "anthropic",
+      models: ["claude-contract-v1"],
+      base_urls: ["https://api.anthropic.com"],
+    },
+    {
+      provider: "deepseek",
+      models: ["deepseek-v4-flash"],
+      base_urls: ["https://api.deepseek.com"],
+    },
+  ];
+  return profile;
+}
+
 describe("Phase 15 published schema and runtime parser parity", () => {
   it("accepts and rejects the same policy fixtures", async () => {
     const builtIn = await json("policies/local-free-v1.json");
@@ -71,6 +109,8 @@ describe("Phase 15 published schema and runtime parser parity", () => {
     }[] = [
       { expected: true, source: builtIn as Record<string, unknown> },
       { expected: true, source: remoteProfile() },
+      { expected: true, source: deepSeekRemoteProfile() },
+      { expected: true, source: allRemoteProvidersProfile() },
       {
         expected: false,
         source: builtIn as Record<string, unknown>,
@@ -122,6 +162,16 @@ describe("Phase 15 published schema and runtime parser parity", () => {
             providers: Array<Record<string, unknown>>;
           };
           access.providers[0]!.models = ["gpt-latest"];
+        },
+      },
+      {
+        expected: false,
+        source: deepSeekRemoteProfile(),
+        mutate: (value) => {
+          const access = value.model_access as {
+            providers: Array<Record<string, unknown>>;
+          };
+          access.providers[0]!.base_urls = ["https://api.deepseek.com/v1"];
         },
       },
     ];

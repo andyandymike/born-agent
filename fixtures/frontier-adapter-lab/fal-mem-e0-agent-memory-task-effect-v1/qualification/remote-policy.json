@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "schema_version": 1,
+      "id": "fal-mem-e0-deepseek-qualification-v1",
+      "mode": "remote_explicit",
+      "model_access": {
+        "kind": "remote_explicit",
+        "providers": [
+          {
+            "provider": "deepseek",
+            "models": [
+              "deepseek-v4-flash"
+            ],
+            "base_urls": [
+              "https://api.deepseek.com"
+            ]
+          }
+        ],
+        "credential_access": "selected_provider_only",
+        "limits": {
+          "max_provider_requests_per_run": 4,
+          "max_output_tokens_per_request": 2048,
+          "max_reported_total_tokens_per_run": 60000
+        }
+      },
+      "eval_access": {
+        "allowed_suites": [
+          "smoke",
+          "targeted"
+        ],
+        "max_attempts_per_run": 1
+      },
+      "docker_acquisition": {
+        "kind": "deny"
+      }
+    }
+  ]
+}

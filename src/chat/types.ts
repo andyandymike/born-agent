@@ -1,4 +1,4 @@
-export type ChatProvider = "anthropic" | "ollama" | "openai";
+export type ChatProvider = "anthropic" | "deepseek" | "ollama" | "openai";
 
 export interface ChatCommandOptions {
   readonly model: string | undefined;

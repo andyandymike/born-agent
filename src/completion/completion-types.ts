@@ -100,12 +100,41 @@ export interface VerificationEvidence {
   readonly verificationId?: string | undefined;
 }
 
-export interface ModelEvidence {
+export interface LegacyModelEvidence {
   readonly backend: "fake" | "ollama";
   readonly endpointScope: "in_process" | "literal_loopback";
   readonly kind: "contract_verified" | "local_live_verified";
   readonly remoteBillableRequests: 0;
 }
+
+/**
+ * Static proof that the exact hosted backend passed its tool-capable public
+ * qualification before an actor run starts. Every request and usage field in
+ * this variant describes that qualification only; current-run usage is owned
+ * by the session usage ledger.
+ */
+export interface RemoteLiveQualifiedModelEvidence {
+  readonly backend: "deepseek";
+  readonly baseUrl: "https://api.deepseek.com";
+  readonly endpointScope: "remote_https";
+  readonly kind: "remote_live_qualified";
+  readonly model: "deepseek-v4-flash";
+  readonly provider: "deepseek";
+  readonly qualificationCompletedRequestCount: number;
+  readonly qualificationEvidenceKind: "model_capability_probe_suite";
+  readonly qualificationEvidenceRef: string;
+  readonly qualificationEvidenceSha256: string;
+  readonly qualificationRequestCount: number;
+  readonly qualificationStatus: "passed";
+  readonly qualificationUsageCapability: "complete" | "not_reported";
+  readonly remoteBillableRequests: number;
+  readonly remoteQualificationRequests: number;
+  readonly requestCountScope: "qualification_only";
+}
+
+export type ModelEvidence =
+  | LegacyModelEvidence
+  | RemoteLiveQualifiedModelEvidence;
 
 export interface GoalRevisionAttributionScope {
   readonly baselineEventId: string;

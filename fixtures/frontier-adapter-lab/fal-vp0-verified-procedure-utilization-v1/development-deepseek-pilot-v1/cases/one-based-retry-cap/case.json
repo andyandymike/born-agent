@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "caseId": "one-based-retry-cap",
+  "family": "capped-growth",
+  "publicRoot": "public",
+  "targetRelativePath": "src/retry-backoff.mjs",
+  "verifier": { "cwd": ".", "argv": ["node", "verify.mjs"] },
+  "task": "Repair the public synthetic package so retry attempt one uses the base delay, each later one-based attempt doubles the uncapped delay, and the result saturates at the hard cap. Locate the relevant implementation and repository verifier yourself. Change only the necessary implementation, do not weaken verification, and finish only after a fresh verifier pass.",
+  "exactFinalSource": "export function retryDelayMs(attempt, baseDelayMs, capDelayMs) {\n  const exponent = Math.max(0, attempt - 1);\n  return Math.min(capDelayMs, baseDelayMs * 2 ** exponent);\n}\n"
+}

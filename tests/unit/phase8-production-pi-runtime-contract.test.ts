@@ -9,6 +9,7 @@ import type { ModelCapabilities } from "../../src/model/model-capabilities.js";
 import type { ModelEvent } from "../../src/model/model-events.js";
 import { PiModelBackend } from "../../src/providers/pi/pi-model-backend.js";
 import {
+  loadProductionPiRuntimeDriver,
   ProductionPiRuntimePort,
   type PiRuntimeDriver,
   type PiSdkAssistantMessage,
@@ -20,6 +21,7 @@ import {
   type PiSdkToolCall,
 } from "../../src/providers/pi/production-pi-runtime-port.js";
 import type { NetworkGuardReport } from "../../src/providers/pi/provider-network-guard.js";
+import type { PiRuntimeRequest } from "../../src/providers/pi/pi-runtime-port.js";
 import {
   assertNoForbiddenRemoteActivity,
   phase8NetworkActivityReport,
@@ -48,6 +50,14 @@ const PROVIDERS = [
     fingerprintCharacter: "2",
     model: "claude-sonnet-5",
     provider: "anthropic",
+    reasoning: "opaque_passthrough",
+    tools: "best_effort",
+  },
+  {
+    api: "openai-completions",
+    fingerprintCharacter: "4",
+    model: "deepseek-v4-flash",
+    provider: "deepseek",
     reasoning: "opaque_passthrough",
     tools: "best_effort",
   },
@@ -231,6 +241,179 @@ async function collect(
   return events;
 }
 
+function runtimeRequestFor(
+  provider: ProviderId,
+  model: string,
+): PiRuntimeRequest {
+  return {
+    identity: {
+      adapter: "pi-ai",
+      adapterVersion: "0.80.7",
+      configFingerprint: "a".repeat(64),
+      model,
+      provider,
+    },
+    input: { kind: "user_prompt", text: "provider loader contract" },
+    instructions: "return without transport",
+    timeoutMs: 2_000,
+    tools: [],
+  };
+}
+
+describe("Phase 8 production Pi provider loader", () => {
+  it("binds DeepSeek max_tokens compatibility before payload creation", async () => {
+    const driver = await loadProductionPiRuntimeDriver({
+      baseUrl: "https://api.deepseek.com",
+      credential: "deepseek-payload-contract-sentinel",
+      maximumOutputTokens: 256,
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+    });
+    let capturedPayload: unknown;
+    const events: PiSdkAssistantMessageEvent[] = [];
+    for await (const event of driver.stream(
+      {
+        messages: [
+          {
+            content: "use the fixture tool",
+            role: "user",
+            timestamp: 1,
+          },
+        ],
+        tools: [
+          {
+            description: "Read a fixture",
+            name: "read_file",
+            parameters: {
+              additionalProperties: false,
+              properties: { path: { type: "string" } },
+              required: ["path"],
+              type: "object",
+            },
+          },
+        ],
+      },
+      {
+        apiKey: "deepseek-payload-contract-sentinel",
+        cacheRetention: "none",
+        env: {},
+        maxRetries: 0,
+        onPayload: (payload) => {
+          capturedPayload = payload;
+          throw new Error("payload captured before transport");
+        },
+        reasoning: "off",
+        signal: new AbortController().signal,
+        temperature: 0,
+        timeoutMs: 2_000,
+        toolChoice: "auto",
+      },
+    )) {
+      events.push(event);
+    }
+
+    expect(driver.model).toMatchObject({
+      baseUrl: "https://api.deepseek.com",
+      compat: { maxTokensField: "max_tokens" },
+      id: "deepseek-v4-flash",
+      maxTokens: 256,
+      provider: "deepseek",
+    });
+    expect(capturedPayload).toMatchObject({
+      max_tokens: 256,
+      temperature: 0,
+      tool_choice: "auto",
+    });
+    expect(capturedPayload).not.toHaveProperty("max_completion_tokens");
+    expect(events.at(-1)).toMatchObject({
+      reason: "error",
+      type: "error",
+    });
+    assertNoForbiddenRemoteActivity();
+  });
+
+  it("omits tool_choice and tools from the actual DeepSeek text-only payload", async () => {
+    const driver = await loadProductionPiRuntimeDriver({
+      baseUrl: "https://api.deepseek.com",
+      credential: "deepseek-text-payload-contract-sentinel",
+      maximumOutputTokens: 256,
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+    });
+    let capturedPayload: unknown;
+    for await (const _event of driver.stream(
+      {
+        messages: [{ content: "return strict JSON", role: "user", timestamp: 1 }],
+      },
+      {
+        apiKey: "deepseek-text-payload-contract-sentinel",
+        cacheRetention: "none",
+        env: {},
+        maxRetries: 0,
+        onPayload: (payload) => {
+          capturedPayload = payload;
+          throw new Error("payload captured before transport");
+        },
+        reasoning: "off",
+        signal: new AbortController().signal,
+        temperature: 0,
+        timeoutMs: 2_000,
+      },
+    )) {
+      void _event;
+    }
+
+    expect(capturedPayload).toMatchObject({ max_tokens: 256, temperature: 0 });
+    expect(capturedPayload).not.toHaveProperty("tool_choice");
+    expect(capturedPayload).not.toHaveProperty("tools");
+    assertNoForbiddenRemoteActivity();
+  });
+
+  it("loads the explicit DeepSeek provider/model before an aborted send", async () => {
+    const runtime = new ProductionPiRuntimePort({
+      baseUrl: "https://api.deepseek.com",
+      credential: "deepseek-loader-contract-sentinel",
+      model: "deepseek-v4-flash",
+      provider: "deepseek",
+    });
+    const controller = new AbortController();
+    const iterator = runtime.runTurn(
+      runtimeRequestFor("deepseek", "deepseek-v4-flash"),
+      controller.signal,
+    )[Symbol.asyncIterator]();
+    const first = iterator.next();
+    queueMicrotask(() => controller.abort());
+
+    await expect(first).resolves.toMatchObject({
+      done: false,
+      value: {
+        error: { code: "request_cancelled" },
+        reason: "aborted",
+        type: "error",
+      },
+    });
+    assertNoForbiddenRemoteActivity();
+  });
+
+  it("rejects an unknown remote provider instead of falling through to Anthropic", async () => {
+    const unknown = "unregistered" as ProviderId;
+    const runtime = new ProductionPiRuntimePort({
+      credential: "unknown-provider-contract-sentinel",
+      model: "unknown-model",
+      provider: unknown,
+    });
+    const iterator = runtime.runTurn(
+      runtimeRequestFor(unknown, "unknown-model"),
+      new AbortController().signal,
+    )[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).rejects.toThrowError(
+      "unsupported remote pi provider",
+    );
+    assertNoForbiddenRemoteActivity();
+  });
+});
+
 describe.each(PROVIDERS)(
   "Phase 8 production Pi runtime contract: $provider",
   (entry) => {
@@ -392,6 +575,17 @@ describe.each(PROVIDERS)(
         env: {},
         maxRetries: 0,
       });
+      if (entry.provider === "deepseek") {
+        expect(harness.options[0]).toMatchObject({
+          reasoning: "off",
+          temperature: 0,
+          toolChoice: "auto",
+        });
+      } else {
+        expect(harness.options[0]).not.toHaveProperty("reasoning");
+        expect(harness.options[0]).not.toHaveProperty("temperature");
+        expect(harness.options[0]).not.toHaveProperty("toolChoice");
+      }
       assertNoForbiddenRemoteActivity(harness.networkEvidence);
     });
 
@@ -415,6 +609,8 @@ describe.each(PROVIDERS)(
         errorMessage:
           entry.provider === "openai"
             ? "401 invalid_api_key openai-raw-secret"
+            : entry.provider === "deepseek"
+              ? "401 invalid_api_key deepseek-raw-secret"
             : entry.provider === "anthropic"
               ? "Anthropic API error (429): anthropic-raw-secret"
               : "ECONNREFUSED ollama-raw-secret",
@@ -431,13 +627,13 @@ describe.each(PROVIDERS)(
         expect.objectContaining({
           error: expect.objectContaining({
             category:
-              entry.provider === "openai"
+              entry.provider === "openai" || entry.provider === "deepseek"
                 ? "authentication"
                 : entry.provider === "anthropic"
                   ? "rate_limit"
                   : "network",
             code:
-              entry.provider === "openai"
+              entry.provider === "openai" || entry.provider === "deepseek"
                 ? "provider_authentication"
                 : entry.provider === "anthropic"
                   ? "provider_rate_limit"
@@ -446,7 +642,7 @@ describe.each(PROVIDERS)(
               entry.provider === "anthropic"
                 ? "msg_diag_anthropic"
                 : `${entry.provider}_error_request`,
-            ...(entry.provider === "openai"
+            ...(entry.provider === "openai" || entry.provider === "deepseek"
               ? { status: 401 }
               : entry.provider === "anthropic"
                 ? { status: 429 }
@@ -485,3 +681,168 @@ describe.each(PROVIDERS)(
     });
   },
 );
+
+describe("Phase 8 production Pi single-tool Host bridge", () => {
+  it("omits DeepSeek tool choice when a text-only request exposes no tools", async () => {
+    const entry = PROVIDERS[2];
+    const textMessage = assistant(entry, {
+      content: [{ text: "direct text result", type: "text" }],
+      responseId: "deepseek_text_only_response",
+      stopReason: "stop",
+      usage: completeUsage,
+    });
+    const harness = productionHarness(entry, [
+      () => [
+        { partial: assistant(entry, { content: [], stopReason: "stop" }), type: "start" },
+        { contentIndex: 0, partial: textMessage, type: "text_start" },
+        {
+          contentIndex: 0,
+          delta: "direct text result",
+          partial: textMessage,
+          type: "text_delta",
+        },
+        {
+          content: "direct text result",
+          contentIndex: 0,
+          partial: textMessage,
+          type: "text_end",
+        },
+        { message: textMessage, reason: "stop", type: "done" },
+      ],
+    ]);
+
+    await collect(harness.backend, { ...request, tools: [] });
+
+    expect(harness.contexts[0]).not.toHaveProperty("tools");
+    expect(harness.options[0]).toMatchObject({ reasoning: "off", temperature: 0 });
+    expect(harness.options[0]).not.toHaveProperty("toolChoice");
+    assertNoForbiddenRemoteActivity(harness.networkEvidence);
+  });
+
+  it("retains only the first streamed call and removes later calls from continuation history", async () => {
+    const entry = PROVIDERS[2];
+    const firstCall: PiSdkToolCall = {
+      arguments: { path: "first.txt" },
+      id: "deepseek-parallel-call-1",
+      name: "read_file",
+      type: "toolCall",
+    };
+    const secondCall: PiSdkToolCall = {
+      arguments: { path: "second.txt" },
+      id: "deepseek-parallel-call-2",
+      name: "read_file",
+      type: "toolCall",
+    };
+    const parallelMessage = assistant(entry, {
+      content: [firstCall, secondCall],
+      responseId: "deepseek_parallel_response",
+      stopReason: "toolUse",
+      usage: completeUsage,
+    });
+    const finalMessage = assistant(entry, {
+      content: [{ text: "serialized continuation", type: "text" }],
+      responseId: "deepseek_serialized_response",
+      stopReason: "stop",
+      usage: completeUsage,
+    });
+    const harness = productionHarness(entry, [
+      () => [
+        {
+          partial: assistant(entry, { content: [], stopReason: "stop" }),
+          type: "start",
+        },
+        { contentIndex: 0, partial: parallelMessage, type: "toolcall_start" },
+        {
+          contentIndex: 0,
+          delta: '{"path":"first.txt"}',
+          partial: parallelMessage,
+          type: "toolcall_delta",
+        },
+        {
+          contentIndex: 0,
+          partial: parallelMessage,
+          toolCall: firstCall,
+          type: "toolcall_end",
+        },
+        { contentIndex: 1, partial: parallelMessage, type: "toolcall_start" },
+        {
+          contentIndex: 1,
+          delta: '{"path":"second.txt"}',
+          partial: parallelMessage,
+          type: "toolcall_delta",
+        },
+        {
+          contentIndex: 1,
+          partial: parallelMessage,
+          toolCall: secondCall,
+          type: "toolcall_end",
+        },
+        { message: parallelMessage, reason: "toolUse", type: "done" },
+      ],
+      (context) => {
+        const retainedAssistant = context.messages.at(-2);
+        expect(retainedAssistant).not.toBe(parallelMessage);
+        expect(retainedAssistant).toMatchObject({
+          content: [firstCall],
+          role: "assistant",
+        });
+        expect(JSON.stringify(context.messages)).not.toContain(secondCall.id);
+        expect(context.messages.at(-1)).toMatchObject({
+          role: "toolResult",
+          toolCallId: firstCall.id,
+          toolName: firstCall.name,
+        });
+        return [
+          {
+            partial: assistant(entry, { content: [], stopReason: "stop" }),
+            type: "start",
+          },
+          { contentIndex: 0, partial: finalMessage, type: "text_start" },
+          {
+            contentIndex: 0,
+            delta: "serialized continuation",
+            partial: finalMessage,
+            type: "text_delta",
+          },
+          {
+            content: "serialized continuation",
+            contentIndex: 0,
+            partial: finalMessage,
+            type: "text_end",
+          },
+          { message: finalMessage, reason: "stop", type: "done" },
+        ];
+      },
+    ]);
+
+    const first = await collect(harness.backend);
+    expect(first.filter((event) => event.type === "tool_call_delta")).toEqual([
+      {
+        argumentsDelta: '{"path":"first.txt"}',
+        callId: firstCall.id,
+        name: firstCall.name,
+        type: "tool_call_delta",
+      },
+    ]);
+    const terminal = first.at(-1);
+    if (terminal?.type !== "turn_completed") {
+      throw new Error("missing serialized first terminal");
+    }
+
+    const second = await collect(harness.backend, {
+      ...request,
+      input: {
+        callId: firstCall.id,
+        continuation: terminal.continuation,
+        kind: "tool_result",
+        output: "first fixture contents",
+      },
+    });
+    expect(second).toContainEqual({
+      text: "serialized continuation",
+      type: "text_delta",
+    });
+    expect(harness.contexts).toHaveLength(2);
+    assertNoForbiddenRemoteActivity(harness.networkEvidence);
+  });
+});

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "pilotId": "fal-vp0-deepseek-development-pilot-v1",
+  "experimentId": "fal-vp0-verified-procedure-utilization-v1",
+  "evidenceClass": "development_directional_actual_model_effect_only",
+  "vp0GateEligible": false,
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "baseUrl": "https://api.deepseek.com",
+  "caseFixtureRoot": "fixtures/frontier-adapter-lab/fal-vp0-verified-procedure-utilization-v1/development-deepseek-pilot-v1/cases",
+  "pairCount": 3,
+  "actorAttemptCount": 6,
+  "fixedExecutionOrder": [
+    "inclusive-boundary:baseline",
+    "inclusive-boundary:candidate",
+    "end-exclusive-page-window:candidate",
+    "end-exclusive-page-window:baseline",
+    "one-based-retry-cap:baseline",
+    "one-based-retry-cap:candidate"
+  ],
+  "treatment": {
+    "baseline": "same_public_task_without_procedure",
+    "candidate": "same_public_task_plus_one_user_selected_generic_boundary_and_state_contract_procedure_pack"
+  },
+  "perAttemptCaps": {
+    "maximumProviderRequests": 6,
+    "maximumReportedUncachedInputTokens": 64000,
+    "maximumReportedCacheReadTokens": 4000,
+    "maximumReportedOutputTokens": 1300,
+    "maximumReportedTotalTokens": 69300,
+    "runtimeReportedTokenCeiling": 69300,
+    "maximumOutputTokensPerRequest": 512,
+    "maximumWallTimeMs": 300000
+  },
+  "toolProfile": {
+    "id": "public-microtask-minimal-production-v1",
+    "allowedToolIds": [
+      "list_files",
+      "read_file",
+      "apply_patch",
+      "run_command",
+      "finish_task"
+    ],
+    "implementationBoundary": "production_registry_restricted_model_surface"
+  },
+  "ds0EntryEvidence": {
+    "acceptedClasses": [
+      "ds0_product_completion_passed",
+      "functional_entry_only"
+    ],
+    "primaryPilotOutcome": "independent_fresh_verifier_task_success",
+    "secondaryPilotOutcome": "bornagent_verified_finish_task_completion",
+    "functionalEntryIsProductCompletionEvidence": false,
+    "functionalEntryIsQualityEvidence": false
+  },
+  "batchCaps": {
+    "maximumConcurrentAttempts": 1,
+    "maximumEstimatedPeakCostUsdMicros": 180000,
+    "conservativePeakUpperBoundUsdMicros": 179592,
+    "conservativePeakUpperBoundFormula": "actorAttemptCount*(maximumReportedUncachedInputTokens*peak.uncachedInput+maximumReportedCacheReadTokens*peak.cachedInput+maximumReportedOutputTokens*peak.output)",
+    "combinedWithDs0MaximumUsdMicros": 300000
+  },
+  "authorization": {
+    "defaultMode": "offline_plan_only",
+    "remoteCallsAuthorizedByFixture": false,
+    "requiresRunLocalAuthorizeRemoteFlag": true,
+    "requiresRunLocalMaximumCost": true,
+    "apiKeyPresenceIsAuthorization": false
+  },
+  "retention": {
+    "trackedRawProviderResponseAllowed": false,
+    "rawProviderReasoningAllowed": false,
+    "apiKeyPersistenceAllowed": false,
+    "absolutePathPersistenceAllowed": false,
+    "attemptWorkspacesDeletedAfterSanitizedObservation": true
+  },
+  "nonClaims": [
+    "This six-attempt pilot is not the frozen twelve-pair VP0 evaluation.",
+    "A directional result cannot satisfy or replace any VP0 release gate.",
+    "This compares procedure-present against no-memory, not equal-information representations.",
+    "Estimated cost is not a provider invoice or account-balance receipt.",
+    "A mutable provider model alias is not a pinned model artifact identity.",
+    "Functional-entry DS0 evidence is qualification-only and never product-completion or quality evidence."
+  ]
+}

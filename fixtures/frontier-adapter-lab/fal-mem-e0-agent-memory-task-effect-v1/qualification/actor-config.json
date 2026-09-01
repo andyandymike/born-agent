@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "qualificationId": "fal-mem-e0-deepseek-product-tool-actor-qualification-v1",
+  "qualificationRevision": 1,
+  "fixture": {
+    "case": {
+      "allowedChangedPaths": [
+        "src/harm-control.mjs"
+      ],
+      "caseId": "mem-e0-harm-control",
+      "caseSha256": "928fa58bc6c2a27d745e163f7ec4ae95a2292d0f6a214a19fadb49a6c2af42f2",
+      "hiddenVerifierArgvIdentitySha256": "e0d9ffb22dec638995a6d399b2a4a14deb92c2f527b652f099ac93f2e8e0bcc7",
+      "hiddenVerifierImplementationRawSha256": "21d2ce078546f4f2843adbd76f176c514aaf00d3fb23da3f249e144eb792cf78",
+      "initialTargetRawSha256": "910d05972cb0b818c94a7b2ad4f882b3f76140da5202aa74a362442357a4d18e",
+      "publicVerifierRawSha256": "4f40867491ee5e0301a97d501afc53ff8cea1077ef86a4ea68befad20936727b",
+      "publicWorkspaceManifestSha256": "6cf3b7c88fbe4002e451d9d8d6afeb9cf3ef15f61b858d08b9646dfe1700de92",
+      "targetRelativePath": "src/harm-control.mjs",
+      "taskSha256": "26fb7b57c23946de755d5e4ad459956ee4fb4c4c019bbef65ebdd8bbac106b68"
+    },
+    "experimentProtocolRawSha256": "0645026d2d7209ba69bf10c7948e5793b1deb8be346bade8b954cecece8d2205",
+    "experimentProtocolSha256": "8f991ff370e5fd24e4b29b0b5f1154572a59865833e4c10822bc4107d24f5e3b",
+    "fixtureBindingSha256": "dd29dc46f527d694eaceff0d08c772e561dee630f916f91a44e817e1dda843a1"
+  },
+  "remotePolicy": {
+    "allowedSuites": [
+      "smoke",
+      "targeted"
+    ],
+    "credentialAccess": "selected_provider_only",
+    "dockerAcquisition": "deny",
+    "maximumAttemptsPerRun": 1,
+    "mode": "remote_explicit",
+    "profileId": "fal-mem-e0-deepseek-qualification-v1",
+    "profileSha256": "a7af6ff8b2702cd8bbe6f9237fb2c3ad767a189bb5b3404541763e6255ac31da",
+    "rawSha256": "2a2c2cad8052a9432f4e6def549aa430796ada1842fc443a42d8ec143c8f11d9",
+    "relativePath": "qualification/remote-policy.json"
+  },
+  "actor": {
+    "applicationServiceEntry": "executeAgentThroughApplicationService",
+    "orderedProductionToolNames": [
+      "read_file",
+      "apply_patch",
+      "run_command",
+      "finish_task"
+    ],
+    "productEntrySha256": "140ccfd25738d669e7334a4437a6f5a7e87a44d43fa54f7d73dd7019fcbffaa5",
+    "systemInstructionSha256": "65be1cd030cb0e447ff634080d652e89ceb0978619eabff70cca38c12ceca04a",
+    "toolAllowlistSha256": "08f2e864dda66452a5a70f5269bbb992abe01f1ceac090b142e2e547ca8bd8f7",
+    "toolCatalogSha256": "3c9f9b56c7b3c3392f2e41a00324393400b67c83872acb1b6558584eb6e8d508"
+  },
+  "genericModelQualification": {
+    "evidenceKind": "model_capability_probe_suite",
+    "expectedIdentity": {
+      "adapterId": "pi-ai",
+      "adapterVersion": "0.80.7",
+      "continuationCodecVersion": null,
+      "endpointScope": {
+        "kind": "remote_explicit",
+        "originSha256": "9c1d6c22584ea0822e7a12d4533bde7800e01ac973446ee71db316ee0f68cb42"
+      },
+      "model": "deepseek-v4-flash",
+      "modelRuntimeIdentity": {
+        "kind": "provider_model_id",
+        "value": "deepseek-v4-flash"
+      },
+      "policyProfileId": "fal-ds0-deepseek-remote-v1",
+      "policyProfileSha256": "e0aa62f5307506b757eccffaaa318cb2dc55bb13dfd843b209d9bbc81226c433",
+      "probeSuiteVersion": "phase18a-capability-registry-v1",
+      "probeToolSchemaSha256": "f8dc23bb22ce574ee60fa2bb210f7e1c80228f6021ab7fe7f3dd9304378aeb19",
+      "provider": "deepseek"
+    },
+    "maximumRecordRequestCount": 6,
+    "minimumRecordRequestCount": 1,
+    "probeIds": [
+      "streaming_text_v1",
+      "strict_tool_args_v1",
+      "tool_continuation_v1",
+      "sequential_tools_v1",
+      "cancellation_v1",
+      "usage_semantics_v1"
+    ],
+    "recordEvidenceBinding": "run_local_authorization_only",
+    "recordReuseOnly": true,
+    "requiredQualifiedModes": [
+      "build"
+    ],
+    "rerunProviderCallsAuthorized": false,
+    "usageRequirement": {
+      "availability": "complete",
+      "probeId": "usage_semantics_v1",
+      "status": "passed"
+    }
+  },
+  "provider": {
+    "endpoint": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
+    "modelAliasMutable": true,
+    "provider": "deepseek",
+    "providerSource": "provider_network"
+  },
+  "budgets": {
+    "maximumAuthorizedCostUsdMicros": 33609,
+    "maximumOutputTokensPerRequest": 2048,
+    "maximumOutputTokensTotal": 8192,
+    "maximumProviderRequests": 4,
+    "maximumReportedTotalTokens": 60000,
+    "retries": 0
+  },
+  "configSha256": "03cebb54e931a2604285964b55dd64554359562c04c0a65d7cd324c44eeae31b"
+}

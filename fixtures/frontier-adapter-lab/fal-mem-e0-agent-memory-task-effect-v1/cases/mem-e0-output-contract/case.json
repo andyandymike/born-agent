@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "fixtureRevision": 1,
+  "caseId": "mem-e0-output-contract",
+  "caseClass": "memory_dependent",
+  "task": {
+    "text": "Implement src/output-contract.mjs according to the repository output constraint saved earlier. Do not invent or guess the marker. Run node verify.mjs, then finish the task after the public shape check passes.",
+    "taskSha256": "1b7b90f38b04a4df2d4640448a4beeebaa001f7f6420cae22d094c8dcd3bf8ae"
+  },
+  "memory": {
+    "kind": "constraint",
+    "disclosureClass": "public_synthetic",
+    "recordText": "Public synthetic repository constraint: outputMarker() must return the exact marker AURORA_PUBLIC_731.",
+    "recordLogicalSha256": "efac27a522016f29d35ca402357bcea4408d7e03a65df57b300ee7c4cd964d67",
+    "requiredAcceptanceValue": "AURORA_PUBLIC_731",
+    "requiredAcceptanceValueSha256": "4c017fa7e474de5014195ba251afd3e90e0cbc18e921ee1df9b6f02046053aae",
+    "forbiddenPublicSubstrings": ["AURORA_PUBLIC_731"]
+  },
+  "publicWorkspace": {
+    "relativeDirectory": "cases/mem-e0-output-contract/public-workspace",
+    "targetRelativePath": "src/output-contract.mjs",
+    "publicVerifierRelativePath": "verify.mjs",
+    "publicVerifierArgv": ["node", "verify.mjs"],
+    "orderedFiles": [
+      { "byteLength": 12, "path": ".gitignore", "rawSha256": "a0560325d63d40e0ef2bb9918fce3a58a97c6c2f658a8517f3170064b1bb75e7" },
+      { "byteLength": 61, "path": "src/output-contract.mjs", "rawSha256": "f8e3882af9d7b2ce0e9fcbdd1bdb8c173a7c5bfcfe03483359cb0555a30df071" },
+      { "byteLength": 337, "path": "verify.mjs", "rawSha256": "2b5f0102eeb6da11ff54fbe1bd50bdbd4724db8fc5d3e305e9ea71173568502e" }
+    ],
+    "manifestSha256": "2c6e303ea70ab72087f4ae9fc709f9efd625574286e74e29e2dec1d79d2e6988",
+    "initialTargetRawSha256": "f8e3882af9d7b2ce0e9fcbdd1bdb8c173a7c5bfcfe03483359cb0555a30df071",
+    "allowedChangedPaths": ["src/output-contract.mjs"]
+  },
+  "hiddenVerifier": {
+    "relativePath": "cases/mem-e0-output-contract/hidden/verifier.mjs",
+    "implementationRawSha256": "a7495388e55e90d550d9da04cb174005228e55c53cd24dc14af3dfd385d1db9a",
+    "argvIdentitySha256": "c3c3d5d34bb87bab3c3b9c3ad1dc22330b4afac62f3f5b65ae05058f124b3cae",
+    "initialExpected": "nonzero_exit",
+    "successExitCode": 0,
+    "successStdoutSha256": "7994609679889a654a115c96943c0cb1d66110faa2db580552cb35a277a7f773"
+  },
+  "caseSha256": "0be6762ee8ccab637d117d174d6fa02b791bf9a125c0ecf0898488e71686573e"
+}

@@ -2,6 +2,7 @@ import type { ProviderId } from "../model/model-backend.js";
 
 export type CredentialVariable =
   | "ANTHROPIC_API_KEY"
+  | "DEEPSEEK_API_KEY"
   | "OPENAI_API_KEY";
 
 export class CredentialHandle {
@@ -43,8 +44,27 @@ export type CredentialResolution =
 
 const PROVIDER_CREDENTIALS = {
   anthropic: "ANTHROPIC_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
   openai: "OPENAI_API_KEY",
-} as const satisfies Partial<Record<ProviderId, CredentialVariable>>;
+} as const satisfies Record<Exclude<ProviderId, "ollama">, CredentialVariable>;
+
+export function credentialVariableForProvider(
+  provider: ProviderId,
+): CredentialVariable | null {
+  switch (provider) {
+    case "anthropic":
+    case "deepseek":
+    case "openai":
+      return PROVIDER_CREDENTIALS[provider];
+    case "ollama":
+      return null;
+    default: {
+      const unsupported: never = provider;
+      void unsupported;
+      throw new TypeError("unsupported credential provider");
+    }
+  }
+}
 
 export class CredentialResolver {
   constructor(
@@ -54,11 +74,11 @@ export class CredentialResolver {
   ) {}
 
   resolve(provider: ProviderId): CredentialResolution {
-    if (provider === "ollama") {
+    const variableName = credentialVariableForProvider(provider);
+    if (variableName === null) {
       return { status: "not_required", variableName: null };
     }
 
-    const variableName = PROVIDER_CREDENTIALS[provider];
     // PHASE8: resolve exactly one named variable so an adapter never receives
     // another provider's key or an ambient process.env capability.
     const value = this.environment[variableName]?.trim();

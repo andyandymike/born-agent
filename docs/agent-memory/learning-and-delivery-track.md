@@ -1,8 +1,8 @@
 # BornAgent Agent Memory 学习与交付路线
 
-> 状态：Active / Learning goals and slice sequencing authority（updated 2026-08-29）
+> 状态：Active / Learning goals and slice sequencing authority（updated 2026-09-01）
 > 当前基线：Memory v1 core已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused-contract + packed-artifact release jobs并达到`preview_usable`；production Agent默认仍为`off`
-> 当前切片：ML5闭环完成；CF2与EM-R1都保留disabled。新的24 timeline / 240 probe共享测试已运行development/calibration：embedding只通过retrieval-stage calibration，CF在12/12 timeline都未达到收益选择条件，fixed reader四arm must-answer grounded success均为0；evaluation仍是未打开的salted commitment，production仍是FTS + recency
+> 当前切片：ML5闭环完成；CF2与EM-R1都保留disabled。历史component/fixed-packet reader结果已通过`2b8d70d`纠正为非Agent效果证据。当前进入MEM-E0：用相同模型/任务/工具/权限/预算做memory off/on product-path paired eval；先关闭无网络机械链和public-synthetic remote disclosure门禁，再单独授权live model费用。
 
 ## 1. 为什么做这条路线
 
@@ -22,10 +22,10 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - production `AgentContextRuntime` 尚未启用 AM1；默认仍为 `off`。
 - 当前session仍保存完整对话；显式`--memory local`可在成功终态后另存一条跨进程episode，并由`memory status/list/show`检查。
 - `memory search <query> --explain`现可手动执行scope-bound exact/quoted/FTS5 lexical/recency retrieval；stale source不会成为hit，derived projection可删除重建。
-- 显式`--memory local`现在会在每个local Ollama/in-process request前重新检索并source-revalidate，最多加入3条`historical_only` excerpt；remote provider与mode off注入均为0。
+- 显式`--memory local`现在会在每个local Ollama/in-process request前重新检索并source-revalidate，最多加入3条`historical_only` excerpt；普通remote provider与mode off注入均为0。MEM-E0新增的可选Host grant只允许exact public synthetic record用于单次实验run，不改变该默认。
 - 用户现在可显式`remember` fact/preference/decision/constraint，以immutable revision和`ADD/SUPERSEDE/RETRACT`更新active state；`rebuild/doctor`观察derived恢复、source、capacity和permission。
 - schema 1 episode会原字节迁移到schema 2 revision + operation；10,000 revision/64 MiB record cap停止新写入，独立operation reserve仍允许retract。
-- 尚无普通chat的模型自动提炼、remote disclosure、frontier adapter、secure erase或跨repository/global memory。
+- 尚无普通chat的模型自动提炼、private/ordinary remote disclosure、frontier adapter promotion、secure erase或跨repository/global memory；MEM-E0的public-synthetic disclosure不是通用产品功能。
 - `6ce181a75249c76f39e8d23bfeb7a7d31b31b29d` 的 Windows/Linux repository gate、AM1、built paths、pack smoke 与 Pages 已通过。
 - `311c3ccc1a9374a961d116881a774ca4c41cc7ff` 的GitHub `quality`与`windows-phase20` jobs、两平台pack smoke和Pages均已通过；它只证明当时的ML1–ML3切片，后续ML4/ML5由下一个exact commit单独闭环。
 - `e329a4b4aad968870505e36ba0bfc1b4d7e00511` 的专用`memory-v1-linux`与`memory-v1-windows` jobs均通过focused contract和同一个11步packed demo；Pages也通过。它证明Memory v1 core release合同，不证明remote/live model quality。

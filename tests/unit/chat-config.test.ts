@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_MODEL,
   DEFAULT_OLLAMA_BASE_URL,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_TIMEOUT_MS,
   MAXIMUM_TIMEOUT_MS,
   MINIMUM_TIMEOUT_MS,
   resolveChatConfig,
@@ -65,6 +67,19 @@ describe("resolveChatConfig", () => {
       value: {
         ollamaBaseURL: "http://127.0.0.1:11434",
         provider: "ollama",
+      },
+    });
+  });
+
+  it("selects DeepSeek with its pinned provider default", () => {
+    expect(
+      resolveChatConfig({ ...baseOptions, provider: "DEEPSEEK" }, {}),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        model: DEFAULT_DEEPSEEK_MODEL,
+        provider: "deepseek",
+        timeoutMs: DEFAULT_TIMEOUT_MS,
       },
     });
   });

@@ -118,7 +118,7 @@ export const sourceStateReportSchema = z
   })
   .strict();
 
-const modelEvidenceReportSchema = z
+const legacyModelEvidenceReportSchema = z
   .object({
     backend: z.enum(["fake", "ollama"]),
     endpoint_scope: z.enum(["in_process", "literal_loopback"]),
@@ -126,6 +126,49 @@ const modelEvidenceReportSchema = z
     remote_billable_requests: z.literal(0),
   })
   .strict();
+
+const qualificationRequestCountSchema = z.number().int().min(1).max(10_000);
+
+const remoteLiveQualifiedModelEvidenceReportSchema = z
+  .object({
+    backend: z.literal("deepseek"),
+    base_url: z.literal("https://api.deepseek.com"),
+    endpoint_scope: z.literal("remote_https"),
+    kind: z.literal("remote_live_qualified"),
+    model: z.literal("deepseek-v4-flash"),
+    provider: z.literal("deepseek"),
+    qualification_completed_request_count: qualificationRequestCountSchema,
+    qualification_evidence_kind: z.literal("model_capability_probe_suite"),
+    qualification_evidence_ref: relativePathSchema,
+    qualification_evidence_sha256: sha256Schema,
+    qualification_request_count: qualificationRequestCountSchema,
+    qualification_status: z.literal("passed"),
+    qualification_usage_capability: z.enum(["complete", "not_reported"]),
+    remote_billable_requests: qualificationRequestCountSchema,
+    remote_qualification_requests: qualificationRequestCountSchema,
+    request_count_scope: z.literal("qualification_only"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.qualification_completed_request_count !==
+        value.qualification_request_count ||
+      value.remote_qualification_requests !==
+        value.qualification_request_count ||
+      value.remote_billable_requests !== value.qualification_request_count
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "passed remote qualification request counts must be positive and identical",
+      });
+    }
+  });
+
+const modelEvidenceReportSchema = z.union([
+  legacyModelEvidenceReportSchema,
+  remoteLiveQualifiedModelEvidenceReportSchema,
+]);
 
 const attributionScopeReportSchema = z
   .object({

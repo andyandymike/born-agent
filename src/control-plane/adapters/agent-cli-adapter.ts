@@ -419,8 +419,24 @@ async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promis
         }),
       }),
       launcher: {
-        launch: async (input) => Object.freeze({
-          exitCode: await executeAgentExecution(
+        launch: async (input) => {
+          const publicSyntheticRemoteMemoryGrant =
+            input.payload.memoryMode === "local" &&
+              runtime.createPublicSyntheticRemoteMemoryGrant !== undefined
+              ? await runtime.createPublicSyntheticRemoteMemoryGrant({
+                  canonicalRootIdentitySha256: input.canonicalRootIdentitySha256,
+                  model: input.payload.model,
+                  ownerPrincipalId: input.applicationCommit.principalId,
+                  policyProfileId: input.payload.policyProfile,
+                  provider: input.payload.provider,
+                  repositoryId: input.repositoryId,
+                  runId: input.runId,
+                  sessionId: input.sessionId,
+                  task: input.payload.task,
+                })
+              : null;
+          return Object.freeze({
+            exitCode: await executeAgentExecution(
             optionsFromPayload(input.payload, input.surface),
             createAgentExecutionRuntimePort(runtime, io),
             createAgentExecutionPresentationPort(
@@ -438,6 +454,9 @@ async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promis
                     localMemory: {
                       canonicalRootIdentitySha256: input.canonicalRootIdentitySha256,
                       ownerPrincipalId: input.applicationCommit.principalId,
+                      ...(publicSyntheticRemoteMemoryGrant === null
+                        ? {}
+                        : { publicSyntheticRemoteMemoryGrant }),
                       repositoryId: input.repositoryId,
                       stateRoot: runtime.controlPlaneStateRoot!,
                       workspace: input.repositoryRoot,
@@ -482,7 +501,8 @@ async function applicationHostForRuntime(runtime: CliRuntime, io: CliIO): Promis
               writer: input.writer,
             },
           ),
-        }),
+          });
+        },
       },
       sessionResumeOwner: host.sessionResumeOwner,
       stateRoot: runtime.controlPlaneStateRoot!,

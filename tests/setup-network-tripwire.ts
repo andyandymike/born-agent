@@ -104,6 +104,7 @@ if (originalFetch !== undefined) {
 // accidentally become a paid live interoperability test.
 delete process.env.OPENAI_API_KEY;
 delete process.env.ANTHROPIC_API_KEY;
+delete process.env.DEEPSEEK_API_KEY;
 
 afterEach(() => {
   const snapshot = activity.report();

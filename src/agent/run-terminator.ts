@@ -2,6 +2,7 @@ import { EventPersistenceError, type EventPublisher } from "../events/event-publ
 import type { RunEventDraft } from "../events/run-event.js";
 import { HookError } from "../hooks/hook-errors.js";
 import { McpCoreError } from "../mcp/mcp-errors.js";
+import { PublicSyntheticRemoteMemoryGrantError } from "../memory/recall/public-synthetic-remote-memory-grant.js";
 import { FatalToolExecutionError } from "../tools/tool-types.js";
 import type { AgentTerminal } from "./agent-types.js";
 
@@ -40,6 +41,10 @@ export type RunExecutionErrorClassificationV1 =
     }
   | { readonly error: HookError; readonly kind: "hook" }
   | { readonly error: McpCoreError; readonly kind: "mcp" }
+  | {
+      readonly error: PublicSyntheticRemoteMemoryGrantError;
+      readonly kind: "memory_disclosure";
+    }
   | { readonly kind: "internal" };
 
 /**
@@ -77,6 +82,9 @@ export function classifyRunExecutionError(
   }
   if (error instanceof HookError) return { error, kind: "hook" };
   if (error instanceof McpCoreError) return { error, kind: "mcp" };
+  if (error instanceof PublicSyntheticRemoteMemoryGrantError) {
+    return { error, kind: "memory_disclosure" };
+  }
   if (context.wasUserCancelled) return { kind: "user_cancelled" };
   return { kind: "internal" };
 }

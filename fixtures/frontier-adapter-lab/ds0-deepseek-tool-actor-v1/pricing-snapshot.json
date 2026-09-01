@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "deepseek-v4-flash-pricing-2026-08-31",
+  "provider": "deepseek",
+  "modelAlias": "deepseek-v4-flash",
+  "documentedModelVersion": "DeepSeek-V4-Flash-0731",
+  "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "sourceObservedDate": "2026-08-31",
+  "sourceContentArchived": false,
+  "currency": "USD",
+  "unit": "usd_per_million_tokens",
+  "offPeak": {
+    "cachedInput": 0.007,
+    "uncachedInput": 0.22,
+    "output": 0.66
+  },
+  "peak": {
+    "cachedInput": 0.014,
+    "uncachedInput": 0.44,
+    "output": 1.32
+  },
+  "peakWindow": {
+    "timezone": "UTC",
+    "weekdays": [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday"
+    ],
+    "intervals": [
+      {
+        "startInclusive": "01:00",
+        "endExclusive": "04:00"
+      },
+      {
+        "startInclusive": "06:00",
+        "endExclusive": "10:00"
+      }
+    ],
+    "otherwise": "off_peak"
+  },
+  "estimator": {
+    "algorithm": "deepseek-pi-normalized-token-cost-v1",
+    "piUsageSemantics": "inputTokens already excludes cacheReadTokens and cacheWriteTokens",
+    "uncachedInputTokens": "inputTokens+cacheWriteTokens",
+    "reportedTotalTokens": "inputTokens+cacheReadTokens+cacheWriteTokens+outputTokens",
+    "microUsdFormula": "round(cachedInputTokens*cachedInputRate+uncachedInputTokens*uncachedInputRate+outputTokens*outputRate)",
+    "requiresNonnegativeSafeIntegers": true,
+    "requiresReportedTotalEquality": true
+  },
+  "revalidation": {
+    "requiredBeforeEveryPaidRun": true,
+    "priceDriftRequiresNewSnapshot": true,
+    "modelVersionDriftRequiresNewProtocol": true
+  },
+  "nonClaims": [
+    "The source page is linked but not archived by this fixture.",
+    "This snapshot is not a provider invoice or balance statement.",
+    "The provider may change model aliases and prices after the observation date.",
+    "Estimated micro-USD is not proof of the amount deducted from the account.",
+    "A confirmed estimated-cost ceiling is not an absolute provider billing cap."
+  ],
+  "pricingSha256": "aee78d4f375a117b9c57626267361e3676a541bbfd57e9e7dc89717c28370e08"
+}

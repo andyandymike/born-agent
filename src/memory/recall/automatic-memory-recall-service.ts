@@ -47,7 +47,7 @@ function boundedQuery(value: string): string {
   return result;
 }
 
-function renderHistoricalExcerpt(record: MemoryRecordV1): string {
+export function renderHistoricalMemoryExcerptV1(record: MemoryRecordV1): string {
   const payload = canonicalJson({
     kind: record.kind,
     occurred_at: record.occurredAt,
@@ -78,7 +78,7 @@ function contextItemFor(
       // MEMORY-ML3: a recalled task is evidence about the past. Its bytes can
       // help the model, but can never enter the protected ledger or grant Host authority.
       authority: "historical_only",
-      content: renderHistoricalExcerpt(record),
+      content: renderHistoricalMemoryExcerptV1(record),
       kind: "historical_memory",
       metadata: {
         active_status: "available",

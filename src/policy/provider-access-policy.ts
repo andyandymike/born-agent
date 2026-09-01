@@ -1,13 +1,13 @@
 import type { ProviderId } from "../model/model-backend.js";
-import type { ChatProvider } from "../chat/types.js";
 import { RuntimePolicyError } from "./policy-errors.js";
 import { resolveProviderPolicyRequest, type EffectiveRuntimePolicy, type ResolvedProviderPolicyRequest } from "./policy-resolver.js";
 import { sha256Canonical } from "../completion/canonical-json.js";
 import { canonicalPolicyProfileData } from "./runtime-policy-schema.js";
+import { credentialVariableForProvider } from "../security/credential-resolver.js";
 
 export function credentialSecretsForPolicy(
   policy: EffectiveRuntimePolicy,
-  provider: ChatProvider,
+  provider: ProviderId,
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly (string | undefined)[] {
   if (policy.entry.profile.modelAccess.kind === "local_free") {
@@ -15,11 +15,14 @@ export function credentialSecretsForPolicy(
     // non-use. Keep this branch before either secret-bearing property lookup.
     return Object.freeze([]);
   }
-  return Object.freeze([
-    provider === "openai"
-      ? environment.OPENAI_API_KEY
-      : environment.ANTHROPIC_API_KEY,
-  ]);
+  const variableName = credentialVariableForProvider(provider);
+  if (variableName === null) {
+    throw new RuntimePolicyError(
+      "policy_provider_denied",
+      "remote policy cannot authorize a credential-free provider",
+    );
+  }
+  return Object.freeze([environment[variableName]]);
 }
 
 export class ProviderRequestLedger {

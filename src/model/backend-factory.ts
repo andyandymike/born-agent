@@ -83,6 +83,7 @@ export interface BackendFactoryOptions {
 
 const DEFAULT_PROVIDER_ENDPOINTS = {
   anthropic: "https://api.anthropic.com",
+  deepseek: "https://api.deepseek.com",
   ollama: "http://127.0.0.1:11434",
   openai: "https://api.openai.com/v1",
 } as const satisfies Record<ProviderId, string>;

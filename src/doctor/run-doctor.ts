@@ -7,6 +7,8 @@ import {
   resolveProviderPolicyRequest,
   type ResolvedProviderPolicyRequest,
 } from "../policy/policy-resolver.js";
+import type { ProviderId } from "../model/model-backend.js";
+import { credentialVariableForProvider } from "../security/credential-resolver.js";
 import type {
   DoctorCheck,
   DoctorReport,
@@ -137,14 +139,19 @@ async function workspaceCheck(runtime: DoctorRuntime): Promise<DoctorCheck> {
 
 function credentialCheck(
   runtime: DoctorRuntime,
-  provider: "anthropic" | "openai",
+  provider: Exclude<ProviderId, "ollama">,
 ): DoctorCheck {
-  const variable =
-    provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const variable = credentialVariableForProvider(provider);
+  if (variable === null) throw new TypeError("remote credential variable is unavailable");
   const configured = Boolean(runtime.env[variable]?.trim());
+  const displayName = {
+    anthropic: "Anthropic",
+    deepseek: "DeepSeek",
+    openai: "OpenAI",
+  }[provider];
   return {
     detail: configured ? "configured" : "not configured",
-    name: `${provider === "anthropic" ? "Anthropic" : "OpenAI"} credential`,
+    name: displayName + " credential",
     ok: configured,
   };
 }
@@ -307,7 +314,9 @@ export async function runDoctor(
           },
           ...(await ollamaChecks(runtime, resolved.model)),
         ]
-      : resolved.provider === "openai" || resolved.provider === "anthropic"
+      : resolved.provider === "openai" ||
+          resolved.provider === "anthropic" ||
+          resolved.provider === "deepseek"
         ? [credentialCheck(runtime, resolved.provider), modelCheck(resolved.model)]
         : [
             {

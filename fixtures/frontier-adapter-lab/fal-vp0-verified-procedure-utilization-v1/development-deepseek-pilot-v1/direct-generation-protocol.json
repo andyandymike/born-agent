@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "pilotId": "fal-vp0-deepseek-direct-generation-pilot-v1",
+  "experimentId": "fal-vp0-verified-procedure-utilization-v1",
+  "evidenceClass": "development_directional_direct_generation_actual_model_effect_only",
+  "vp0GateEligible": false,
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "baseUrl": "https://api.deepseek.com",
+  "policyProfile": "vp0-development-deepseek-direct",
+  "pairCount": 3,
+  "attemptCount": 6,
+  "fixedExecutionOrder": [
+    "inclusive-boundary:baseline",
+    "inclusive-boundary:candidate",
+    "end-exclusive-page-window:candidate",
+    "end-exclusive-page-window:baseline",
+    "one-based-retry-cap:baseline",
+    "one-based-retry-cap:candidate"
+  ],
+  "treatment": {
+    "baseline": "same_public_task_and_public_tree_without_procedure",
+    "candidate": "same_public_task_and_public_tree_plus_verified_procedure_text"
+  },
+  "perAttemptCaps": {
+    "maximumProviderRequests": 1,
+    "maximumEncodedPromptBytes": 8192,
+    "inputAuthorizationTokens": 18432,
+    "inputAuthorizationFormula": "2*maximumEncodedPromptBytes+2048",
+    "maximumReportedInputTokens": 18432,
+    "maximumReportedOutputTokens": 512,
+    "maximumReportedTotalTokens": 18944,
+    "maximumResponseBytes": 8192,
+    "maximumReplacementBytes": 4096,
+    "maximumWallTimeMs": 90000
+  },
+  "batchCaps": {
+    "maximumConcurrentAttempts": 1,
+    "maximumProviderRequests": 6,
+    "maximumReportedTotalTokens": 113664,
+    "conservativePeakUpperBoundUsdMicros": 52716,
+    "conservativePeakUpperBoundFormula": "ceil(attemptCount*(inputAuthorizationTokens*peak.uncachedInput+maximumReportedOutputTokens*peak.output))",
+    "maximumAuthorizedCostUsdMicros": 60000
+  },
+  "outcome": {
+    "primary": "independent_exact_fresh_verifier_success",
+    "productAgentCompletionClaimed": false,
+    "bornagentToolProtocolExercised": false
+  },
+  "authorization": {
+    "defaultMode": "offline_plan_only",
+    "remoteCallsAuthorizedByFixture": false,
+    "requiresRunLocalAuthorizeRemoteFlag": true,
+    "requiresRunLocalMaximumCost": true,
+    "apiKeyPresenceIsAuthorization": false
+  },
+  "retention": {
+    "rawProviderResponseAllowed": false,
+    "rawProviderReasoningAllowed": false,
+    "apiKeyPersistenceAllowed": false,
+    "absolutePathPersistenceAllowed": false,
+    "attemptWorkspacesDeletedAfterSanitizedObservation": true
+  },
+  "nonClaims": [
+    "This direct-generation pilot does not exercise or qualify the BornAgent tool loop.",
+    "This six-attempt directional result cannot satisfy or replace the frozen VP0 gate.",
+    "This compares procedure-present against no-memory, not equal-information representations.",
+    "A quality ceiling or three-pair delta is not a general procedure-effect estimate.",
+    "The local conservative cost bound is not a provider invoice or an absolute billing guarantee.",
+    "A mutable provider model alias is not a pinned model artifact identity."
+  ]
+}

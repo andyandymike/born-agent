@@ -43,6 +43,7 @@ describe("ProviderNetworkGuard", () => {
   it.each([
     ["openai", "https://api.openai.com/v1"],
     ["anthropic", "https://api.anthropic.com"],
+    ["deepseek", "https://api.deepseek.com"],
     ["ollama", "http://ollama.example:11434/v1"],
   ] as const)(
     "rejects %s before remote request creation",

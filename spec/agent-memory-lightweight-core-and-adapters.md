@@ -1,7 +1,7 @@
 # BornAgent Lightweight Memory Core and Frontier Adapters Spec
 
 > Status: Active implementation contract（updated 2026-08-30）
-> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`; CF2 and EM-R1 candidates remain disabled and never entered production. FAL Memory Shared Benchmark v1 and Answer Policy v2 have completed public development/calibration diagnostics. V2 refuted the embedding retrieval candidate on both splits because Recall@5 uplift stayed below the frozen `+0.100000` floor; Context Folding remained unselected on 12/12 timelines with zero token or reader effect. The DeepSeek v2 reader diagnostic completed 46 calls at an estimated `$0.051575`, but it cannot override the retrieval refutation; v2 evaluation remains unsealed and unrunnable. The next direction-level candidate is Verified Procedural Experience Learning, beginning with a frozen verified-procedure utilization experiment rather than automatic evolution. No lab result is promotion evidence; Agent default remains `off`, production remote provider injection remains zero.
+> Current slice: ML5 closed; Memory v1 core is `preview_usable` at exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`; CF2 and EM-R1 candidates remain disabled and never entered production. FAL Memory Shared Benchmark v1 and Answer Policy v2 completed component/fixed-packet diagnostics but did not test Agent task effect. The append-only scope correction is frozen at `2b8d70d`. MEM-E0 is now the active causal/effect lane: first prove the full product writer/restart/recall/AgentLoop/verifier mechanics offline, then—only after exact public-synthetic disclosure and cost authorization—run a small live paired model batch. Agent default remains `off`; ordinary production remote provider injection remains zero.
 > Product boundary: local, single-user, repository-scoped, cross-session memory
 > Explicit non-claim: `preview_usable` does not mean stable or prove remote/live model quality, AM2–AM6, remote disclosure, frontier adapters, secure erase, or global memory
 
@@ -343,7 +343,7 @@ ML4把record cap解释为全部canonical revisions的全局上限，不因supers
 
 ML4 explicit remember复用同一admission scanner，并在MemoryService builder、SQLite revision transaction和FTS rebuild三处fail closed；错误只返回typed code，不回显被拒绝文本。operation不保存用户文本。这里是已知pattern admission，不声明通用DLP。
 
-Memory Lite 只声明 local private storage，不声明 encryption 或 secure erase。ML3 automatic recall 只支持 loopback/local backend；remote provider 看到的 memory records 必须为 0，直到单独 disclosure spec 存在。
+Memory Lite 只声明 local private storage，不声明 encryption 或 secure erase。ML3 automatic recall 只支持 loopback/local backend；remote provider 默认看到的 memory records 必须为 0。唯一窄例外由单独的[`Public-Synthetic Remote Memory Disclosure Amendment`](agent-memory-public-synthetic-remote-disclosure-amendment.md)定义：它只服务MEM-E0的tracked public synthetic fixture、exact run-local Host grant和显式费用/披露授权，不开放普通CLI或private memory。
 
 ## 6. Retrieval 与安全使用
 
@@ -392,11 +392,11 @@ Core在provider request prepare前再次验证scope、record availability和sour
 
 ML3不新增模型tool，因此不引入tool schema fingerprint、resume qualification或tool-call pairing。CLI `show`负责精确source inspection。plan-bound `memory_lookup`只作为ML5之后的progressive-disclosure实验；只有它在相同quality/token/latency下显著优于bounded direct excerpts，才可另写promotion delta。
 
-第一版接受一个明确边界：不实现“source deletion 与已排队 remote provider request”的原子 use barrier，因为 Memory Lite 不提供 source deletion 且 automatic recall 仅限 local backend。若未来增加并发source deletion或remote disclosure，必须先补独立use-barrier spec。
+第一版接受一个明确边界：不实现“source deletion 与已排队 remote provider request”的通用原子 use barrier，因为 Memory Lite 不提供物理source deletion。MEM-E0的public-synthetic remote grant不复用selection：每个request都重新读取active record、重验source并逐项核对exact allowlisted record/source/excerpt hashes；任何retract、tamper或selection drift都在该request出站前fail closed。更广的private remote disclosure仍需独立并发/use-barrier设计。
 
 #### 6.2.1 ML3 frozen safe-use contract
 
-ML3只在用户显式选择`--memory local`且frozen provider source为`local_ollama|in_process_test`时装配automatic recall。`provider_network`即使同时选择local memory，也不得加载retrieval模块、打开derived projection或向provider context加入任何memory record；terminal后的本地ML1 ingest保持独立。默认或显式`off`继续不加载`node:sqlite`且不改变ContextPlan/ModelRequest。
+ML3只在用户显式选择`--memory local`且frozen provider source为`local_ollama|in_process_test`时装配普通automatic recall。`provider_network`即使同时选择local memory，默认也不得加载retrieval模块、打开derived projection或向provider context加入任何memory record；terminal后的本地ML1 ingest保持独立。只有MEM-E0 runtime提供schema/hash有效、绑定当前provider/model/policy/scope/session/run/task且exact允许一条public synthetic record/excerpt的短生命周期Host grant时，才可为该run装配同一production recall。grant缺失保持旧zero path；grant错误、stale、wrong scope、selection drift或excerpt hash drift在provider call前拒绝。默认或显式`off`继续不加载`node:sqlite`且不改变ContextPlan/ModelRequest。
 
 每次模型request都按以下顺序执行，不复用上一次selection：
 
@@ -812,6 +812,8 @@ Tests只证明它们覆盖的行为。没有 live provider 请求也可以完成
 只有`agent_memory_task_effect_e2e`允许写“记忆改善Agent”。它必须同时满足：同模型、任务、预算、工具和权限；Session A通过product memory write/admission；完全退出后由fresh Session B走production automatic recall与context injection；真实BornAgent AgentLoop和工具执行；独立deterministic task verifier；`memory off`与`memory on`配对比较。Preloaded store、手工packet、oracle injection、standalone reader或固定fake response只能作为诊断，不能补足任何一项。
 
 ML1–ML5当前证明`product_path_structural`：写入、持久化、bounded retrieval/injection、lifecycle、isolation、pack与跨平台可运行。它们使用固定fake response来检查ModelRequest，因此`agent_memory_task_effect_e2e=not_tested`。自动episode当前只保存task input和完成元数据，不等于保存或复用模型答案、tool output或解决方案。
+
+下一张card是[`FAL-MEM-E0 — Agent + Memory Task Effect Paired Eval`](frontier-adapter-lab-mem-e0-agent-memory-task-effect.md)。它先用deterministic actor关闭product writer→完整进程退出→fresh Session B→automatic recall→真实AgentLoop/tools→Host-only verifier的机械链，且固定`effectClaimAllowed=false`；随后才可能在3个memory-dependent pair和1个harm control上运行显式授权的live model batch。只有后一层完整有效receipt可以产生指定模型/冻结任务上的direction signal。
 
 ## 12. 唯一发布演示
 

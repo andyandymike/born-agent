@@ -19,13 +19,14 @@ import { NodeGitArgvRunner } from "../../src/verification/git-argv-runner.js";
 
 const SENTINEL_ENVIRONMENT = Object.freeze({
   AnThRoPiC_ApI_KeY: "anthropic-phase8-sentinel",
+  DeEpSeEk_ApI_KeY: "deepseek-phase8-sentinel",
   OpenAi_Api_Key: "openai-phase8-sentinel",
   PATH: process.env.PATH ?? "",
   SAFE_CHILD_VALUE: "preserved",
 });
 
 const ENV_PROBE = String.raw`
-const forbidden = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+const forbidden = new Set(["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"]);
 const leaked = Object.keys(process.env).filter((name) => forbidden.has(name.toUpperCase()));
 process.stdout.write(JSON.stringify({ leaked, safe: process.env.SAFE_CHILD_VALUE }));
 `;
@@ -36,7 +37,9 @@ function expectSanitized(
   expect(environment).toBeDefined();
   expect(
     Object.keys(environment ?? {}).filter((name) =>
-      ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"].includes(name.toUpperCase()),
+      ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"].includes(
+        name.toUpperCase(),
+      ),
     ),
   ).toEqual([]);
   expect(environment?.SAFE_CHILD_VALUE).toBe("preserved");
@@ -67,6 +70,9 @@ describe("Phase 8 child environment boundary", () => {
     );
     expect(SENTINEL_ENVIRONMENT.AnThRoPiC_ApI_KeY).toBe(
       "anthropic-phase8-sentinel",
+    );
+    expect(SENTINEL_ENVIRONMENT.DeEpSeEk_ApI_KeY).toBe(
+      "deepseek-phase8-sentinel",
     );
   });
 

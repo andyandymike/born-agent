@@ -10,6 +10,7 @@ import { resolveLoopbackOllamaURL } from "../security/loopback-ollama-url.js";
 export const DEFAULT_PROVIDER: ChatProvider = "ollama";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra";
 export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
+export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
 export const DEFAULT_OLLAMA_MODEL = "qwen3:1.7b";
 export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = DEFAULT_OLLAMA_MODEL;
@@ -29,10 +30,13 @@ export function resolveProvider(
     .trim()
     .toLowerCase();
 
-  return provider === "openai" || provider === "anthropic" || provider === "ollama"
+  return provider === "openai" ||
+      provider === "anthropic" ||
+      provider === "deepseek" ||
+      provider === "ollama"
     ? { ok: true, value: provider }
     : {
-        error: `provider must be one of: openai, anthropic, ollama (received ${provider || "empty"})`,
+        error: `provider must be one of: openai, anthropic, deepseek, ollama (received ${provider || "empty"})`,
         ok: false,
       };
 }
@@ -47,7 +51,9 @@ export function resolveModel(
       ? DEFAULT_OLLAMA_MODEL
       : provider === "anthropic"
         ? DEFAULT_ANTHROPIC_MODEL
-        : DEFAULT_OPENAI_MODEL;
+        : provider === "deepseek"
+          ? DEFAULT_DEEPSEEK_MODEL
+          : DEFAULT_OPENAI_MODEL;
   const selected = cliModel ?? environmentModel ?? defaultModel;
   const model = selected.trim();
 

@@ -10,7 +10,7 @@ export const BUILT_IN_DOCKER_ARTIFACT_IDS = Object.freeze([
 
 export type RuntimePolicyMode = "local_free" | "remote_explicit";
 export type EvalSuiteAccess = "targeted" | "smoke" | "full";
-export type PolicyProvider = "anthropic" | "fake" | "mock" | "ollama" | "openai";
+export type PolicyProvider = "anthropic" | "deepseek" | "fake" | "mock" | "ollama" | "openai";
 
 export type DockerAcquisitionAccess =
   | { readonly kind: "deny" }
@@ -34,7 +34,7 @@ export interface LocalFreeModelAccess {
 }
 
 export interface RemoteProviderRule {
-  readonly provider: "openai" | "anthropic";
+  readonly provider: "anthropic" | "deepseek" | "openai";
   readonly models: readonly string[];
   readonly baseUrls: readonly string[];
 }
@@ -77,6 +77,12 @@ const loopbackEndpoint = z.string().refine((value) => {
   const port = Number(match?.[1]);
   return Number.isSafeInteger(port) && port <= 65_535;
 }, "Ollama endpoint must be a literal loopback URL");
+
+const REMOTE_PROVIDER_BASE_URLS = Object.freeze({
+  anthropic: "https://api.anthropic.com",
+  deepseek: "https://api.deepseek.com",
+  openai: "https://api.openai.com/v1",
+} as const);
 
 const evalAccessSchema = z
   .object({
@@ -121,13 +127,13 @@ const localModelAccessSchema = z
   });
 const remoteProviderRuleSchema = z
   .object({
-    provider: z.enum(["openai", "anthropic"]),
+    provider: z.enum(["openai", "anthropic", "deepseek"]),
     models: sortedUniqueArray(modelId),
     base_urls: sortedUniqueArray(z.url()),
   })
   .strict()
   .superRefine((value, context) => {
-    const expected = value.provider === "openai" ? "https://api.openai.com/v1" : "https://api.anthropic.com";
+    const expected = REMOTE_PROVIDER_BASE_URLS[value.provider];
     if (value.base_urls.some((url) => url !== expected)) {
       context.addIssue({ code: "custom", message: `only the canonical ${value.provider} API base URL is allowed` });
     }

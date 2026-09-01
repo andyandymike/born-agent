@@ -1,5 +1,6 @@
 export const MODEL_PROVIDER_CREDENTIAL_VARIABLES = Object.freeze([
   "ANTHROPIC_API_KEY",
+  "DEEPSEEK_API_KEY",
   "OPENAI_API_KEY",
 ] as const);
 

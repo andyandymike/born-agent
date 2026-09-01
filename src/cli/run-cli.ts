@@ -600,7 +600,7 @@ export async function runCli(
     // PHASE4: agent 是独立命令；chat 继续保留 Phase 3 的最多一次工具往返，避免语义偷换。
     .description("Run a budgeted coding AgentLoop over the workspace.")
     .argument("<task>", "repository task to answer; do not paste API keys")
-    .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
+    .option("--provider <provider>", "model provider: openai, anthropic, deepseek, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--mode <mode>", "agent mode: plan or build")
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
@@ -776,7 +776,7 @@ export async function runCli(
     .command("chat")
     .description("Stream a response with at most one read-only tool call.")
     .argument("<prompt>", "text prompt to send; do not paste API keys")
-    .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
+    .option("--provider <provider>", "model provider: openai, anthropic, deepseek, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")
     .option("--policy-config <absolute-path>", "trusted user runtime policy config")
@@ -829,7 +829,7 @@ export async function runCli(
       "explicitly accept canonical-only resume",
       false,
     )
-    .option("--provider <provider>", "model provider: openai, anthropic, or ollama")
+    .option("--provider <provider>", "model provider: openai, anthropic, deepseek, or ollama")
     .option("--model <model>", "override the provider model")
     .option("--mode <mode>", "initial agent mode: plan or build")
     .option("--policy-profile <id>", "exact runtime policy profile; default local-free-v1")

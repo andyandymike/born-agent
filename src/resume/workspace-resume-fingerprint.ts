@@ -90,7 +90,7 @@ export function persistWorkspaceResumeFingerprint(
 export function restoreWorkspaceResumeFingerprint(
   persisted: PersistedWorkspaceResumeFingerprint,
 ): WorkspaceResumeFingerprint {
-  if (!(["anthropic", "ollama", "openai"] as const).includes(
+  if (!(["anthropic", "deepseek", "ollama", "openai"] as const).includes(
     persisted.backend.provider as BackendIdentity["provider"],
   )) {
     throw new TypeError("persisted resume fingerprint has an unknown provider");

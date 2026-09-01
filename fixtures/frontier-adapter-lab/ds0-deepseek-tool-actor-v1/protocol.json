@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-ds0-deepseek-tool-actor-v1",
+  "repositoryBaselineCommit": "e74964781808b5f771d3a5262dcc086036201ac2",
+  "status": "offline_contract_revised_after_live_budget_blocked",
+  "provider": {
+    "id": "deepseek",
+    "modelAlias": "deepseek-v4-flash",
+    "documentedModelVersion": "DeepSeek-V4-Flash-0731",
+    "modelAliasMutable": true,
+    "modelArtifactSha256": null,
+    "baseUrl": "https://api.deepseek.com",
+    "chatCompletionsEndpoint": "https://api.deepseek.com/chat/completions",
+    "httpMethod": "POST",
+    "apiFormat": "openai-completions",
+    "stream": true,
+    "reasoningControl": {
+      "piOption": "off",
+      "wireField": "thinking.type",
+      "wireValue": "disabled",
+      "reasoningEffortParameter": "omitted"
+    },
+    "temperature": 0,
+    "maximumOutputTokenField": "max_tokens",
+    "cacheRetention": "none",
+    "streamUsageIncluded": true,
+    "seedControl": "unsupported",
+    "toolChoice": "auto",
+    "maxRetries": 0,
+    "credentialEnvironmentVariable": "DEEPSEEK_API_KEY",
+    "credentialPersistence": "forbidden"
+  },
+  "officialCapabilitySnapshot": {
+    "sourceObservedDate": "2026-08-31",
+    "sourceUrls": [
+      "https://api-docs.deepseek.com/api/create-chat-completion/",
+      "https://api-docs.deepseek.com/guides/tool_calls/",
+      "https://api-docs.deepseek.com/quick_start/pricing/",
+      "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+      "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
+    ],
+    "contextLengthTokens": 1000000,
+    "maximumProviderOutputTokens": 384000,
+    "clientResendsChatHistory": true,
+    "serverConversationStateReliedOn": false,
+    "functionToolsSupported": true,
+    "toolRoleResultSupported": true,
+    "usageFieldsDocumented": [
+      "prompt_tokens",
+      "prompt_cache_hit_tokens",
+      "prompt_cache_miss_tokens",
+      "completion_tokens",
+      "completion_tokens_details.reasoning_tokens",
+      "total_tokens"
+    ],
+    "providerExecutesClientFunctions": false,
+    "unsupportedParametersMayBeIgnored": true,
+    "clientManagedConversationImpliesZeroRetention": false,
+    "responseReportedModelPreserved": false,
+    "successfulHttpStatusPreserved": false,
+    "parallelToolCallsRequestParameterDocumented": false,
+    "parallelToolCallsRequestParameterSent": false,
+    "reasoningTokenBreakdownPreserved": false,
+    "costSource": "independent_pricing_snapshot_not_pi_catalog"
+  },
+  "toolContract": {
+    "allowedProviderToolTypes": [
+      "function"
+    ],
+    "forbiddenProviderToolTypes": [
+      "apply_patch_custom",
+      "code_interpreter",
+      "computer_use",
+      "file_search",
+      "mcp",
+      "web_search"
+    ],
+    "providerStrictModeReliedOn": false,
+    "localJsonDecodeRequired": true,
+    "localToolSchemaValidationRequired": true,
+    "localAuthorityCheckRequired": true,
+    "singleToolCallPerTurnRequired": true,
+    "functionOutputReturnedByClient": true,
+    "multipleToolCallAdapterPolicy": "retain_first_streamed_call_and_prune_continuation",
+    "discardedToolCallsExposedOrExecuted": false,
+    "unknownToolCalls": "fail_closed",
+    "postNormalizationMultipleToolCalls": "fail_closed"
+  },
+  "privacy": {
+    "disclosureClass": "public_synthetic_only",
+    "providerProtocolStateBoundary": "client_resends_chat_history_not_a_no_retention_or_no_training_guarantee",
+    "providerPolicyBoundary": "inputs_and_usage_logs_may_be_collected_retained_and_used_to_improve_or_train_technology_and_personal_data_may_be_stored_in_prc",
+    "allowedOutgoingCategories": [
+      "bounded_tool_outputs_for_the_same_public_smoke",
+      "bornagent_tool_schemas",
+      "frozen_system_instruction",
+      "normalized_disposable_workspace_relative_paths",
+      "public_disposable_workspace_bytes",
+      "public_synthetic_nonlineage_task"
+    ],
+    "forbiddenOutgoingCategories": [
+      "absolute_local_paths",
+      "api_keys_or_authorization_headers",
+      "credentials_tokens_or_secrets",
+      "environment_dumps",
+      "future_vp0_holdouts_or_goldens",
+      "hidden_solutions_or_scorer_inputs",
+      "hostnames_or_machine_identifiers",
+      "memory_records_or_raw_user_conversations",
+      "personal_or_sensitive_personal_data",
+      "private_repository_or_uncommitted_user_work",
+      "raw_provider_reasoning",
+      "source_exact_ledgers",
+      "usernames_or_home_state_roots"
+    ],
+    "disclosureManifestRequired": true,
+    "apiUserField": "omitted",
+    "trackedRawProviderResponseAllowed": false
+  },
+  "pricing": {
+    "snapshotRef": "pricing-snapshot.json",
+    "snapshotId": "deepseek-v4-flash-pricing-2026-08-31",
+    "pricingSha256": "aee78d4f375a117b9c57626267361e3676a541bbfd57e9e7dc89717c28370e08",
+    "revalidateBeforeEveryPaidRun": true
+  },
+  "caps": {
+    "maximumActorAttempts": 1,
+    "maximumProviderRequests": 6,
+    "maximumConcurrentRequests": 1,
+    "maximumOutputTokensPerRequest": 4096,
+    "maximumReportedTotalTokens": 120000,
+    "maximumReportedOutputTokens": 24576,
+    "maximumWallTimeMs": 600000,
+    "maximumEstimatedCostUsdMicros": 100000,
+    "conservativePeakUpperBoundUsdMicros": 74427,
+    "conservativePeakUpperBoundFormula": "maximumReportedOutputTokens*peak output rate+(maximumReportedTotalTokens-maximumReportedOutputTokens)*maximum(peak cached input, peak uncached input)",
+    "costCeilingSemantics": "estimated replay boundary only; not an absolute provider billing cap"
+  },
+  "authorization": {
+    "remoteCallsAuthorized": false,
+    "qualificationRunAuthorized": false,
+    "authorizationSource": "run_local_explicit_user_authorization_required",
+    "apiKeyPresenceIsAuthorization": false,
+    "accountBalanceIsAuthorization": false
+  },
+  "qualification": {
+    "liveQualification": "not_run",
+    "providerCallsObserved": 0,
+    "qualityEvidenceEligible": false,
+    "publicSmokeTaskClass": "public_synthetic_nonlineage_disposable",
+    "requiredCapabilities": [
+      "exact_no_shell_verifier_command",
+      "fresh_completion_evidence",
+      "provider_usage_and_cost_replay",
+      "repository_read",
+      "verified_finish_task",
+      "workspace_edit_persisted"
+    ],
+    "receiptRequiredForPass": true,
+    "failureOutcome": "actor_blocked"
+  },
+  "vp0Handoff": {
+    "status": "blocked",
+    "requiresExactPassingQualificationReceipt": true,
+    "requiresExactActorConfigurationSha256": true,
+    "requiresQualityEvidenceEligible": true,
+    "entrySmokeCountsAsVp0Pair": false,
+    "entrySmokeCountsAsEffectEvidence": false,
+    "configurationChangeRequiresRequalification": true
+  },
+  "offlineAcceptance": [
+    "FAL-DS01",
+    "FAL-DS02",
+    "FAL-DS03",
+    "FAL-DS04",
+    "FAL-DS05",
+    "FAL-DS06",
+    "FAL-DS07",
+    "FAL-DS08",
+    "FAL-DS09",
+    "FAL-DS10",
+    "FAL-DS11",
+    "FAL-DS12",
+    "FAL-DS13",
+    "FAL-DS14",
+    "FAL-DS15"
+  ],
+  "nonClaims": [
+    "This offline protocol is not evidence of a live DeepSeek actor or effect pass.",
+    "The mutable model alias is not a pinned model artifact identity.",
+    "Client-managed Chat Completions history is not a zero-retention or zero-training guarantee.",
+    "DS0 does not establish coding quality, efficiency, cache, retrieval, short-term memory, or long-term memory benefit.",
+    "DS0 does not authorize private-repository use, product integration, promotion, or production deployment.",
+    "The existing DeepSeek JSON reader is not evidence for this tool-capable actor qualification."
+  ],
+  "protocolSha256": "52d527a396c6bfcd93658a8098e2d1b5f2a7f6a7a3aea51e00f892803b845c84"
+}

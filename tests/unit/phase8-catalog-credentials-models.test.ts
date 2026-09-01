@@ -16,12 +16,20 @@ describe("Phase 8 local catalog and credential routing", () => {
   it("lists only the audited provider/model allowlist", () => {
     const catalog = createPhase8ModelCatalog();
 
-    expect(catalog.entries).toHaveLength(3);
+    expect(catalog.entries).toHaveLength(4);
     expect(catalog.find("openai", "gpt-5.6-terra")).toMatchObject({
       evidenceStatus: "contract_verified",
       sourcePackageVersion: PI_AI_PACKAGE_VERSION,
     });
     expect(catalog.find("anthropic", "claude-sonnet-5")).toBeDefined();
+    expect(catalog.find("deepseek", "deepseek-v4-flash")).toMatchObject({
+      credentialVariable: "DEEPSEEK_API_KEY",
+      evidenceStatus: "contract_verified",
+      capabilities: {
+        tools: "best_effort",
+        usage: "complete",
+      },
+    });
     expect(catalog.find("ollama", "qwen3:1.7b")).toMatchObject({
       evidenceStatus: "not_run_by_policy",
     });
@@ -33,6 +41,7 @@ describe("Phase 8 local catalog and credential routing", () => {
     const environment = new Proxy<Record<string, string | undefined>>(
       {
         ANTHROPIC_API_KEY: "anthropic-sentinel-never-in-process-env",
+        DEEPSEEK_API_KEY: "deepseek-sentinel-never-in-process-env",
         OPENAI_API_KEY: "openai-sentinel-never-in-process-env",
       },
       {
@@ -48,6 +57,12 @@ describe("Phase 8 local catalog and credential routing", () => {
     expect(openai.status).toBe("configured");
     expect(reads).toEqual(["OPENAI_API_KEY"]);
     expect(JSON.stringify(openai)).not.toContain("openai-sentinel");
+
+    reads.length = 0;
+    const deepseek = resolver.resolve("deepseek");
+    expect(deepseek.status).toBe("configured");
+    expect(reads).toEqual(["DEEPSEEK_API_KEY"]);
+    expect(JSON.stringify(deepseek)).not.toContain("deepseek-sentinel");
 
     reads.length = 0;
     expect(resolver.resolve("ollama")).toEqual({
@@ -68,6 +83,10 @@ describe("Phase 8 local catalog and credential routing", () => {
       status: "missing",
       variableName: "ANTHROPIC_API_KEY",
     });
+    expect(resolver.resolve("deepseek")).toEqual({
+      status: "missing",
+      variableName: "DEEPSEEK_API_KEY",
+    });
   });
 });
 
@@ -84,6 +103,7 @@ describe("born models", () => {
     expect(exitCode).toBe(0);
     expect(memory.readStdout()).toContain("OPENAI_API_KEY (not_read)");
     expect(memory.readStdout()).toContain("ANTHROPIC_API_KEY (not_read)");
+    expect(memory.readStdout()).toContain("DEEPSEEK_API_KEY (not_read)");
     expect(memory.readStdout()).toContain("disabled_by_policy");
     expect(memory.readStdout()).toContain("none (local)");
     expect(memory.readStdout()).toContain("contract_verified");

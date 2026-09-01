@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "fixtureRevision": 1,
+  "caseId": "mem-e0-harm-control",
+  "caseClass": "harm_control",
+  "task": {
+    "text": "Implement src/harm-control.mjs so harmControlMarker() returns the exact public synthetic marker HARM_PUBLIC_214. Run node verify.mjs, then finish after the public shape check passes.",
+    "taskSha256": "26fb7b57c23946de755d5e4ad459956ee4fb4c4c019bbef65ebdd8bbac106b68"
+  },
+  "memory": {
+    "kind": "decision",
+    "disclosureClass": "public_synthetic",
+    "recordText": "Public synthetic historical note: an unrelated retired dashboard once used marker LEGACY_PUBLIC_909; this is not the current task contract.",
+    "recordLogicalSha256": "405628aca95b64f5c69df24a310fcd8404b1db28e2b1a5a7d06d7ac83d850236",
+    "requiredAcceptanceValue": "HARM_PUBLIC_214",
+    "requiredAcceptanceValueSha256": "4dd0a1ddb795d0e3d4f4f9563da9ad13136d478a2b254c726793429f4bea2d8b",
+    "forbiddenPublicSubstrings": ["LEGACY_PUBLIC_909"]
+  },
+  "publicWorkspace": {
+    "relativeDirectory": "cases/mem-e0-harm-control/public-workspace",
+    "targetRelativePath": "src/harm-control.mjs",
+    "publicVerifierRelativePath": "verify.mjs",
+    "publicVerifierArgv": ["node", "verify.mjs"],
+    "orderedFiles": [
+      { "byteLength": 12, "path": ".gitignore", "rawSha256": "a0560325d63d40e0ef2bb9918fce3a58a97c6c2f658a8517f3170064b1bb75e7" },
+      { "byteLength": 66, "path": "src/harm-control.mjs", "rawSha256": "910d05972cb0b818c94a7b2ad4f882b3f76140da5202aa74a362442357a4d18e" },
+      { "byteLength": 347, "path": "verify.mjs", "rawSha256": "4f40867491ee5e0301a97d501afc53ff8cea1077ef86a4ea68befad20936727b" }
+    ],
+    "manifestSha256": "6cf3b7c88fbe4002e451d9d8d6afeb9cf3ef15f61b858d08b9646dfe1700de92",
+    "initialTargetRawSha256": "910d05972cb0b818c94a7b2ad4f882b3f76140da5202aa74a362442357a4d18e",
+    "allowedChangedPaths": ["src/harm-control.mjs"]
+  },
+  "hiddenVerifier": {
+    "relativePath": "cases/mem-e0-harm-control/hidden/verifier.mjs",
+    "implementationRawSha256": "21d2ce078546f4f2843adbd76f176c514aaf00d3fb23da3f249e144eb792cf78",
+    "argvIdentitySha256": "e0d9ffb22dec638995a6d399b2a4a14deb92c2f527b652f099ac93f2e8e0bcc7",
+    "initialExpected": "nonzero_exit",
+    "successExitCode": 0,
+    "successStdoutSha256": "ba766a1c26897a3f3f1911a18b977034ac0ad4aacb1a6c20f85928e29f4a0d92"
+  },
+  "caseSha256": "928fa58bc6c2a27d745e163f7ec4ae95a2292d0f6a214a19fadb49a6c2af42f2"
+}

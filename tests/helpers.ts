@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { CliIO, CliRuntime } from "../src/cli/types.js";
 import { createDomainHarness } from "../src/coordination/domain-harness.js";
 import { BackendPreflightError } from "../src/model/backend-factory.js";
+import type { ProviderId } from "../src/model/model-backend.js";
 import type { RunEvent } from "../src/events/run-event.js";
 import type { ExecutableResult } from "../src/doctor/types.js";
 import type { SessionWriter } from "../src/sessions/jsonl-session-writer.js";
@@ -150,7 +151,8 @@ export function createRuntime(
     ((request) => {
       if (
         (request.provider === "openai" && !environment.OPENAI_API_KEY) ||
-        (request.provider === "anthropic" && !environment.ANTHROPIC_API_KEY)
+        (request.provider === "anthropic" && !environment.ANTHROPIC_API_KEY) ||
+        (request.provider === "deepseek" && !environment.DEEPSEEK_API_KEY)
       ) {
         throw new BackendPreflightError(
           "configuration_credential_missing",
@@ -159,7 +161,7 @@ export function createRuntime(
       }
       return new FakeStreamingChatClient(fixedStream(), {
         model: request.model,
-        provider: request.provider as "anthropic" | "ollama" | "openai",
+        provider: request.provider as ProviderId,
       });
     });
 
@@ -208,7 +210,7 @@ export function createRuntime(
       const backend = createModelBackend(request);
       if (backend instanceof FakeStreamingChatClient) {
         backend.selectIdentity(
-          request.provider as "anthropic" | "ollama" | "openai",
+          request.provider as ProviderId,
           request.model,
         );
       }

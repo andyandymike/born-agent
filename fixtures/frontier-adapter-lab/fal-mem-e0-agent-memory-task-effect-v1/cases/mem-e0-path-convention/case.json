@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
+  "fixtureRevision": 1,
+  "caseId": "mem-e0-path-convention",
+  "caseClass": "memory_dependent",
+  "task": {
+    "text": "Implement src/path-convention.mjs according to the repository generated-path constraint saved earlier. Do not invent or guess the path. Run node verify.mjs, then finish after the public shape check passes.",
+    "taskSha256": "d6af2cc2300759463da61b2e69d701a9bf7c58f946d5d7e9ac89c5fca6902244"
+  },
+  "memory": {
+    "kind": "constraint",
+    "disclosureClass": "public_synthetic",
+    "recordText": "Public synthetic repository constraint: generatedOutputPath() must return generated/public-synthetic/nebula-593/output.mjs exactly.",
+    "recordLogicalSha256": "1ba1e806bfc19104bc037bde9025ff0ed456fd51eb7c3e027ccf93cee10fbbec",
+    "requiredAcceptanceValue": "generated/public-synthetic/nebula-593/output.mjs",
+    "requiredAcceptanceValueSha256": "94eb0737969f993a07901d5fc9cc267ce8987c7125fdf4ccd5cbbf0a43186bfe",
+    "forbiddenPublicSubstrings": ["generated/public-synthetic/nebula-593/output.mjs", "nebula-593"]
+  },
+  "publicWorkspace": {
+    "relativeDirectory": "cases/mem-e0-path-convention/public-workspace",
+    "targetRelativePath": "src/path-convention.mjs",
+    "publicVerifierRelativePath": "verify.mjs",
+    "publicVerifierArgv": ["node", "verify.mjs"],
+    "orderedFiles": [
+      { "byteLength": 12, "path": ".gitignore", "rawSha256": "a0560325d63d40e0ef2bb9918fce3a58a97c6c2f658a8517f3170064b1bb75e7" },
+      { "byteLength": 68, "path": "src/path-convention.mjs", "rawSha256": "66456ea2eba15e58f710563ea813f7d531b8f764656a1a24e7967ff5050decab" },
+      { "byteLength": 424, "path": "verify.mjs", "rawSha256": "8f7fc0cbfec999ea92e5abdae8779ecdd52761f754f66d9989f2b75e1d2d5de8" }
+    ],
+    "manifestSha256": "66fd27f41e173489363806b587ab78b6f98fd4dfbfbe03a7d8945c0af37fee27",
+    "initialTargetRawSha256": "66456ea2eba15e58f710563ea813f7d531b8f764656a1a24e7967ff5050decab",
+    "allowedChangedPaths": ["src/path-convention.mjs"]
+  },
+  "hiddenVerifier": {
+    "relativePath": "cases/mem-e0-path-convention/hidden/verifier.mjs",
+    "implementationRawSha256": "5ed540a56326a47ed7de67432da1f7d4b2c745b3377985a19c423e761071f4f1",
+    "argvIdentitySha256": "78477a3819bf99ae4073f60039a7a89d1f3cdc176deaad6d0e1e8a22cfa81d6f",
+    "initialExpected": "nonzero_exit",
+    "successExitCode": 0,
+    "successStdoutSha256": "a667f7db939858ba1f60d1fd97eeb71e116ee4c6a9ca2e45e2b90199d3edc23c"
+  },
+  "caseSha256": "b0540712a0f6a5c429cc451a60043829cf5a432bfae9c52a57589e110fa94bec"
+}

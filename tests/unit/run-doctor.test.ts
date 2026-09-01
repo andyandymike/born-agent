@@ -177,6 +177,80 @@ describe("runDoctor", () => {
     }
   });
 
+  it("checks only DEEPSEEK_API_KEY for an explicit DeepSeek profile", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bornagent-doctor-deepseek-"));
+    const policyConfig = join(directory, "policy.json");
+    try {
+      await writeFile(
+        policyConfig,
+        JSON.stringify({
+          schema_version: 1,
+          profiles: [
+            {
+              schema_version: 1,
+              id: "remote-deepseek-contract",
+              mode: "remote_explicit",
+              model_access: {
+                kind: "remote_explicit",
+                providers: [
+                  {
+                    provider: "deepseek",
+                    models: ["deepseek-v4-flash"],
+                    base_urls: ["https://api.deepseek.com"],
+                  },
+                ],
+                credential_access: "selected_provider_only",
+                limits: {
+                  max_provider_requests_per_run: 1,
+                  max_output_tokens_per_request: 128,
+                  max_reported_total_tokens_per_run: 1_000,
+                },
+              },
+              eval_access: {
+                allowed_suites: ["targeted"],
+                max_attempts_per_run: 1,
+              },
+              docker_acquisition: { kind: "deny" },
+            },
+          ],
+        }),
+        "utf8",
+      );
+      const reads: string[] = [];
+      const environment = new Proxy<Record<string, string | undefined>>(
+        {
+          ANTHROPIC_API_KEY: "must-not-be-read",
+          DEEPSEEK_API_KEY: "deepseek-doctor-sentinel",
+          OPENAI_API_KEY: "must-not-be-read",
+        },
+        {
+          get: (target, property, receiver) => {
+            if (String(property).endsWith("_API_KEY")) reads.push(String(property));
+            return Reflect.get(target, property, receiver) as string | undefined;
+          },
+        },
+      );
+      const report = await runDoctor(
+        createRuntime({ cwd: process.cwd(), env: environment }),
+        {
+          model: "deepseek-v4-flash",
+          policyConfig,
+          policyProfile: "remote-deepseek-contract",
+          provider: "deepseek",
+        },
+      );
+
+      expect(findCheck(report, "DeepSeek credential")).toMatchObject({
+        detail: "configured",
+        ok: true,
+      });
+      expect(reads).toEqual(["DEEPSEEK_API_KEY"]);
+      expect(JSON.stringify(report)).not.toContain("deepseek-doctor-sentinel");
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("shows the exact profile model and rejects a blank override", async () => {
     const selected = await runDoctor(
       createRuntime({

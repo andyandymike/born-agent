@@ -152,7 +152,7 @@ const verification = z
   })
   .strict();
 
-const modelEvidence = z
+const legacyModelEvidence = z
   .object({
     backend: z.enum(["fake", "ollama"]),
     endpointScope: z.enum(["in_process", "literal_loopback"]),
@@ -160,6 +160,48 @@ const modelEvidence = z
     remoteBillableRequests: z.literal(0),
   })
   .strict();
+
+const qualificationRequestCount = z.number().int().min(1).max(10_000);
+
+const remoteLiveQualifiedModelEvidence = z
+  .object({
+    backend: z.literal("deepseek"),
+    baseUrl: z.literal("https://api.deepseek.com"),
+    endpointScope: z.literal("remote_https"),
+    kind: z.literal("remote_live_qualified"),
+    model: z.literal("deepseek-v4-flash"),
+    provider: z.literal("deepseek"),
+    qualificationCompletedRequestCount: qualificationRequestCount,
+    qualificationEvidenceKind: z.literal("model_capability_probe_suite"),
+    qualificationEvidenceRef: relativePath,
+    qualificationEvidenceSha256: sha256,
+    qualificationRequestCount,
+    qualificationStatus: z.literal("passed"),
+    qualificationUsageCapability: z.enum(["complete", "not_reported"]),
+    remoteBillableRequests: qualificationRequestCount,
+    remoteQualificationRequests: qualificationRequestCount,
+    requestCountScope: z.literal("qualification_only"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.qualificationCompletedRequestCount !==
+        value.qualificationRequestCount ||
+      value.remoteQualificationRequests !== value.qualificationRequestCount ||
+      value.remoteBillableRequests !== value.qualificationRequestCount
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "passed remote qualification request counts must be positive and identical",
+      });
+    }
+  });
+
+const modelEvidence = z.union([
+  legacyModelEvidence,
+  remoteLiveQualifiedModelEvidence,
+]);
 
 const attributionScope = z
   .object({

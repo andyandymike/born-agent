@@ -93,8 +93,15 @@ export type PiSdkStreamOptions = {
   readonly cacheRetention: "none";
   readonly env: Readonly<Record<string, string>>;
   readonly maxRetries: number;
+  readonly onPayload?: (
+    payload: unknown,
+    model: PiSdkModel,
+  ) => unknown | undefined | Promise<unknown | undefined>;
+  readonly reasoning?: "off";
   readonly signal: AbortSignal;
+  readonly temperature?: number;
   readonly timeoutMs: number;
+  readonly toolChoice?: "auto";
 };
 
 export type PiSdkAssistantMessageEvent =
@@ -235,6 +242,7 @@ function withOutputCeiling<TModel extends PiSdkModel>(
 
 type PiProviderModule = {
   readonly anthropicProvider?: () => PiProvider;
+  readonly deepseekProvider?: () => PiProvider;
   readonly openaiProvider?: () => PiProvider;
 };
 
@@ -249,37 +257,29 @@ type PiProvider = {
 
 const OPENAI_PROVIDER_MODULE = "@earendil-works/pi-ai/providers/openai";
 const ANTHROPIC_PROVIDER_MODULE = "@earendil-works/pi-ai/providers/anthropic";
+const DEEPSEEK_PROVIDER_MODULE = "@earendil-works/pi-ai/providers/deepseek";
 const OPENAI_COMPLETIONS_MODULE = "@earendil-works/pi-ai/api/openai-completions";
 
-async function loadRemoteDriver(
+function driverForRemoteProvider(
   options: ProductionPiRuntimePortOptions,
-): Promise<PiRuntimeDriver> {
-  if (options.provider === "openai") {
-    const { openaiProvider } = (await import(OPENAI_PROVIDER_MODULE)) as PiProviderModule;
-    if (openaiProvider === undefined) throw new TypeError("pi openai provider is unavailable");
-    const provider = openaiProvider();
-    const found = provider.getModels().find((model) => model.id === options.model);
-    if (found === undefined) throw modelNotFound(options.provider, options.model);
-    const model = withOutputCeiling(
-      withBaseUrl(found, options.baseUrl),
-      options.maximumOutputTokens,
-    );
-    return {
-      model,
-      stream: (context, streamOptions) =>
-        provider.streamSimple(model, context, streamOptions),
-    };
-  }
-
-  const { anthropicProvider } = (await import(
-    ANTHROPIC_PROVIDER_MODULE
-  )) as PiProviderModule;
-  if (anthropicProvider === undefined) throw new TypeError("pi anthropic provider is unavailable");
-  const provider = anthropicProvider();
+  provider: PiProvider,
+): PiRuntimeDriver {
   const found = provider.getModels().find((model) => model.id === options.model);
   if (found === undefined) throw modelNotFound(options.provider, options.model);
+  const compatible =
+    options.provider === "deepseek"
+      ? {
+          ...found,
+          compat: {
+            ...found.compat,
+            // DeepSeek's Chat Completions contract documents max_tokens.
+            // pi-ai's URL detection otherwise selects max_completion_tokens.
+            maxTokensField: "max_tokens",
+          },
+        }
+      : found;
   const model = withOutputCeiling(
-    withBaseUrl(found, options.baseUrl),
+    withBaseUrl(compatible, options.baseUrl),
     options.maximumOutputTokens,
   );
   return {
@@ -287,6 +287,47 @@ async function loadRemoteDriver(
     stream: (context, streamOptions) =>
       provider.streamSimple(model, context, streamOptions),
   };
+}
+
+async function loadRemoteDriver(
+  options: ProductionPiRuntimePortOptions,
+): Promise<PiRuntimeDriver> {
+  switch (options.provider) {
+    case "openai": {
+      const { openaiProvider } = (await import(
+        OPENAI_PROVIDER_MODULE
+      )) as PiProviderModule;
+      if (openaiProvider === undefined) {
+        throw new TypeError("pi openai provider is unavailable");
+      }
+      return driverForRemoteProvider(options, openaiProvider());
+    }
+    case "anthropic": {
+      const { anthropicProvider } = (await import(
+        ANTHROPIC_PROVIDER_MODULE
+      )) as PiProviderModule;
+      if (anthropicProvider === undefined) {
+        throw new TypeError("pi anthropic provider is unavailable");
+      }
+      return driverForRemoteProvider(options, anthropicProvider());
+    }
+    case "deepseek": {
+      const { deepseekProvider } = (await import(
+        DEEPSEEK_PROVIDER_MODULE
+      )) as PiProviderModule;
+      if (deepseekProvider === undefined) {
+        throw new TypeError("pi deepseek provider is unavailable");
+      }
+      return driverForRemoteProvider(options, deepseekProvider());
+    }
+    case "ollama":
+      throw new TypeError("the remote pi loader cannot load ollama");
+    default: {
+      const unsupported: never = options.provider;
+      void unsupported;
+      throw new TypeError("unsupported remote pi provider");
+    }
+  }
 }
 
 async function loadOllamaDriver(
@@ -341,7 +382,7 @@ async function loadOllamaDriver(
   };
 }
 
-const loadProductionDriver: PiRuntimeDriverLoader = async (options) =>
+export const loadProductionPiRuntimeDriver: PiRuntimeDriverLoader = async (options) =>
   options.provider === "ollama"
     ? loadOllamaDriver(options)
     : loadRemoteDriver(options);
@@ -471,6 +512,36 @@ function toolCallAt(
   return content?.type === "toolCall" ? content : undefined;
 }
 
+function retainSingleToolCall(
+  message: PiSdkAssistantMessage,
+  selectedContentIndex: number | undefined,
+): PiSdkAssistantMessage {
+  const toolCallIndexes = message.content.flatMap((content, index) =>
+    content.type === "toolCall" ? [index] : [],
+  );
+  if (toolCallIndexes.length <= 1) return message;
+  if (
+    selectedContentIndex === undefined ||
+    !toolCallIndexes.includes(selectedContentIndex)
+  ) {
+    throw new TypeError(
+      "pi terminal tool calls do not match the selected streamed call",
+    );
+  }
+  return {
+    ...message,
+    // BornAgent's current Host consumes one tool result per model turn. Pi
+    // providers may still emit parallel calls even when the system instruction
+    // asks for serial calls, so the adapter deterministically retains the first
+    // streamed call and lets the model request any remaining work next turn.
+    // The discarded calls are never exposed to ToolRegistry or executed.
+    content: message.content.filter(
+      (content, index) =>
+        content.type !== "toolCall" || index === selectedContentIndex,
+    ),
+  };
+}
+
 function findToolName(messages: readonly PiSdkMessage[], callId: string): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -497,7 +568,7 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
 
   constructor(
     options: ProductionPiRuntimePortOptions,
-    loader: PiRuntimeDriverLoader = loadProductionDriver,
+    loader: PiRuntimeDriverLoader = loadProductionPiRuntimeDriver,
   ) {
     this.#options = Object.freeze({ ...options });
     this.#loader = loader;
@@ -572,8 +643,21 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
       cacheRetention: "none",
       env: {},
       maxRetries: 0,
+      ...(this.#options.provider === "deepseek"
+        ? {
+            reasoning: "off",
+            temperature: 0,
+            ...(request.tools.length === 0 ? {} : { toolChoice: "auto" as const }),
+          }
+        : {}),
       signal,
       timeoutMs: request.timeoutMs,
+    };
+
+    let selectedToolContentIndex: number | undefined;
+    const selectToolContentIndex = (contentIndex: number): boolean => {
+      selectedToolContentIndex ??= contentIndex;
+      return selectedToolContentIndex === contentIndex;
     };
 
     if (this.#options.providerAccessPolicy !== undefined) {
@@ -621,6 +705,7 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
           yield { type: "thinking_end" };
           break;
         case "toolcall_start": {
+          if (!selectToolContentIndex(event.contentIndex)) break;
           const call = toolCallAt(event.partial, event.contentIndex);
           yield {
             ...(call?.id === undefined ? {} : { callId: call.id }),
@@ -631,6 +716,7 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
           break;
         }
         case "toolcall_delta": {
+          if (!selectToolContentIndex(event.contentIndex)) break;
           const call = toolCallAt(event.partial, event.contentIndex);
           yield {
             argumentsDelta: event.delta,
@@ -642,6 +728,7 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
           break;
         }
         case "toolcall_end":
+          if (!selectToolContentIndex(event.contentIndex)) break;
           yield {
             arguments: event.toolCall.arguments,
             callId: event.toolCall.id,
@@ -652,11 +739,15 @@ export class ProductionPiRuntimePort implements PiRuntimePort {
           break;
         case "done": {
           const terminalUsage = usageFromMessage(event.message);
+          const continuationMessage = retainSingleToolCall(
+            event.message,
+            selectedToolContentIndex,
+          );
           yield {
             continuation: new ProductionContinuation(
               this.#owner,
               request,
-              [...messages, event.message],
+              [...messages, continuationMessage],
             ),
             ...(event.message.responseId === undefined
               ? {}

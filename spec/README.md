@@ -4,7 +4,7 @@
 
 > 当前有效后续路线：[`Personal Open-Source Maintenance Roadmap`](personal-open-source-maintenance-roadmap.md)。[`Agent Memory学习与交付路线`](../docs/agent-memory/learning-and-delivery-track.md)定义切片顺序、学习目标和预算，[`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)定义当前exact行为与验收；21B–21E已Deferred，当前个人开源项目范围不再追求M12或Phase22。
 >
-> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`，production默认仍为`off`且production remote provider injection为0。CF2与EM-R1都保留disabled。Answer Policy v2的public development/calibration retrieval与DeepSeek reader diagnostic现已完成：embedding Recall@5 uplift为`+0.052083`/`+0.062500`，均低于冻结的`+0.100000`门槛，eligible point为0；Context Folding在12/12 timeline零选择、零effect。DeepSeek共46次调用，估算费用`$0.051575`；reader diagnostic不能覆盖retrieval refutation，v2 evaluation仍未seal且不可运行。方向级复盘已选择Verified Procedural Experience Learning为下一候选，从冻结verified procedure的VP0开始，不直接做自动evolution。当前结果都不是promotion evidence。
+> 当前状态：Memory v1 ML5已在exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`通过专用Linux/Windows focused contract与packed demo，core为`preview_usable`且production默认仍为`off`。CF2、EM-R1和shared benchmark只保留component/fixed-packet reader结论；过宽的Agent/product-effect标签已由exact commit `2b8d70d`纠正。当前新增MEM-E0来直接测试产品writer→restart→recall→AgentLoop/tools→fresh verifier的off/on任务效果；普通remote provider注入仍为0，唯一public-synthetic实验例外要求exact run-local Host grant与另行费用授权。VP0仍是独立的verified-procedure候选，两条lane都不是promotion evidence。
 
 ## 当前阅读顺序
 
@@ -81,6 +81,8 @@
     - [`Local Embedding Hybrid 实验记录`](../docs/agent-memory/local-embedding-hybrid-experiment-record.md)：FTS/E5历史结果、EM-R1 retained实现、data-contract修正、calibration曲线与根因边界
     - [`FAL Memory Shared Benchmark v1`](frontier-adapter-lab-shared-memory-benchmark-v1.md)：24×10共享时间线、2×2 retrieval/projection实验、分阶段指标与one-shot commit/reveal协议
     - [`FAL Memory Shared Benchmark — Answer Policy v2`](frontier-adapter-lab-shared-memory-answer-policy-v2.md)：修正supported negative、partial-known与direct-unknown语义，分离security/policy failure并按unique case计数
+    - [`FAL-MEM-E0 — Agent + Memory Task Effect Paired Eval`](frontier-adapter-lab-mem-e0-agent-memory-task-effect.md)：3个memory-dependent pair + 1个harm control，要求产品写入、完整进程重启、automatic recall、真实AgentLoop/tools和Host-only fresh verifier
+    - [`Public-Synthetic Remote Memory Disclosure Amendment`](agent-memory-public-synthetic-remote-disclosure-amendment.md)：仅为MEM-E0开放exact public synthetic run-local grant；普通remote/private memory仍为0注入
     - [`FAL-VP0 — Frozen Verified Procedure Utilization`](frontier-adapter-lab-fal-vp0-verified-procedure-utilization.md)：逐项support provenance、等信息Skill carrier、9个applicable + 3个negative paired tasks、12个canary variants、actor/execution freeze与分段stop gate
     - `agent-memory-and-context-maintenance.md`：本地exhaustive research/threat-model参考；不作为当前排期或完成权威
 

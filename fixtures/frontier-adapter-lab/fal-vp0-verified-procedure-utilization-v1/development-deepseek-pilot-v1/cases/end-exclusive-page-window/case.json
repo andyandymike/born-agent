@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "caseId": "end-exclusive-page-window",
+  "family": "half-open-window",
+  "publicRoot": "public",
+  "targetRelativePath": "src/page-window.mjs",
+  "verifier": { "cwd": ".", "argv": ["node", "verify.mjs"] },
+  "task": "Repair the public synthetic package so a zero-based page index produces a bounded end-exclusive window over the item count: full pages have the requested size, the tail truncates at the count, and a page starting at the count is empty. Locate the relevant implementation and repository verifier yourself. Change only the necessary implementation, do not weaken verification, and finish only after a fresh verifier pass.",
+  "exactFinalSource": "export function pageWindow(pageIndex, pageSize, totalItems) {\n  const start = Math.min(totalItems, pageIndex * pageSize);\n  const endExclusive = Math.min(totalItems, start + pageSize);\n  return { start, endExclusive };\n}\n"
+}

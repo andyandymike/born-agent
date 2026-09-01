@@ -98,6 +98,27 @@
         }
       }
     },
+    "deepseekProviderRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "models", "base_urls"],
+      "properties": {
+        "provider": { "const": "deepseek" },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelId" }
+        },
+        "base_urls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "const": "https://api.deepseek.com" }
+        }
+      }
+    },
     "localProfile": {
       "type": "object",
       "additionalProperties": false,
@@ -205,12 +226,13 @@
             "providers": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 2,
+              "maxItems": 3,
               "uniqueItems": true,
               "items": {
                 "oneOf": [
                   { "$ref": "#/$defs/openaiProviderRule" },
-                  { "$ref": "#/$defs/anthropicProviderRule" }
+                  { "$ref": "#/$defs/anthropicProviderRule" },
+                  { "$ref": "#/$defs/deepseekProviderRule" }
                 ]
               },
               "allOf": [
@@ -230,6 +252,16 @@
                     "type": "object",
                     "required": ["provider"],
                     "properties": { "provider": { "const": "anthropic" } }
+                  },
+                  "minContains": 0,
+                  "maxContains": 1
+                },
+                {
+                  "type": "array",
+                  "contains": {
+                    "type": "object",
+                    "required": ["provider"],
+                    "properties": { "provider": { "const": "deepseek" } }
                   },
                   "minContains": 0,
                   "maxContains": 1

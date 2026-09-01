@@ -133,6 +133,27 @@ function changedFileReport(changed: ChangedFileEvidence) {
 }
 
 function modelEvidenceReport(evidence: ModelEvidence) {
+  if (evidence.kind === "remote_live_qualified") {
+    return {
+      backend: evidence.backend,
+      base_url: evidence.baseUrl,
+      endpoint_scope: evidence.endpointScope,
+      kind: evidence.kind,
+      model: evidence.model,
+      provider: evidence.provider,
+      qualification_completed_request_count:
+        evidence.qualificationCompletedRequestCount,
+      qualification_evidence_kind: evidence.qualificationEvidenceKind,
+      qualification_evidence_ref: evidence.qualificationEvidenceRef,
+      qualification_evidence_sha256: evidence.qualificationEvidenceSha256,
+      qualification_request_count: evidence.qualificationRequestCount,
+      qualification_status: evidence.qualificationStatus,
+      qualification_usage_capability: evidence.qualificationUsageCapability,
+      remote_billable_requests: evidence.remoteBillableRequests,
+      remote_qualification_requests: evidence.remoteQualificationRequests,
+      request_count_scope: evidence.requestCountScope,
+    };
+  }
   return {
     backend: evidence.backend,
     endpoint_scope: evidence.endpointScope,
@@ -279,9 +300,21 @@ function renderTextReport(report: RunReport): string {
   // PHASE7: Patch/test evidence and backend evidence answer different questions.
   // A fake model can drive a real local test; neither fact is allowed to imply the other.
   lines.push("Model evidence:");
-  lines.push(
-    `  ${report.model_evidence.kind} backend=${report.model_evidence.backend} endpoint=${report.model_evidence.endpoint_scope} remote_billable_requests=${report.model_evidence.remote_billable_requests}`,
-  );
+  if (report.model_evidence.kind === "remote_live_qualified") {
+    lines.push(
+      `  ${report.model_evidence.kind} backend=${report.model_evidence.backend} provider=${report.model_evidence.provider} model=${report.model_evidence.model} base_url=${report.model_evidence.base_url} endpoint=${report.model_evidence.endpoint_scope}`,
+    );
+    lines.push(
+      `    qualification status=${report.model_evidence.qualification_status} request_count_scope=${report.model_evidence.request_count_scope} completed_requests=${report.model_evidence.qualification_completed_request_count}/${report.model_evidence.qualification_request_count} remote_qualification_requests=${report.model_evidence.remote_qualification_requests} remote_billable_requests=${report.model_evidence.remote_billable_requests} usage_capability=${report.model_evidence.qualification_usage_capability}`,
+    );
+    lines.push(
+      `    qualification_evidence kind=${report.model_evidence.qualification_evidence_kind} ref=${safeText(report.model_evidence.qualification_evidence_ref)} sha256=${report.model_evidence.qualification_evidence_sha256}`,
+    );
+  } else {
+    lines.push(
+      `  ${report.model_evidence.kind} backend=${report.model_evidence.backend} endpoint=${report.model_evidence.endpoint_scope} remote_billable_requests=${report.model_evidence.remote_billable_requests}`,
+    );
+  }
   // PHASE7: Narrative is explicitly quoted model text. Changed paths, line counts,
   // commands, durations, and exits above come only from the evidence ledger.
   lines.push("Model narrative (not factual evidence):");
