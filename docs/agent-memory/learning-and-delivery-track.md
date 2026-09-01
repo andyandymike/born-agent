@@ -30,7 +30,7 @@ BornAgent 是个人开源、学习型编码 Agent，不是企业 memory platform
 - `311c3ccc1a9374a961d116881a774ca4c41cc7ff` 的GitHub `quality`与`windows-phase20` jobs、两平台pack smoke和Pages均已通过；它只证明当时的ML1–ML3切片，后续ML4/ML5由下一个exact commit单独闭环。
 - `e329a4b4aad968870505e36ba0bfc1b4d7e00511` 的专用`memory-v1-linux`与`memory-v1-windows` jobs均通过focused contract和同一个11步packed demo；Pages也通过。它证明Memory v1 core release合同，不证明remote/live model quality。
 
-这意味着ML1–ML5的真实本地长期记忆纵向路径和唯一发布演示已成立，Memory v1 core现在是`preview_usable`。整仓`quality/windows-phase20`继续报告全项目健康，但不让无关Phase9/16/20时序替代Memory v1验收。
+这意味着ML1–ML5的真实本地长期记忆机械纵向路径和唯一发布演示已成立，Memory v1 core现在是`preview_usable`。这里的“成立”只表示写入、持久化、跨进程检索、ModelRequest注入、lifecycle与pack可运行；固定fake response没有证明模型消费记忆，也没有证明回答、工具行为或任务成功率改善。整仓`quality/windows-phase20`继续报告全项目健康，但不让无关Phase9/16/20时序替代Memory v1验收。
 
 ## 3. 学习型交付规则
 
@@ -153,7 +153,7 @@ Memory v1 建立可测 baseline 后，先锋方向按“一项技术、一张 ex
 2. progressive full/detailed/brief/placeholder context；
 3. deterministic consolidation 对比 model-assisted consolidation；
 4. [`FAL-EM0/EM-R1`](../../spec/frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)：v1支持semantic ranking/cost与safety isolation，但abstention calibration不足；EM-R1已完成retained reimplementation、16/24 FTS-empty live preflight与9,538点完整sweep。Anchor 12/12一致，安全/delta-risk可达0，但semantic最高8/16且历史回放仅26/36，因此当前组合在旧calibration被refute。审计更正为evaluation文件曾被manifest verifier读取、semantic family-disjoint不成立；该holdout只能作known regression，不能单独归因data、selector、RRF或model；
-5. [`FAL Memory Shared Benchmark v1`](../../spec/frontier-adapter-lab-shared-memory-benchmark-v1.md)：把Local Embedding的retrieval层与Context Folding的projection层放进同一批24×10时间线，以2×2、分阶段指标和one-shot commit/reveal重新比较；public development/calibration已完成，embedding检索门通过、CF无共享收益、reader门失败，evaluation未运行；
+5. [`FAL Memory Shared Benchmark v1`](../../spec/frontier-adapter-lab-shared-memory-benchmark-v1.md)：把Local Embedding的retrieval层与Context Folding的projection层放进同一批24×10时间线，以2×2、分阶段指标和one-shot commit/reveal重新比较；public development/calibration已完成，embedding检索门通过，CF只在12条public synthetic timelines上观察到`selected=0/fixed-packet reader effect=0`，reader门失败，evaluation未运行；这些都是组件/packet-reader证据，不是Agent任务效果；
 6. verified trajectory 到 procedure candidate；
 7. memory-guided planning、reflection 或 self-improvement loop。
 

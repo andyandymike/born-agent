@@ -74,7 +74,7 @@ read path
     -> historical_only or untrusted_content provider context
 ```
 
-ML1 只完成 write path 与 CLI inspection；ML2 完成检索；ML3 才允许 Agent 使用。内部组件或 benchmark 不能替代这个顺序中的用户可观察行为。
+ML1 只完成 write path 与 CLI inspection；ML2 完成检索；ML3 才让真实Agent ModelRequest接收bounded historical context。ML3机械链证明“记忆进入请求”，不证明模型读懂、遵循或因记忆改善回答、工具行为和任务成功率；内部组件或benchmark都不能替代后者的paired effect test。
 
 ## 2. 设计目标与明确不做
 
@@ -519,13 +519,13 @@ ML1不实现operation ledger、search、automatic recall、`memory_lookup`、exp
 
 预算：8–16 focused hours。
 
-### ML3 — Safe agent use
+### ML3 — Safe context delivery to Agent requests
 
-目标：Agent获得最多3条Host-rendered bounded historical excerpts；recall始终是历史证据。
+目标：Agent ModelRequest获得最多3条Host-rendered bounded historical excerpts；recall始终是历史证据。
 
 交付RecallSelection、ContextPlan items、pre-use revalidation、local-backend-only automatic opt-in和poisoning/effect fixtures；不增加模型tool。
 
-退出条件：off golden等价；request prepare前source stale则整条剔除；最多3条且不超1,024 tokens/8%；memory不能改变approval/tool authority；current protected context不被挤出；跨进程demo中Session B真实使用相关episode。
+退出条件：off golden等价；request prepare前source stale则整条剔除；最多3条且不超1,024 tokens/8%；memory不能改变approval/tool authority；current protected context不被挤出；跨进程demo中Session B的真实ModelRequest收到相关episode。模型消费与任务效果不属于ML3退出条件。
 
 预算：8–16 focused hours。
 
@@ -695,6 +695,8 @@ Case数量本身不是证据充分性。每个case必须标明且由runner机械
 
 首张experiment card[`FAL-CF0 — FAL0 Baseline and Context Folding Lite`](frontier-adapter-lab-fal0-context-folding-lite.md)留下了immutable v1 receipt：lossless/security mechanics通过，但没有trace-backed workload；字面Spec要求4个`representative + verified_route`，case pack实际只有3个，而validator错误地只统计7个all-class verified routes。因此v1只能支持fixture mechanics，不能支持“代表性净收益不足”的产品结论。CF2已在working tree按`reimplementation_from_v1_contract`重写tiny candidate：20/20 mechanics通过、7例走真实verifier/projector route、5例为security case，源码保留disabled且production import/pack为0；但合格naturalistic trace与model-quality task均为0，所以`productFit=inconclusive`、promotion blocked。第二张experiment card[`FAL-EM0 — Local Embedding + FTS Rank Fusion`](frontier-adapter-lab-fal-em0-local-embedding-hybrid.md)的v1 receipt证明旧pinned multilingual E5在3-row cases上提高semantic ranking、成本可控且actual forbidden target leak为0，但calibration不足。EM-R1现已保留重建源码、pinned lock/model manifest、双128-row corpus与完整9,538点curve：12个self-frozen anchors一致，16个effective vector negatives和8个baseline collision可在delta gate下不退化，但任何threshold的semantic top-5最多8/16，未达到13/16。Rehydrated artifact与旧manifest不一致、历史输出只匹配26/36，所以不能把差异单独归因data、selector、RRF或model；旧evaluation未解析/评分但文件被manifest verifier读取，且semantic family-disjoint被审计refute，现只作known regression。CF2与EM-R1源码均按v2规则保留disabled，product integration从未发生。共享benchmark作为第三张横向card已完成development/calibration四arm执行；结论分别为embedding `retrieval_calibration_passed_only`、CF `not_selected_no_shared_benefit`、reader/evaluation `blocked`。
 
+2026-09-01 effect-scope correction：上段shared benchmark历史标签中的`not_selected_no_shared_benefit`只允许解释为“Context Folding在12条public synthetic timelines上`selector_selected_0_of_12/fixed_packet_reader_effect_zero`”。该benchmark没有运行product writer/restart/automatic recall/AgentLoop/task verifier，不能给出Agent+Memory任务效果或product-fit结论；append-only机器纠偏见[`agent-memory-effect-scope-correction-v1.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/agent-memory-effect-scope-correction-v1.json)。
+
 ### 10.6 Research anchors
 
 每个实验开始时必须重新核验primary source、reference implementation、license与版本。当前方向的起始锚点按机制分组如下：
@@ -797,6 +799,20 @@ Adapter从`mechanism_verified`到`promotion_eligible`必须先有一份独立pro
 
 Tests只证明它们覆盖的行为。没有 live provider 请求也可以完成 local deterministic contract，但必须明确标记“未运行 remote/live model”；不能写成 provider quality proof。
 
+### 11.3 Effect claim evidence ladder（2026-09-01 correction）
+
+| Evidence class | 最多允许结论 | 禁止外推 |
+|---|---|---|
+| `component_retrieval` | frozen corpus上的Recall/MRR、过滤、fallback与成本 | Agent回答、工具行为或任务成功率 |
+| `component_context_folding` | frozen receipt上的lossless、selection、token与fallback | 真实workload收益或长期记忆效果 |
+| `retrieval_to_fixed_packet_reader` | 给定preloaded evidence packet后的reader grounded success | product writer/recall/AgentLoop或product fit |
+| `product_path_structural` | write、持久化、fresh process、recall与ModelRequest注入已接通 | 模型实际消费或任务效果 |
+| `agent_memory_task_effect_e2e` | 在冻结任务和指定模型上的paired task/verifier差异 | 未测workload、普通chat自动形成或所有模型 |
+
+只有`agent_memory_task_effect_e2e`允许写“记忆改善Agent”。它必须同时满足：同模型、任务、预算、工具和权限；Session A通过product memory write/admission；完全退出后由fresh Session B走production automatic recall与context injection；真实BornAgent AgentLoop和工具执行；独立deterministic task verifier；`memory off`与`memory on`配对比较。Preloaded store、手工packet、oracle injection、standalone reader或固定fake response只能作为诊断，不能补足任何一项。
+
+ML1–ML5当前证明`product_path_structural`：写入、持久化、bounded retrieval/injection、lifecycle、isolation、pack与跨平台可运行。它们使用固定fake response来检查ModelRequest，因此`agent_memory_task_effect_e2e=not_tested`。自动episode当前只保存task input和完成元数据，不等于保存或复用模型答案、tool output或解决方案。
+
 ## 12. 唯一发布演示
 
 ```text
@@ -894,7 +910,7 @@ ML1 feature code与Windows本地闭环已完成；下列证据区分本地实现
 - [x] 实现ML2 candidate之后的canonical scope/hash refetch与第二次exact source verification；
 - [x] 实现固定delimiter/canonical JSON的`historical_memory` ContextItem，authority固定为`historical_only`、low priority且不进入ProtectedFactLedger；
 - [x] Context core在plan前再次拒绝record/token超限、protected/pairing或authority elevation；
-- [x] 新进程Session B通过真实product path使用Session A episode；off和provider-network均为0条注入，remote路径不创建FTS projection；
+- [x] 新进程Session B通过真实product path让ModelRequest收到Session A episode；off和provider-network均为0条注入，remote路径不创建FTS projection；该项只证明结构链，不证明模型消费或任务效果；
 - [x] installed tarball直接加载ML3模块并通过bounded historical-only preparation probe；
 - [x] 当前工作树lint/typecheck、1,315项non-PTY tests、适用PTY与clean build通过；
 - [x] `311c3cc`的GitHub Linux/Windows repository gate与packed artifact均通过；该切片当时不单独标`preview_usable`，现已由ML5闭环覆盖。

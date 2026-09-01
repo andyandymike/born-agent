@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "correctionId": "fal-agent-memory-effect-scope-correction-v1",
+  "issuedAt": "2026-09-01T00:00:00.000Z",
+  "appliesTo": [
+    {
+      "artifactId": "fal-cf0-cf1-v1-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal0-context-folding-v1/experiment-receipt.json",
+      "rawSha256": "66134fbc27a13b1453ef68484e92eb65344003bac2dc69f7b57b70f4df17fd76"
+    },
+    {
+      "artifactId": "fal-cf2-v2-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-cf2-context-folding-v2/experiment-receipt.json",
+      "rawSha256": "2552939349e00227e35af904b07633f81dec2a3901dc28f729a26bb66561466f"
+    },
+    {
+      "artifactId": "fal-em0-em1-v1-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-em0-local-embedding-v1/experiment-receipt.json",
+      "rawSha256": "175c92f2d91ba4bf803da5c0dae30df7ef21165aab5578056c2515461e517d60"
+    },
+    {
+      "artifactId": "fal-em-r1-v2-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-em-r1-selective-hybrid-v2/experiment-receipt.json",
+      "rawSha256": "3facb256726ba1fcefffc1a7766c9e2512c31b9ff372223bce8097bade8caa66"
+    },
+    {
+      "artifactId": "fal-memory-shared-v1-local-reader-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json",
+      "rawSha256": "6e913755c8d8a81832bea954946744eb281cec6e7baf8bf475005e22f7218a9d"
+    },
+    {
+      "artifactId": "fal-memory-shared-v1-deepseek-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-memory-shared-v1/deepseek-v4-flash-development-calibration-receipt.json",
+      "rawSha256": "07fcb5a5565f46253e841ad8b179196a5dbd1ae0fd38a6b6b474dda97daca035"
+    },
+    {
+      "artifactId": "fal-memory-shared-v2-deepseek-receipt",
+      "path": "fixtures/frontier-adapter-lab/fal-memory-shared-v2/deepseek-v4-flash-answer-policy-v2-development-calibration-receipt.json",
+      "rawSha256": "2333f12b30b8be293eeb3f6a40eacfe5aa9c08f57995b296f0a286f0a679ba7c"
+    }
+  ],
+  "historicalBytesModified": false,
+  "auditedExperiments": [
+    {
+      "experimentGroup": "context_folding_v1_cf2_and_shared_public",
+      "executionClass": "component_mechanics",
+      "observedBoundary": "verified_receipt_projection_fixtures",
+      "coverage": {
+        "productMemoryWriteAdmission": false,
+        "crossProcessRestart": false,
+        "automaticRecallInjection": false,
+        "bornAgentAgentLoop": false,
+        "agentToolExecution": false,
+        "independentTaskOutcomeVerifier": false,
+        "standaloneFixedPacketReader": false
+      },
+      "retainedClaims": [
+        "lossless_expansion_on_frozen_fixtures",
+        "fallback_equivalence_on_frozen_fixtures",
+        "projection_security_checks_on_frozen_fixtures",
+        "shared_public_selector_selected_0_of_12"
+      ],
+      "withdrawnClaims": [
+        "context_folding_has_no_real_agent_benefit",
+        "context_folding_has_no_real_workload_token_benefit",
+        "context_folding_is_long_term_memory_effect_evidence"
+      ],
+      "effectStatus": "not_tested"
+    },
+    {
+      "experimentGroup": "local_embedding_em0_emr1_and_shared_public",
+      "executionClass": "component_mechanics",
+      "observedBoundary": "preloaded_canonical_retrieval",
+      "coverage": {
+        "productMemoryWriteAdmission": false,
+        "crossProcessRestart": false,
+        "automaticRecallInjection": false,
+        "bornAgentAgentLoop": false,
+        "agentToolExecution": false,
+        "independentTaskOutcomeVerifier": false,
+        "standaloneFixedPacketReader": false
+      },
+      "retainedClaims": [
+        "retrieval_metrics_on_frozen_fixture_corpora",
+        "scope_source_lifecycle_filtering_on_frozen_fixtures",
+        "cost_and_fallback_mechanics",
+        "v2_retrieval_refuted_under_frozen_public_threshold"
+      ],
+      "withdrawnClaims": [
+        "local_embedding_improves_bornagent_agent_task_success",
+        "local_embedding_refutes_long_term_memory_direction",
+        "embedding_model_or_algorithm_root_cause_established"
+      ],
+      "effectStatus": "not_tested"
+    },
+    {
+      "experimentGroup": "shared_fixed_packet_reader_v1_v2",
+      "executionClass": "fixed_packet_reader_diagnostic",
+      "observedBoundary": "preloaded_retrieval_to_standalone_reader",
+      "coverage": {
+        "productMemoryWriteAdmission": false,
+        "crossProcessRestart": false,
+        "automaticRecallInjection": false,
+        "bornAgentAgentLoop": false,
+        "agentToolExecution": false,
+        "independentTaskOutcomeVerifier": false,
+        "standaloneFixedPacketReader": true
+      },
+      "retainedClaims": [
+        "deepseek_model_calls_on_public_synthetic_packets",
+        "v1_fixed_packet_reader_effect_on_public_splits",
+        "v2_reader_diagnostic_on_public_splits",
+        "production_memory_sent_false"
+      ],
+      "withdrawnClaims": [
+        "local_embedding_end_to_end_benefit_observed",
+        "bornagent_agent_memory_effect_observed",
+        "deepseek_reader_result_is_agent_task_effect"
+      ],
+      "effectStatus": "not_tested"
+    }
+  ],
+  "historicalClaimCorrections": [
+    {
+      "artifactId": "fal-memory-shared-v1-deepseek-receipt",
+      "fieldPath": "decision.localEmbeddingEndToEndBenefitObserved",
+      "historicalValue": true,
+      "action": "withdraw_and_relabel",
+      "replacementClaim": "retrieval_to_fixed_packet_reader_effect_observed",
+      "replacementScope": "public_synthetic_r0_retrieval_to_fixed_deepseek_reader",
+      "bornAgentAgentMemoryEffect": "not_tested"
+    },
+    {
+      "artifactId": "fal-memory-shared-v1-deepseek-receipt",
+      "fieldPath": "decision.contextFoldingBenefitObserved",
+      "historicalValue": false,
+      "action": "withdraw_and_relabel",
+      "replacementClaim": "shared_public_context_folding_selector_selected_0_of_12",
+      "replacementScope": "public_synthetic_receipt_projection_and_fixed_reader",
+      "bornAgentAgentMemoryEffect": "not_tested"
+    },
+    {
+      "artifactId": "fal-memory-shared-v2-deepseek-receipt",
+      "fieldPath": "decision.contextFoldingBenefitObserved",
+      "historicalValue": false,
+      "action": "withdraw_and_relabel",
+      "replacementClaim": "shared_public_context_folding_selector_selected_0_of_12",
+      "replacementScope": "public_synthetic_receipt_projection_and_fixed_reader",
+      "bornAgentAgentMemoryEffect": "not_tested"
+    },
+    {
+      "artifactId": "fal-memory-shared-v1-deepseek-receipt",
+      "fieldPath": "comparisonToFixedQwenReader.readerCapacityBottleneckSupported",
+      "historicalValue": true,
+      "action": "withdraw_and_relabel",
+      "replacementClaim": "fixed_packet_qwen2b_reader_capacity_bottleneck_supported",
+      "replacementScope": "public_synthetic_fixed_packet_reader_comparison",
+      "bornAgentAgentMemoryEffect": "not_tested"
+    },
+    {
+      "artifactId": "fal-memory-shared-v1-local-reader-receipt",
+      "fieldPath": "product.productFit",
+      "historicalValue": "not_demonstrated",
+      "action": "withdraw_and_relabel",
+      "replacementClaim": "product_fit_not_assessed_by_shared_benchmark",
+      "replacementScope": "preloaded_retrieval_and_fixed_packet_reader_only",
+      "bornAgentAgentMemoryEffect": "not_tested"
+    }
+  ],
+  "existingProductPathEvidence": {
+    "status": "structural_pipeline_tested_with_fake_model",
+    "covered": [
+      "session_a_product_ingest",
+      "full_process_restart",
+      "session_b_automatic_recall_context_injection"
+    ],
+    "notCovered": [
+      "live_model_behavior_delta",
+      "agent_tool_outcome_delta",
+      "paired_memory_off_on_task_success"
+    ],
+    "effectStatus": "not_tested"
+  },
+  "effectClaimGate": [
+    "same_model_task_budget_and_permissions",
+    "session_a_uses_product_memory_write_and_admission",
+    "full_process_restart_before_session_b",
+    "session_b_uses_product_automatic_recall_and_context_injection",
+    "bornagent_agent_loop_and_tools_execute",
+    "task_outcome_scored_by_independent_verifier",
+    "paired_memory_off_and_memory_on_comparison"
+  ],
+  "finalInterpretation": {
+    "bornAgentAgentMemoryTaskEffect": "not_tested",
+    "contextFoldingRealWorkloadEffect": "not_tested",
+    "localEmbeddingAgentTaskEffect": "not_tested",
+    "componentEvidenceRetained": true,
+    "fixedReaderEvidenceClass": "diagnostic_only",
+    "effectClaimAllowed": false
+  },
+  "correctionSha256": "ef0cf1055caff170c01aabd40b9f1f0f7f30ff39c3fa4d4a532ce1d77fc80f97"
+}

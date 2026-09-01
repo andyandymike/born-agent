@@ -34,6 +34,10 @@ CF2的20-case机械分数不能与EM-R1的retrieval Recall直接比较：前者�
 
 CF2在6条development与6条calibration完整时间线上均能lossless expansion，但12/12都因`not_beneficial`回退到baseline，selected timelines为0，shared token reduction为0，C=A、D=B，fixed-reader folding effect也为0。它保留了mechanical fidelity与0 extra calls结论，但共享数据没有观察到可用压缩收益；旧duplicate stress cases不能覆盖这一结果。完整hash与成本见[`development-calibration-receipt.json`](../../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json)。Candidate继续`retained_disabled`，不进入production。
 
+### Agent-effect scope correction（2026-09-01）
+
+上述“没有观察到收益”只适用于12条public synthetic receipt timelines及其fixed-packet reader。CF2没有运行naturalistic parent trace、真实parent AgentLoop或task verifier，且`model_completion=not_run`；Context Folding本身也是request-local child receipt projection，不是长期记忆写入/持久化/检索。因此不能写成“真实Agent无收益”“真实workload无token收益”或“长期记忆方向失败”。Append-only机器纠偏见[`agent-memory-effect-scope-correction-v1.json`](../../fixtures/frontier-adapter-lab/fal-memory-shared-v2/agent-memory-effect-scope-correction-v1.json)，历史receipt原字节不变。
+
 ## 0. Evidence correction（不修改历史回执）
 
 v1 manifest、cases、receipt与SHA保持原字节。复查发现当前24例全部由profile生成，没有trace-backed parent workload；`rawTrajectoryBytes`也是fixture声明值，不是实际trajectory测量。更具体地，Spec要求至少4个`representative + verified_receipt`，case pack实际只有3个；validator只检查all-class `verified_receipt >= 4`，被另外4个security routes补足。因此回执的`hardGateFailures=0`只符合当时较弱validator，不能证明字面corpus合同或真实workload代表性。

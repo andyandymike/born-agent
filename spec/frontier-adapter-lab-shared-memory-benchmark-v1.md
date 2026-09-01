@@ -1,10 +1,10 @@
 # FAL Memory Shared Benchmark v1
 
-> Status：`deepseek_calibration_protocol_failed_evaluation_blocked`；development / calibration已运行，evaluation仍为`committed_unrevealed`且未运行。Local Embedding通过retrieval-stage calibration，并在DeepSeek reader上观察到development `+0.050000`、calibration `+0.066666`的端到端effect；但DeepSeek calibration触发冻结的reader security-regression门，因此仍不能写product fit。Context Folding在12/12 public timelines均未达到收益选择条件。
+> Status：`deepseek_calibration_protocol_failed_evaluation_blocked`；development / calibration已运行，evaluation仍为`committed_unrevealed`且未运行。Local Embedding通过retrieval-stage calibration，并在独立DeepSeek fixed-packet reader上观察到development `+0.050000`、calibration `+0.066666`的组件effect；但这不是BornAgent Agent+Memory端到端效果，也不评估product fit。Context Folding在12/12 public synthetic timelines均未达到收益选择条件。
 >
 > Product status：unchanged。Memory v1仍为`preview_usable`且production默认`off`；Local Embedding与Context Folding都保留在`labs/**`、默认disabled，没有接入production。
 >
-> Evidence boundary：当前`sourceCommit=null`、`authoringBlindness=not_proven_method_aware`、`promotionEvidenceAllowed=false`。本地Qwen和远程DeepSeek结果都是working-tree engineering evidence；DeepSeek使用可变hosted alias、只发送public synthetic split，49次请求总估算费用`$0.062841`。calibration后未改分；只把未来latency计时终点从response headers修正为response body完成，不改变已有quality/usage。它不能作为release/promotion evidence。
+> Evidence boundary：当前`sourceCommit=null`、`authoringBlindness=not_proven_method_aware`、`promotionEvidenceAllowed=false`。本地Qwen和远程DeepSeek结果都是working-tree engineering evidence；DeepSeek使用可变hosted alias、只发送public synthetic split，49次请求总估算费用`$0.062841`。calibration后未改分；只把未来latency计时终点从response headers修正为response body完成，不改变已有quality/usage。历史receipt原字节保留；[`Agent-memory effect-scope correction`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/agent-memory-effect-scope-correction-v1.json)撤回其中过宽的“end-to-end/benefit”解释。它不能作为release/promotion evidence。
 
 ## 1. 决定
 
@@ -45,6 +45,18 @@ Local Embedding与Context Folding不是同一层算法：
 - 多数security case在candidate调用前已被upstream verifier过滤；这是正确架构边界，但不能把它写成fold算法单独提供的安全性。
 
 因此两套旧fixture继续做各自的mechanical regression；新的共享套件位于它们之上，不删除、不覆盖旧证据。
+
+### 2.3 Agent-memory effect-scope correction（2026-09-01）
+
+本benchmark实际执行的是`preloaded canonical retrieval -> fixed evidence packet -> standalone reader`。它没有让历史交互经过product writer/admission，没有完成R1 fresh-process restart，也没有调用production automatic recall、BornAgent AgentLoop、工具执行或独立task verifier。因此：
+
+- Local Embedding的Recall/MRR、过滤、成本与fixed-reader分差继续作为组件证据；
+- Context Folding的lossless/fallback、12条public synthetic timeline中`selected=0`与packet-reader effect为0继续作为组件证据；
+- 历史字段`localEmbeddingEndToEndBenefitObserved=true`撤回并改名为`retrieval_to_fixed_packet_reader_effect_observed`；
+- 历史字段`contextFoldingBenefitObserved=false`缩窄为`shared_public_context_folding_selector_selected_0_of_12`；
+- BornAgent Agent+Memory任务效果、真实workload收益与product fit均为`not_tested/not_assessed_by_this_benchmark`。
+
+机器可验的append-only纠偏绑定所有相关历史receipt raw SHA，且明确`historicalBytesModified=false`；旧收据不回写、不重算。
 
 ## 3. 研究依据
 
@@ -139,14 +151,14 @@ ID必须来自独立registry，禁止通过`development-`、`calibration-`、`ev
 
 按source session顺序写入、supersede、retract、关闭进程、重开并rebuild，再运行相同probe。R1必须证明active head、source状态与scope在增长和重启后保持；R0通过不能替代R1。
 
-### R2：fixed reader end-to-end
+### R2：fixed-packet reader diagnostic
 
 对四个arm使用同一固定reader/model revision、system prompt、context/output budget与解码参数。另跑两个diagnostic：
 
 - `oracle evidence reader`：只给gold evidence，估计reader上限；
 - `no-memory reader`：不给历史证据，估计问题本身或模型先验泄漏。
 
-R2是local-model/product-fit证据，不进入production merge hard gate；未运行时必须写`not_run`，不能用retrieval Recall代替回答质量。
+R2只评估“给定检索packet后，固定reader能否回答”的组件协同，不是BornAgent AgentLoop或product-fit证据，也不进入production merge hard gate；未运行时必须写`not_run`，不能用retrieval Recall代替回答质量。
 
 ## 6. 公平的2×2执行
 
@@ -158,7 +170,7 @@ R2是local-model/product-fit证据，不进入production merge hard gate；未�
 - shared calibration只能选择预注册配置字段；查看shared outputs后修改candidate source，必须换candidate revision与新的evaluation pack。
 - 旧EM-R1的0.78或0.909331观察不能直接迁移为新corpus operating point。
 
-四个arm的主要end-to-end paired contrasts预注册为：
+四个arm的主要fixed-packet reader paired contrasts预注册为：
 
 - embedding effect：`((B - A) + (D - C)) / 2`；
 - folding effect：`((C - A) + (D - B)) / 2`；
@@ -196,7 +208,7 @@ R2是local-model/product-fit证据，不进入production merge hard gate；未�
 - same-retrieval reader grounded-success delta；
 - eligible receipt-rich probes的median、macro与distribution，不能由duplicate stress aggregate独占结论。
 
-### 7.4 End-to-end与成本
+### 7.4 Fixed-packet reader质量与成本
 
 `grounded success = answer atoms正确 + required groups完整 + forbidden evidence为0 + expected action正确`。
 
@@ -205,7 +217,7 @@ R2是local-model/product-fit证据，不进入production merge hard gate；未�
 - per-ability与per-timeline macro grounded success；
 - normalized exact match / structured atom F1；
 - oracle、retrieved、no-memory三条reader结果；
-- cold load、projection build、warm query、reader与end-to-end p50/p95；
+- cold load、projection build、warm query、reader与retrieval-to-reader p50/p95；
 - canonical/derived storage bytes、context tokens、model/tool/network calls；
 - 128/384/1,024 records与2/8/16 receipts下的质量–延迟曲线。
 
@@ -242,12 +254,12 @@ R2是local-model/product-fit证据，不进入production merge hard gate；未�
 - fixed reader四个arm都必须至少产生1个must-answer grounded success，invalid arm、reader security regression与fold造成的grounded regression都必须为0；全量拒答即使在负例上得分较高，也不能通过reader gate；
 - 绝对FAR/FRR、forbidden hits、Recall与all-support全部报告；evaluation不得重调threshold、top-k、fusion、fold selection或reader prompt。
 
-### G4 — End-to-end utility and cost
+### G4 — Fixed-packet reader utility and cost
 
 - embedding用retrieval与grounded-success提升证明价值，不以cosine相似度证明价值；
 - folding用context reduction且reader不退化证明价值，不以压缩率单独证明价值；
 - 四arm在相同budget下报告paired quality–cost Pareto；
-- 没有固定reader结果时，`productFit=not_assessed`或`inconclusive`。
+- 无论fixed reader是否通过，本benchmark都只评估packet utility；product fit固定为`not_assessed_by_this_benchmark`。真实Agent+Memory效果必须通过父spec的paired product-path effect gate。
 
 ### G5 — External validity
 
@@ -332,7 +344,7 @@ fixtures/frontier-adapter-lab/fal-memory-shared-v1/
 | fixed Qwen reader invalid arms | 6 | 8 |
 | fixed Qwen reader gate | failed | failed |
 
-Local Embedding因此只获得`retrieval_calibration_passed`，不能写`product_fit`或端到端通过。Context Folding在共享数据上的结论是`not_selected_no_benefit_observed`，不能用旧duplicate stress fixture的压缩率覆盖。reader使用本地Ollama `qwen3.5:2b`固定digest、temperature 0、seed 42、`think=false`；development只用于把10题批处理修正为两批5题并冻结v3，calibration后不再调prompt。完整hash、成本与post-calibration计数纠偏见[`development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json)。
+Local Embedding因此只获得`retrieval_calibration_passed`，不能写`product_fit`或Agent端到端通过。Context Folding在这12条public synthetic timelines上的结论是`selector_selected_0_of_12`与`fixed_packet_reader_effect_zero`，不能外推真实Agent或真实workload无收益，也不能用旧duplicate stress fixture的压缩率覆盖。reader使用本地Ollama `qwen3.5:2b`固定digest、temperature 0、seed 42、`think=false`；development只用于把10题批处理修正为两批5题并冻结v3，calibration后不再调prompt。完整hash、成本与post-calibration计数纠偏见[`development-calibration-receipt.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v1/development-calibration-receipt.json)。
 
 ### 10.2 DeepSeek fixed-packet reader diagnostic（2026-08-30）
 
@@ -349,7 +361,7 @@ Local Embedding因此只获得`retrieval_calibration_passed`，不能写`product
 | frozen reader gate | passed | failed |
 | calls / estimated cost | 24 / $0.031553 | 24 / $0.030961 |
 
-Smoke另用1次请求、费用`$0.000327`；完整49次调用共260,256 input tokens、23,936 cached input tokens、16,185 output tokens，估算`$0.062841`。这支持“固定Qwen 2B reader是0-success的重要瓶颈”，但不能推出整个Qwen family失败，也不能自动晋级DeepSeek。
+Smoke另用1次请求、费用`$0.000327`；完整49次调用共260,256 input tokens、23,936 cached input tokens、16,185 output tokens，估算`$0.062841`。这只支持“在冻结public synthetic packet合同下，固定Qwen 2B reader是0-success的重要瓶颈”；不能推出整个Qwen family失败、不能自动晋级DeepSeek，也不能作为Agent任务效果。
 
 Calibration的`readerSecurityRegressions=2`来自同一个`semantic_near_miss` probe在projection与identical reused-fold两条paired comparison中重复计数。Embedding arm回答“No, the neighboring note does not name manual log disclosure approver”并引用near-miss record；冻结协议把任何must-abstain的`action=answer`视为security failure，所以门禁按原规则真实失败。对development/calibration全部absolute security failure的追加审计显示，它们都是“明确回答不能证明”或“报告已知值并明确另一字段缺失”，且unavailable citation为0。由于题面本身询问“是否能证明/是否真的回答”，这里同时暴露了all-or-nothing abstention label与自然语言任务的合同歧义。该审计不事后改分；下一revision必须把`unsupported_fact`、`supported_negative_answer`和`partial_known_plus_missing`拆开后再比较reader。
 

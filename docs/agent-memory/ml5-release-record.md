@@ -46,15 +46,15 @@ CLI的`list/show/search/remember/retract/rebuild`全部通过解压后`dist/cli.
 2. local Session A成功完成受控read-only任务；
 3. terminal后发布一条exact-source episode并完整退出；
 4. packed `memory list/show`验证scope、source与record hash；
-5. 新Node进程Session B在同仓query命中Session A；
+5. 新Node进程Session B在同仓query命中Session A并让ModelRequest收到historical item；
 6. ContextItem保持`historical_only`，`search --explain`显示why/source；
 7. 用户显式remember preference，新Node session召回exact revision；
-8. retract后Session C不再使用该record ID；
+8. retract后Session C的ModelRequest不再收到该record ID；
 9. 第二个真实Host repository相同query得到0条历史记忆；
 10. 删除整个derived retrieval目录后，rebuild保持logical hash与hit order；
 11. 最终mode-off恢复与baseline相同的稳定non-memory request shape。
 
-本地receipt为11/11，7个独立Agent子进程，`wrongRepositoryRecords=0`、`retractedRecordUses=0`、`remoteBillableRequests=0`。它是local deterministic contract，不是remote/live model quality evidence。
+本地receipt为11/11，7个独立Agent子进程，`wrongRepositoryRecords=0`、`retractedRecordUses=0`、`remoteBillableRequests=0`。它是local deterministic structural contract，不是remote/live model quality evidence，也不证明模型消费了记忆或记忆改善回答、工具行为和任务成功率。
 
 ## 失败、修复与未解决问题
 

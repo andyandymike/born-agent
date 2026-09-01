@@ -1,6 +1,6 @@
 # FAL-CF0 — FAL0 Baseline and Context Folding Lite Experiment Spec
 
-> Status: historical CF0/CF1 v1 receipt closed；CF2 mechanical reimplementation completed in the working tree, trace-backed product evaluation pending；shared 2×2 benchmark pack frozen but not executed（2026-08-29）
+> Status: historical CF0/CF1 v1 receipt closed；CF2 mechanical reimplementation completed；shared public development/calibration已运行且12/12 synthetic timelines未选择candidate；trace-backed product evaluation与Agent任务效果仍未运行（updated 2026-09-01）
 > Parent contract: [`Lightweight Memory Core and Frontier Adapters Spec`](agent-memory-lightweight-core-and-adapters.md)
 > Existing product baseline: Phase 20 controlled delegation is Implemented / M11 Passed
 > Historical timebox: 8–16 focused hours；CF2 has a new 8–16 focused-hour budget
@@ -28,6 +28,10 @@ CF0/CF1的v1 manifest、cases、receipt、receipt SHA与`outcome: rejected`保�
 但是v1不能支持“真实BornAgent workload代表性净收益不足”的因果结论：24例全部由profile生成，trace-backed case为0；`rawTrajectoryBytes`是声明值并由runner用marker padding，不是实际parent trajectory测量；字面Spec要求至少4个`representative + verified_receipt`，case pack实际只有3个，validator却错误地只检查all-class `verified_receipt >= 4`并被4个security route补足。`hardGateFailures=0`因此只符合较弱validator，不符合字面corpus合同。
 
 按evidence-protocol v2重新解释为：`implementationFidelity=inconclusive`（candidate源码已删除，不能逐行复核）、`evidenceValidity=limited`、lossless/security fixture claims historically supported、`productFit=inconclusive`、`promotion=blocked`、`direction=revise`、`reproducibility=corpus_only`、`candidateLifecycle=removed_legacy_policy`。这不是对Context Folding论文、dictionary fold机制或未来实现的否定。
+
+### 0.2 Agent-effect scope correction（2026-09-01）
+
+Context Folding处理的是verified child receipt的request-local projection，不是长期记忆的写入、持久化或检索方案。CF2只运行mechanical fixture，`trace_token_benefit`和`model_completion`均为`not_run`；shared benchmark也只在12条public synthetic receipt timelines上观察到`selected=0`与fixed-packet reader effect为0。因此任何“真实Agent没有收益”“真实workload没有token收益”或“长期记忆方向被否定”的结论均撤回。允许结论只保留lossless、fallback、projection安全检查和本批synthetic selector observation。机器纠偏见[`agent-memory-effect-scope-correction-v1.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/agent-memory-effect-scope-correction-v1.json)，历史receipt原字节不变。
 
 ## 1. Live baseline：BornAgent已经做了一次receipt folding
 

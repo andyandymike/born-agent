@@ -1,6 +1,6 @@
 # ML3 Implementation Record
 
-> Slice: safe local Agent use of bounded historical excerpts
+> Slice: safe local delivery of bounded historical excerpts to Agent ModelRequests
 > Started: 2026-08-26 (Asia/Tokyo)
 > Local result: `local_product_verified`; product, full repository, and installed-pack evidence passed
 > Release closure: covered by ML5 `preview_usable` exact commit `e329a4b4aad968870505e36ba0bfc1b4d7e00511`
@@ -9,12 +9,18 @@
 
 An Agent run with explicit `--memory local` now performs automatic recall before
 every model request when the frozen provider source is local Ollama or an
-in-process test backend. A new process in the same repository can therefore use
-a source-available episode written by an earlier completed process.
+in-process test backend. A new process in the same repository can therefore
+receive a source-available episode written by an earlier completed process in
+its real ModelRequest.
 
 Default or explicit `off` remains storage-free. Provider-network requests get
 zero memory records and do not open the FTS projection. ML3 adds no model tool,
 ambient preference, remote disclosure, or lifecycle command.
+
+This slice proves product-path wiring, bounded retrieval and context delivery.
+The effect fixture uses a fixed fake model response and does not prove that a
+model read or followed the memory, that an answer or tool action changed, or
+that task success, quality, cost or latency improved.
 
 ## Implemented call chain
 

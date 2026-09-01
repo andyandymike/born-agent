@@ -22,6 +22,8 @@ DeepSeek calibration中的唯一争议case正是第一种：模型回答邻近�
 
 协议冻结在[`protocol.json`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/protocol.json)，实现位于[`answer-policy-v2.ts`](../labs/frontier-adapter-lab/fal-memory-shared-v1/src/answer-policy-v2.ts)。
 
+另有一项独立的[`Agent-memory effect-scope correction`](../fixtures/frontier-adapter-lab/fal-memory-shared-v2/agent-memory-effect-scope-correction-v1.json)：v1/v2 reader都只执行preloaded retrieval到fixed packet reader，没有运行product writer/restart/automatic recall/AgentLoop/task verifier。故本页所有reader结果均为`diagnostic_only`，不能解释为BornAgent Agent+Memory任务效果；历史receipt原字节不变。
+
 ## 3. 每条时间线的10题合同
 
 | Policy | 数量 | 题面 | 正确行为 |
