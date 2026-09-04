@@ -172,6 +172,32 @@ async function collect(iterable: AsyncIterable<ModelEvent>): Promise<readonly Mo
 }
 
 describe("MEM-E0 actor qualification provider meter", () => {
+  it("admits only the exact effect-lane excerpt and keeps qualification zero-memory by default", async () => {
+    const content = "public synthetic memory for an offline contract test";
+    const allowed = { disclosureClass: "public_synthetic" as const, excerptContentSha256: sha256Text(content),
+      recordId: `memory_${"c".repeat(64)}`, recordSha256: "d".repeat(64), sourceReferenceSha256: "e".repeat(64) };
+    const item = { kind: "historical_memory", authority: "historical_only", content,
+      metadata: { record_id: allowed.recordId, record_sha256: allowed.recordSha256, source_reference_sha256: allowed.sourceReferenceSha256 } };
+    for (const items of [[item], [{ ...item, content: `${content} changed` }],
+      [{ ...item, authority: "system" }], [{ ...item, metadata: { ...item.metadata, record_id: `memory_${"f".repeat(64)}` } }], [], [item, item]]) {
+      const fixture = backendFixture(successfulStream());
+      const providerMeter = new MemE0ActorQualificationProviderMeter({ pricingSha256: PRICING_SHA256,
+        frozenProductionImplementationIdentitySha256: PRODUCTION_IMPLEMENTATION_SHA256, publicSyntheticMemory: allowed });
+      const stream = collect(providerMeter.wrap(fixture.backend).runTurn(modelRequest(1, items), new AbortController().signal));
+      if (items.length === 1 && items[0] === item) {
+        await stream;
+        expect(providerMeter.finalize().historicalMemoryItemCount).toBe(1);
+        expect(fixture.calls.value).toBe(1);
+      } else {
+        await expect(stream).rejects.toMatchObject({ failure: { code: "historical_memory_binding_mismatch" } });
+        expect(fixture.calls.value).toBe(0);
+      }
+    }
+    const fixture = backendFixture(successfulStream());
+    await expect(collect(meter().wrap(fixture.backend).runTurn(modelRequest(1, [item]), new AbortController().signal)))
+      .rejects.toMatchObject({ failure: { code: "historical_memory_present" } });
+    expect(fixture.calls.value).toBe(0);
+  });
   it("preserves the complete backend surface and finalizes ordered hash-only usage evidence", async () => {
     const fixture = backendFixture(successfulStream());
     const providerMeter = meter();

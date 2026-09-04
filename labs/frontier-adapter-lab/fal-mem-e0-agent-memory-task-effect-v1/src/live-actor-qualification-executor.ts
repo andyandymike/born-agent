@@ -23,6 +23,8 @@ import {
   executeAgentThroughApplicationService,
 } from "../../../../src/control-plane/adapters/agent-cli-adapter.js";
 import type { BackendCreationRequest } from "../../../../src/model/backend-factory.js";
+import type { ModelTurnRequest } from "../../../../src/model/model-backend.js";
+import type { PublicSyntheticRemoteMemoryGrantRequestV1, PublicSyntheticRemoteMemoryGrantV1 } from "../../../../src/memory/recall/public-synthetic-remote-memory-grant.js";
 import { ModelQualificationError } from "../../../../src/model/model-qualification-gate.js";
 import {
   modelQualificationRecordSchema,
@@ -64,6 +66,7 @@ import {
 } from "./production-memory-effect-actor.js";
 import { createMemE0LivePricingSnapshot } from "./live-preflight.js";
 import { memE0QualificationSessionSpanSha256 } from "./qualification-host-state.js";
+import type { MemE0LoadedCase } from "./fixture.js";
 
 const execFileAsync = promisify(execFile);
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -412,10 +415,12 @@ async function validateLocalQualificationRecord(input: Readonly<{
 
 async function validateInitialPublicWorkspace(input: Readonly<{
   readonly fixture: MemE0LoadedActorQualificationFixture;
+  readonly effectCase?: MemE0LoadedCase;
   readonly workspace: string;
 }>): Promise<string> {
+  const loadedCase = input.effectCase ?? input.fixture.case;
   const canonicalWorkspace = await realpath(input.workspace);
-  const entries = await Promise.all(input.fixture.case.publicFiles.map(
+  const entries = await Promise.all(loadedCase.publicFiles.map(
     async (file) => {
       const path = resolve(input.workspace, ...file.path.split("/"));
       if (!pathNested(input.workspace, path)) {
@@ -443,12 +448,12 @@ async function validateInitialPublicWorkspace(input: Readonly<{
   ));
   const manifestSha256 = sha256Canonical(entries);
   const initialTarget = entries.find((entry) =>
-    entry.path === input.fixture.config.fixture.case.targetRelativePath);
+    entry.path === loadedCase.definition.publicWorkspace.targetRelativePath);
   if (
     manifestSha256 !==
-      input.fixture.config.fixture.case.publicWorkspaceManifestSha256 ||
+      loadedCase.definition.publicWorkspace.manifestSha256 ||
     initialTarget?.rawSha256 !==
-      input.fixture.config.fixture.case.initialTargetRawSha256 ||
+      loadedCase.definition.publicWorkspace.initialTargetRawSha256 ||
     (await changedPaths(input.workspace)).length !== 0
   ) {
     throw new Error("qualification initial workspace did not match its freeze");
@@ -696,8 +701,20 @@ export function parseMemE0LiveActorQualificationOutput(
   return Object.freeze(actorOutputSchema.parse(value));
 }
 
-export async function runMemE0LiveActorQualification(
+export interface MemE0ProductionEffectOptions {
+  readonly loadedCase: MemE0LoadedCase;
+  readonly memoryMode: "off" | "local";
+  readonly pairInvariantSha256: string;
+  readonly disclosure: PublicSyntheticRemoteMemoryGrantV1["allowedRecords"][0];
+  readonly createGrant: (request: PublicSyntheticRemoteMemoryGrantRequestV1) => Promise<PublicSyntheticRemoteMemoryGrantV1>;
+  readonly observeRequest: (request: ModelTurnRequest) => void;
+}
+
+/** Shared production actor. Qualification supplies no effect options and retains its zero-memory contract. */
+async function runMemE0ProductionActorInternal(
   rawInput: MemE0LiveActorQualificationInput,
+  effect: MemE0ProductionEffectOptions | undefined,
+  dependencies: MemE0ProductionActorDependencies,
 ): Promise<MemE0LiveActorQualificationOutput> {
   const input = parseMemE0LiveActorQualificationInput(rawInput);
   const repositoryRoot = normalizedAbsolutePath(
@@ -715,7 +732,9 @@ export async function runMemE0LiveActorQualification(
     throw new Error("qualification repo, state, and workspace roots must be disjoint");
   }
   const fixture = await loadMemE0ActorQualificationFixture(repositoryRoot);
-  const actualSource = await observeMemE0ActorQualificationSource({
+  const loadedCase = effect?.loadedCase ?? fixture.case;
+  const memoryMode = effect?.memoryMode ?? "off";
+  const actualSource = await dependencies.observeSource({
     repositoryRoot,
   });
   if (sha256Canonical(actualSource) !== sha256Canonical(input.source)) {
@@ -749,7 +768,7 @@ export async function runMemE0LiveActorQualification(
   if (expectedFreeze.actorFreezeSha256 !== input.freeze.actorFreezeSha256) {
     throw new Error("qualification actor freeze changed before actor start");
   }
-  await validateLocalQualificationRecord({
+  await dependencies.validateModelRecord({
     fixture,
     freeze: input.freeze,
     modelEvidence: input.modelEvidence,
@@ -757,21 +776,22 @@ export async function runMemE0LiveActorQualification(
   });
   const initialWorkspaceManifestSha256 = await validateInitialPublicWorkspace({
     fixture,
+    ...(effect === undefined ? {} : { effectCase: loadedCase }),
     workspace,
   });
-  const target = fixture.config.fixture.case.targetRelativePath;
+  const target = loadedCase.definition.publicWorkspace.targetRelativePath;
+  const publicVerifierSha256 = loadedCase.publicFiles.find((file) => file.path === MEM_E0_PUBLIC_VERIFIER)!.rawSha256;
   await validateMemE0ActualEffectBinding({
     effectBinding: {
-      publicVerifierRawSha256:
-        fixture.config.fixture.case.publicVerifierRawSha256,
+      publicVerifierRawSha256: publicVerifierSha256,
       targetRelativePath: target,
     },
     memoryKind: null,
-    memoryMode: "off",
+    memoryMode,
     phase: "effect",
     schemaVersion: 1,
     stateRoot,
-    task: fixture.case.definition.task.text,
+    task: loadedCase.definition.task.text,
     workspace,
   });
   const binding = new MemoryEffectApprovalBinding();
@@ -784,8 +804,9 @@ export async function runMemE0LiveActorQualification(
     frozenProductionImplementationIdentitySha256:
       productionImplementationSha256,
     pricingSha256: pricing.pricingSha256,
+    ...(effect !== undefined && memoryMode === "local" ? { publicSyntheticMemory: effect.disclosure } : {}),
   });
-  const base = createNodeRuntime({
+  const base = dependencies.createRuntime({
     approvalInput: noninteractiveApprovalInput,
     approvalPromptOverride: approvals,
     capabilityUserStateRoot: join(stateRoot, "capabilities"),
@@ -818,8 +839,7 @@ export async function runMemE0LiveActorQualification(
       const production = await createMemE0EffectToolRegistry({
         approvalBinding: binding,
         effectBinding: {
-          publicVerifierRawSha256:
-            fixture.config.fixture.case.publicVerifierRawSha256,
+          publicVerifierRawSha256: publicVerifierSha256,
           targetRelativePath: target,
         },
         environment,
@@ -854,10 +874,20 @@ export async function runMemE0LiveActorQualification(
       ) {
         throw new Error("qualification production backend identity drifted");
       }
-      return meter.wrap(backend);
+      const metered = meter.wrap(backend);
+      return effect === undefined ? metered : {
+        ...metered,
+        runTurn: (turn, signal) => {
+          effect.observeRequest(turn);
+          return metered.runTurn(turn, signal);
+        },
+      };
     },
-    createPublicSyntheticRemoteMemoryGrant: async () => {
+    createPublicSyntheticRemoteMemoryGrant: async (request) => {
       remoteMemoryGrantRequestCount += 1;
+      if (effect !== undefined && memoryMode === "local" && remoteMemoryGrantRequestCount === 1) {
+        return await effect.createGrant(request);
+      }
       throw new Error("memory-off qualification requested a remote memory grant");
     },
     modelQualificationGate: {
@@ -880,7 +910,7 @@ export async function runMemE0LiveActorQualification(
   let orchestrationFailure = false;
   try {
     exitCode = await executeAgentThroughApplicationService(
-      memE0ActorQualificationCommandOptions(fixture),
+      { ...memE0ActorQualificationCommandOptions(fixture), memoryMode, task: loadedCase.definition.task.text },
       runtime,
       io,
     );
@@ -931,7 +961,7 @@ export async function runMemE0LiveActorQualification(
         : "in_process",
     historicalMemoryItemCount:
       providerObservation.historicalMemoryItemCount,
-    memoryMode: "off",
+    memoryMode,
     modelEvidenceKind: input.modelEvidence.kind,
     modelQualificationEvidenceSha256:
       input.freeze.modelQualificationEvidenceSha256,
@@ -949,20 +979,20 @@ export async function runMemE0LiveActorQualification(
       providerObservation.providerUsage.requestObservationSha256s,
     observedActorFreezeSha256: input.freeze.actorFreezeSha256,
     observedAdapterConfigSha256:
-      memE0ActorQualificationAdapterConfigSha256(fixture),
+      effect?.pairInvariantSha256 ?? memE0ActorQualificationAdapterConfigSha256(fixture),
     observedInitialWorkspaceManifestSha256: initialWorkspaceManifestSha256,
     observedPolicySha256: fixture.config.remotePolicy.profileSha256,
     observedProductionPiRuntimeImplementationSha256:
       productionImplementationSha256,
     observedProtectedTreeSha256: actualSource.protectedTreeSha256,
     observedPublicVerifierSha256:
-      fixture.config.fixture.case.publicVerifierRawSha256,
+      publicVerifierSha256,
     observedQualificationFixtureSha256:
       fixture.config.fixture.fixtureBindingSha256,
     observedQualificationProtocolSha256: fixture.config.configSha256,
     observedSourceCommit: actualSource.commit,
     observedSystemInstructionSha256: rawSha256(AGENT_SYSTEM_INSTRUCTIONS),
-    observedTaskSha256: fixture.config.fixture.case.taskSha256,
+    observedTaskSha256: loadedCase.definition.task.taskSha256,
     observedToolCatalogSha256,
     orchestrationFailure,
     pendingEffectCount: session.pendingEffectCount,
@@ -987,4 +1017,33 @@ export async function runMemE0LiveActorQualification(
     run,
     schemaVersion: 1,
   }));
+}
+
+export async function runMemE0LiveActorQualification(
+  rawInput: MemE0LiveActorQualificationInput,
+): Promise<MemE0LiveActorQualificationOutput> {
+  return await runMemE0ProductionActor(rawInput);
+}
+
+interface MemE0ProductionActorDependencies {
+  readonly observeSource: typeof observeMemE0ActorQualificationSource;
+  readonly validateModelRecord: typeof validateLocalQualificationRecord;
+  readonly createRuntime: typeof createNodeRuntime;
+}
+function productionActorDependencies(): MemE0ProductionActorDependencies {
+  return { observeSource: observeMemE0ActorQualificationSource,
+    validateModelRecord: validateLocalQualificationRecord, createRuntime: createNodeRuntime };
+}
+export async function runMemE0ProductionActor(
+  rawInput: MemE0LiveActorQualificationInput,
+  effect?: MemE0ProductionEffectOptions,
+): Promise<MemE0LiveActorQualificationOutput> {
+  return await runMemE0ProductionActorInternal(rawInput, effect, productionActorDependencies());
+}
+/** Deliberate offline-only seam: production entries cannot inject these dependencies. */
+export function createMemE0ProductionActorForTesting(overrides: Partial<MemE0ProductionActorDependencies>) {
+  const dependencies = { ...productionActorDependencies(), ...overrides };
+  return async (input: MemE0LiveActorQualificationInput, effect?: MemE0ProductionEffectOptions) => ({
+    ...await runMemE0ProductionActorInternal(input, effect, dependencies), offlineTestOnly: true as const,
+  });
 }

@@ -590,7 +590,7 @@ async function productionSpawnActor(input: Readonly<{
   return parseMemE0LiveActorQualificationOutput(value);
 }
 
-async function productionVerifierProcess(
+export async function productionVerifierProcess(
   request: VerifierProcessRequest,
 ): Promise<VerifierProcessObservation> {
   return await new Promise((resolvePromise, reject) => {
@@ -663,7 +663,7 @@ function resolveBoundRepositoryPath(
   return path;
 }
 
-async function productionStageQualificationRecord(input: Readonly<{
+export async function productionStageQualificationRecord(input: Readonly<{
   readonly actorFixture: MemE0LoadedActorQualificationFixture;
   readonly freeze: MemE0LiveActorQualificationPlan["freeze"];
   readonly modelEvidence: MemE0ActorQualificationModelEvidence;
@@ -705,7 +705,7 @@ async function productionStageQualificationRecord(input: Readonly<{
   });
 }
 
-async function listWorkspaceFiles(root: string): Promise<readonly string[]> {
+export async function listWorkspaceFiles(root: string): Promise<readonly string[]> {
   const files: string[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {

@@ -7,6 +7,7 @@ import type {
   PreparedModelTurnRequest,
 } from "../../../../src/model/model-backend.js";
 import type { ModelEvent, ModelUsage } from "../../../../src/model/model-events.js";
+import type { PublicSyntheticRemoteMemoryGrantV1 } from "../../../../src/memory/recall/public-synthetic-remote-memory-grant.js";
 
 import {
   MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
@@ -30,6 +31,7 @@ export type MemE0ActorQualificationProviderMeterFailureCode =
   | "aggregate_reported_token_ceiling_exceeded"
   | "duplicate_turn_completed"
   | "historical_memory_present"
+  | "historical_memory_binding_mismatch"
   | "invalid_canonical_context"
   | "invalid_usage"
   | "per_request_output_token_ceiling_exceeded"
@@ -61,6 +63,8 @@ export class MemE0ActorQualificationProviderMeterError extends Error {
 export interface MemE0ActorQualificationProviderMeterOptions {
   readonly frozenProductionImplementationIdentitySha256: string;
   readonly pricingSha256: string;
+  /** Effect lane only. Omission preserves qualification's strict zero-memory gate. */
+  readonly publicSyntheticMemory?: PublicSyntheticRemoteMemoryGrantV1["allowedRecords"][0];
 }
 
 export interface MemE0ActorQualificationRetryPolicyEvidence {
@@ -299,6 +303,7 @@ function peakCostUsdMicros(
 }
 
 export class MemE0ActorQualificationProviderMeter {
+  readonly #allowedMemory: PublicSyntheticRemoteMemoryGrantV1["allowedRecords"][0] | undefined;
   readonly #requests: MutableRequestObservation[] = [];
   readonly #requestObservationSha256s: string[] = [];
   readonly #usageObservationSha256s: string[] = [];
@@ -323,6 +328,13 @@ export class MemE0ActorQualificationProviderMeter {
     ) {
       throw new TypeError("MEM-E0 provider meter requires hash-bound pricing and production identity");
     }
+    const allowed = options.publicSyntheticMemory;
+    if (allowed !== undefined && (allowed.disclosureClass !== "public_synthetic" ||
+      !/^memory_[a-f0-9]{64}$/u.test(allowed.recordId) ||
+      ![allowed.excerptContentSha256, allowed.recordSha256, allowed.sourceReferenceSha256].every((value) => SHA256.test(value)))) {
+      throw new TypeError("MEM-E0 effect meter requires an exact public-synthetic record binding");
+    }
+    this.#allowedMemory = allowed === undefined ? undefined : Object.freeze({ ...allowed });
     this.#retryPolicyEvidence = Object.freeze({
       configuredMaximumRetries: 0,
       evidenceKind: "frozen_production_implementation_identity",
@@ -518,13 +530,28 @@ export class MemE0ActorQualificationProviderMeter {
       historicalCount,
       "historical-memory item count",
     );
-    if (historicalCount !== 0) {
+    if (this.#allowedMemory === undefined && historicalCount !== 0) {
       throw this.#rememberFatal(failure({
         code: "historical_memory_present",
         kind: "contract",
         observed: historicalCount,
         stage: "before_provider_request",
       }, "memory-off qualification cannot send historical memory"));
+    }
+    if (this.#allowedMemory !== undefined) {
+      const allowed = this.#allowedMemory;
+      const decoded = request.canonicalContext === undefined ? null : JSON.parse(request.canonicalContext.text);
+      const item = decoded?.items?.find((entry: Readonly<Record<string, unknown>>) => entry.kind === "historical_memory");
+      if (historicalCount !== 1 || !isRecord(item) || typeof item.content !== "string" ||
+        sha256Text(item.content) !== allowed.excerptContentSha256 || item.authority !== "historical_only" ||
+        !isRecord(item.metadata) || item.metadata.record_id !== allowed.recordId ||
+        item.metadata.record_sha256 !== allowed.recordSha256 ||
+        item.metadata.source_reference_sha256 !== allowed.sourceReferenceSha256) {
+        throw this.#rememberFatal(failure({
+          code: "historical_memory_binding_mismatch", kind: "contract",
+          observed: historicalCount, stage: "before_provider_request",
+        }, "effect context does not contain exactly the authorized historical record"));
+      }
     }
 
     const requestIndex = this.#requests.length + 1;
@@ -688,7 +715,7 @@ export class MemE0ActorQualificationProviderMeter {
     if (this.#finalized !== null) return this.#finalized;
     const complete =
       this.#fatalFailure === null &&
-      this.#historicalMemoryItemCount === 0 &&
+      this.#historicalMemoryItemCount === (this.#allowedMemory === undefined ? 0 : this.#requests.length) &&
       this.#requests.length > 0 &&
       this.#requests.length <=
         MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS &&

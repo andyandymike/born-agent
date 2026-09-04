@@ -156,7 +156,42 @@ authorizations are stale for this repaired source and cannot be reused.
 
 ## DeepSeek live-effect boundary
 
-The later paired lane remains blocked until the independent actor qualification
+The paired lane has a dedicated production runner, `pnpm lab:mem-e0:effect`.
+It reuses the same Application Service executor, production PI backend, four
+tools, approvals, token meter and frozen budgets as qualification. Its plan
+prepares eight independent workspaces through fresh product `memory remember`
+processes; it binds the resulting exact record/excerpt/source-reference hashes
+before any credential access. The separately authorized execution starts a
+fresh actor process for each arm, grants only the one bound public-synthetic
+record for `on`, requires zero historical items for `off`, and runs public and
+hidden verifiers after each actor exits. It is sequential and one-shot: no
+automatic retry, replacement arm, or denominator filtering.
+
+The runner implementation must be committed **before** qualification. Both
+stages bind the same exact clean source commit; adding or changing the runner
+after a paid qualification would invalidate that qualification. Offline test
+seams are permanently tagged `offline_test` and cannot support a live effect
+claim. Completing this runner does not itself mean a live test has passed.
+
+Prepare a zero-call paired plan with:
+
+```powershell
+pnpm lab:mem-e0:effect -- plan `
+  --qualification .cache/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1/qualification/receipts/<name>.json `
+  --ds0-observation .cache/frontier-adapter-lab/fal-ds0-deepseek-tool-actor-v1/runs/<run>/observation.json `
+  --output .cache/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1/effect/plans/<name>.json
+```
+
+A same-source `not_run` qualification plan may also be used to exercise this
+zero-call preparation path, but its paired plan remains blocked from execution.
+After qualification passes, prepare a new plan bound to the passed receipt.
+The exact prepared plan hash authorizes all eight record disclosures and the
+whole batch. The integer-micro authorization ceiling is `$0.268872`, rounding
+the frozen mathematical bound `$0.26887168` upward. It is separate from the
+`$0.033609` qualification ceiling. See `pnpm lab:mem-e0:effect -- --help` for
+the explicit live flags; a plan never supplies its own authorization.
+
+The paired lane remains blocked until the independent actor qualification
 passes on the exact clean commit and the user separately authorizes both the
 exact public-synthetic disclosure hashes and the frozen 8-attempt batch cost
 ceiling. An API key or account balance is not authorization. The present
