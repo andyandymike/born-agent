@@ -108,8 +108,23 @@ Planning is not paid-run authorization and does not read the API key. The live
 command is intentionally omitted here: use `pnpm lab:mem-e0:qualify -- --help`
 to inspect the full confirmation surface only after the source tree is clean.
 
-As of 2026-09-01 no paid qualification has run and no DeepSeek API request has
-been made by this substage. It must not be described as passed.
+On 2026-09-04, one separately authorized qualification attempt on clean commit
+`bddd08adad761c133f53f30f9ba60de820e362c0` failed before its first provider call
+(`providerCalls=0`, accounted cost zero). The original receipt is preserved:
+`receiptSha256=22e65c5ee5bc8d4d995f48b3af516188ab860f8bb1850542be95090f5739dbb0`.
+It is not a passing qualification or evidence of a memory benefit.
+
+The startup repair carries the policy-resolved remote transport explicitly into
+the product backend request. The exact actor preflight still rejects missing or
+different transport/provider/model/endpoint/policy evidence. Its offline
+regression enters the real Application Service, constructs the production
+backend with a test-only sentinel credential, registers the exact four tools,
+and reaches AgentLoop before stopping at an in-process `runTurn` replacement.
+The network tripwire must remain at zero; this test does not issue a live receipt.
+
+Source changes invalidate the earlier plan and authorization. A new clean commit,
+exact-commit verification, zero-call plan, and separate paid authorization are
+required before any new live attempt. The failed receipt remains unchanged.
 
 ## DeepSeek live-effect boundary
 

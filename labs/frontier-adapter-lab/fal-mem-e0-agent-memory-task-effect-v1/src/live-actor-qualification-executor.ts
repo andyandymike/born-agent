@@ -246,7 +246,7 @@ function pathNested(parent: string, child: string): boolean {
   return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
 }
 
-function isolatedEnvironment(
+export function memE0ActorQualificationEnvironment(
   source: Readonly<Record<string, string | undefined>>,
   stateRoot: string,
 ): Readonly<Record<string, string | undefined>> {
@@ -306,7 +306,7 @@ export function memE0ActorQualificationAdapterConfigSha256(
   });
 }
 
-function commandOptions(
+export function memE0ActorQualificationCommandOptions(
   fixture: MemE0LoadedActorQualificationFixture,
 ): AgentCommandOptions {
   return Object.freeze({
@@ -455,7 +455,7 @@ async function validateInitialPublicWorkspace(input: Readonly<{
   return manifestSha256;
 }
 
-function assertExactBackendRequest(
+export function assertExactMemE0QualificationBackendRequest(
   request: BackendCreationRequest,
   fixture: MemE0LoadedActorQualificationFixture,
 ): void {
@@ -783,7 +783,7 @@ export async function runMemE0LiveActorQualification(
   const stdout = new HashOnlyWriter();
   const stderr = new HashOnlyWriter();
   const io: CliIO = Object.freeze({ stdout, stderr });
-  const environment = isolatedEnvironment(process.env, stateRoot);
+  const environment = memE0ActorQualificationEnvironment(process.env, stateRoot);
   const meter = new MemE0ActorQualificationProviderMeter({
     frozenProductionImplementationIdentitySha256:
       productionImplementationSha256,
@@ -844,7 +844,7 @@ export async function runMemE0LiveActorQualification(
       return registry;
     },
     createModelBackend: (request) => {
-      assertExactBackendRequest(request, fixture);
+      assertExactMemE0QualificationBackendRequest(request, fixture);
       backendRequestExact = true;
       backendCreatedCount += 1;
       if (backendCreatedCount !== 1) {
@@ -884,7 +884,7 @@ export async function runMemE0LiveActorQualification(
   let orchestrationFailure = false;
   try {
     exitCode = await executeAgentThroughApplicationService(
-      commandOptions(fixture),
+      memE0ActorQualificationCommandOptions(fixture),
       runtime,
       io,
     );

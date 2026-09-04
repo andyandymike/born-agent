@@ -822,6 +822,11 @@ export async function executeAgentExecution(
           tools: true,
         },
         runtimePolicy: effectivePolicy,
+        // Carry the policy-resolved remote transport across the composition
+        // boundary; exact actors must not have to infer the factory default.
+        ...(policyRequest.source === "provider_network"
+          ? { transportScope: "provider_network" as const }
+          : {}),
       });
     if (
       backend.identity.model !== config.model ||
