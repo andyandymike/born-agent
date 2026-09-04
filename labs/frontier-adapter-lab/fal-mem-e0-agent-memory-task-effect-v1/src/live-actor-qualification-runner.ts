@@ -58,6 +58,7 @@ import {
   type MemE0LiveActorQualificationOutput,
 } from "./live-actor-qualification-executor.js";
 import { createMemE0LivePricingSnapshot } from "./live-preflight.js";
+import { inspectMemE0QualificationHostState } from "./qualification-host-state.js";
 import { createMemE0SanitizedBoundaryError } from "./sanitized-failure.js";
 import {
   createMemE0Workspace,
@@ -234,6 +235,7 @@ interface WorkspaceManifestObservation {
 }
 
 interface RunnerDependencies {
+  readonly inspectWorkspaceHostState: typeof inspectMemE0QualificationHostState;
   readonly authorizedChildEnvironment: () => Readonly<
     Record<string, string | undefined>
   >;
@@ -707,7 +709,7 @@ async function listWorkspaceFiles(root: string): Promise<readonly string[]> {
   const files: string[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.name === ".git") continue;
+      if (directory === root && entry.name === ".git") continue;
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await visit(path);
       else if (entry.isFile()) {
@@ -722,15 +724,22 @@ async function listWorkspaceFiles(root: string): Promise<readonly string[]> {
     left.localeCompare(right, "en")));
 }
 
-async function inspectWorkspaceManifest(input: Readonly<{
+export async function inspectMemE0QualificationWorkspaceManifest(input: Readonly<{
   readonly actorFixture: MemE0LoadedActorQualificationFixture;
   readonly before: MemE0WorkspaceBefore;
   readonly recordRawSha256: string;
-}>): Promise<WorkspaceManifestObservation> {
+  readonly expectedSessionEventSpanSha256: string;
+}>, inspectHostState = inspectMemE0QualificationHostState): Promise<WorkspaceManifestObservation> {
   const files = await listWorkspaceFiles(input.before.workspace);
+  const hostState = await inspectHostState({
+    expectedSessionEventSpanSha256: input.expectedSessionEventSpanSha256,
+    files,
+    workspace: input.before.workspace,
+  });
   const expected = Object.freeze([
     ...input.before.publicFilePaths,
     LOCAL_QUALIFICATION_RECORD_REF,
+    ...hostState.filePaths,
   ].sort((left, right) => left.localeCompare(right, "en")));
   const entries = await Promise.all(files.map(async (path) => {
     const bytes = await readFile(join(
@@ -750,7 +759,7 @@ async function inspectWorkspaceManifest(input: Readonly<{
       file.path === target || byPath.get(file.path)?.rawSha256 === file.rawSha256
     );
   return Object.freeze({
-    exactFileSet: sha256Canonical(files) === sha256Canonical(expected),
+    exactFileSet: hostState.valid && sha256Canonical(files) === sha256Canonical(expected),
     finalManifestSha256: sha256Canonical(entries),
     supportRecordUnchanged:
       byPath.get(LOCAL_QUALIFICATION_RECORD_REF)?.rawSha256 ===
@@ -761,6 +770,7 @@ async function inspectWorkspaceManifest(input: Readonly<{
 
 function productionDependencies(): RunnerDependencies {
   const dependencies: RunnerDependencies = {
+    inspectWorkspaceHostState: inspectMemE0QualificationHostState,
     authorizedChildEnvironment,
     cleanupTemporaryRoot: async (path: string) => {
       await rm(path, { force: true, recursive: true });
@@ -971,11 +981,12 @@ async function runUnsafe(
     // Both verifiers are launched only after the actor child has exited.
     const [after, manifest, sourceAfter, verifiers] = await Promise.all([
       observeMemE0WorkspaceAfter(prepared.actorFixture.case, before),
-      inspectWorkspaceManifest({
+      inspectMemE0QualificationWorkspaceManifest({
         actorFixture: prepared.actorFixture,
         before,
         recordRawSha256: staged.recordRawSha256,
-      }),
+        expectedSessionEventSpanSha256: actor.run.sessionEventSpanSha256,
+      }, dependencies.inspectWorkspaceHostState),
       dependencies.observeSource(resolve(rawInput.repositoryRoot)),
       runFreshVerifiers({
         actorFixture: prepared.actorFixture,

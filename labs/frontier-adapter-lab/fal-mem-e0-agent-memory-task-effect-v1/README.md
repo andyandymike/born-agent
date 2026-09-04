@@ -3,9 +3,9 @@
 This lab contains the **offline causal-mechanics harness** for the BornAgent
 memory product path plus a separate DeepSeek production tool-actor
 qualification lane. The retained result is still offline mechanics evidence:
-the qualification lane has been implemented but has not received paid-run
-authorization and remains `not_run` with `providerCalls = 0`. Neither lane has
-measured a live model's memory effect.
+the qualification lane has two retained failed attempts, including one with
+four logical provider turns. Neither lane has measured a live model's memory
+effect, and there is no passing production tool-actor qualification.
 
 ## Frozen offline design
 
@@ -125,6 +125,34 @@ The network tripwire must remain at zero; this test does not issue a live receip
 Source changes invalidate the earlier plan and authorization. A new clean commit,
 exact-commit verification, zero-call plan, and separate paid authorization are
 required before any new live attempt. The failed receipt remains unchanged.
+
+The separately authorized attempt on clean commit
+`fd34750c439132a6791870f9f590fc4b47b9be77` reached Application Service and AgentLoop,
+used four complete logical turns, and failed with `product_path_failed` /
+`bounded_stop`. Its recognized tool sequence was `read_file`, `read_file`,
+`apply_patch`; there were also unrecognized tool events. Peak conservative
+accounting was `$0.017867`, not a provider invoice. The retained receipt is
+`d526daaa91031876ed3b1b538b7880a7fa8894da25ba117f212f04d66a2c5f6b`.
+
+The subsequent zero-call repair addresses two independently observed defects:
+
+- Product instructions advertised inspection tools absent from the restricted
+  catalog. They now defer to the current catalog. The failed receipt does not
+  identify the unrecognized tool, so this is not proof of its specific cause.
+- The parent manifest rejected normal product-generated Host state even when
+  the four real tools completed successfully. It now independently replays the
+  actor-bound V2 journal and artifact ledger, checks each authorized object's
+  content hash and metadata, and accepts only the two exact migrated navigation
+  keys. All other extra files, including files under `.bornagent`, still fail.
+
+The regression runs the production factory, PI adapter, Application Service,
+four tools and exact approvals with only the SDK stream replaced by scripted
+public-synthetic events. It exercises real patching, verification and completion
+with zero network activity, plus corrupt/orphan/unexpected-file counterfactuals.
+It is an offline regression, never a live qualification receipt. The public
+tasks, hidden verifiers, four-turn budget and v1 scorer are unchanged. The actor
+configuration rebinds the updated system-instruction hash; all old plans and
+authorizations are stale for this repaired source and cannot be reused.
 
 ## DeepSeek live-effect boundary
 

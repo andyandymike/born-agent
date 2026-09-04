@@ -232,11 +232,15 @@ function testRunner(input: Readonly<{
   readonly counts: Counters;
   readonly driftAfterActor?: boolean;
   readonly emptyCredential?: boolean;
+  readonly invalidHostState?: boolean;
   readonly supportRecordTamperedByActor?: boolean;
 }>) {
   const evidence = modelEvidence();
   let planned: MemE0LiveActorQualificationPlan | null = null;
   const runner = createMemE0ActorQualificationRunnerForTesting({
+    // This parent-unit-test actor emits no real Host files. The production
+    // inspector is exercised by the full, real-tool offline flow regression.
+    inspectWorkspaceHostState: async () => ({ filePaths: [], valid: input.invalidHostState !== true }),
     authorizedChildEnvironment: () => {
       input.counts.credentialReads += 1;
       return Object.freeze({
@@ -489,9 +493,10 @@ describe("MEM-E0 parent live actor qualification runner", () => {
     }
   }, 30_000);
 
-  it("cannot pass when source changes after actor or the staged record is modified", async () => {
+  it("cannot pass when source, Host state, or the staged record fails its gate", async () => {
     for (const options of [
       { driftAfterActor: true },
+      { invalidHostState: true },
       { supportRecordTamperedByActor: true },
     ] as const) {
       const observed = counters();

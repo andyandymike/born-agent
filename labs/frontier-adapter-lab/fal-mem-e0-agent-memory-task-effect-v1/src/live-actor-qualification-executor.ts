@@ -63,6 +63,7 @@ import {
   validateMemE0ActualEffectBinding,
 } from "./production-memory-effect-actor.js";
 import { createMemE0LivePricingSnapshot } from "./live-preflight.js";
+import { memE0QualificationSessionSpanSha256 } from "./qualification-host-state.js";
 
 const execFileAsync = promisify(execFile);
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -158,7 +159,7 @@ class HashOnlyWriter {
   }
 }
 
-class MemE0LiveExactApprovalPrompt implements ApprovalPrompt {
+export class MemE0LiveExactApprovalPrompt implements ApprovalPrompt {
   readonly #observations: ApprovalObservation[] = [];
 
   constructor(
@@ -664,12 +665,7 @@ function analyzeSession(input: Readonly<{
         callId !== null &&
         completedById.get(callId)?.data.status === "success";
     }),
-    sessionEventSpanSha256: sha256Canonical(input.events.map((event) => ({
-      dataSha256: sha256Canonical(event.data),
-      eventIdSha256: rawSha256(event.eventId),
-      runIdSha256: rawSha256(event.runId),
-      type: event.type,
-    }))),
+    sessionEventSpanSha256: memE0QualificationSessionSpanSha256(input.events),
     terminal: verified
       ? "verified_finish_task"
       : bounded

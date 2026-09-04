@@ -45,7 +45,7 @@
       "finish_task"
     ],
     "productEntrySha256": "140ccfd25738d669e7334a4437a6f5a7e87a44d43fa54f7d73dd7019fcbffaa5",
-    "systemInstructionSha256": "65be1cd030cb0e447ff634080d652e89ceb0978619eabff70cca38c12ceca04a",
+    "systemInstructionSha256": "c8833bd6d8b40f11362783171baaae7f8451ed49b126d0508908c41c323a0108",
     "toolAllowlistSha256": "08f2e864dda66452a5a70f5269bbb992abe01f1ceac090b142e2e547ca8bd8f7",
     "toolCatalogSha256": "3c9f9b56c7b3c3392f2e41a00324393400b67c83872acb1b6558584eb6e8d508"
   },
@@ -107,5 +107,5 @@
     "maximumReportedTotalTokens": 60000,
     "retries": 0
   },
-  "configSha256": "03cebb54e931a2604285964b55dd64554359562c04c0a65d7cd324c44eeae31b"
+  "configSha256": "593920f367e74b6283ecd238d8f9950c2fe02487fd27b8ce7ed2ad6f062aa2b8"
 }
