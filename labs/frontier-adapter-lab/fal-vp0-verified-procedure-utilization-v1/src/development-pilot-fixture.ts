@@ -501,6 +501,30 @@ export async function loadDevelopmentPilotQualificationFromDs0Observation(
   path: string,
   fixture: DevelopmentPilotFixture,
 ): Promise<DevelopmentPilotQualificationEvidence> {
+  return await loadDs0QualificationBoundToInstructions(path, fixture, rawSha256(AGENT_SYSTEM_INSTRUCTIONS));
+}
+
+/** Reuse only historical model probes before a NEW independent actor qualification.
+ * The caller must freeze the expected historical instruction hash in its own source;
+ * never derive this expectation from the observation being validated. The normal
+ * VP0 entry above continues to require the current actor instructions.
+ */
+export async function loadHistoricalDs0ModelQualificationForActorPreflight(
+  path: string,
+  fixture: DevelopmentPilotFixture,
+  expectedHistoricalCodingSystemInstructionSha256: string,
+): Promise<DevelopmentPilotQualificationEvidence> {
+  if (!/^[a-f0-9]{64}$/u.test(expectedHistoricalCodingSystemInstructionSha256)) {
+    throw new Error("historical DS0 model reuse requires an explicit frozen instruction hash");
+  }
+  return await loadDs0QualificationBoundToInstructions(path, fixture, expectedHistoricalCodingSystemInstructionSha256);
+}
+
+async function loadDs0QualificationBoundToInstructions(
+  path: string,
+  fixture: DevelopmentPilotFixture,
+  codingSystemInstructionSha256: string,
+): Promise<DevelopmentPilotQualificationEvidence> {
   const normalizedPath = resolve(path);
   const input = parseStrictJson(await readFile(normalizedPath, "utf8")) as Readonly<Record<string, unknown>>;
   const observation = ds0EntryObservationSchema.parse(input);
@@ -544,7 +568,6 @@ export async function loadDevelopmentPilotQualificationFromDs0Observation(
   const qualificationRecord = modelQualificationRecordSchema.parse(
     parseStrictJson(await readFile(qualificationPath, "utf8")),
   );
-  const codingSystemInstructionSha256 = rawSha256(AGENT_SYSTEM_INSTRUCTIONS);
   const actorConfigurationSha256 = sha256Canonical({
     codingSystemInstructionSha256,
     model: "deepseek-v4-flash",

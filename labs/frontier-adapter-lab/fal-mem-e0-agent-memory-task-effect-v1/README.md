@@ -173,6 +173,14 @@ after a paid qualification would invalidate that qualification. Offline test
 seams are permanently tagged `offline_test` and cannot support a live effect
 claim. Completing this runner does not itself mean a live test has passed.
 
+Reusing the prior DS0 model probes must not silently requalify the current
+actor. MEM-E0 pins the historical DS0 coding-instruction hash in its source and
+validates that observation's original self-hashed actor configuration, usage,
+record, identity, protocol and pricing. The shared VP0 current-actor entry still
+requires the current instructions. This avoids invalidating historical generic
+model probes whenever the current actor prompt changes; MEM-E0.3Q separately
+qualifies that new prompt and tool actor. No retained DS0 bytes are rewritten.
+
 Prepare a zero-call paired plan with:
 
 ```powershell

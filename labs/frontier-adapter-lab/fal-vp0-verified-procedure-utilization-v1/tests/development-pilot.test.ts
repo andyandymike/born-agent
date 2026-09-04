@@ -13,6 +13,7 @@ import type { ModelBackend, ModelTurnRequest } from "../../../../src/model/model
 import {
   loadDevelopmentPilotFixture,
   loadDevelopmentPilotQualificationFromDs0Observation,
+  loadHistoricalDs0ModelQualificationForActorPreflight,
 } from "../src/development-pilot-fixture.js";
 import type {
   DevelopmentPilotAgentObservation,
@@ -636,5 +637,34 @@ describe("development-only DeepSeek verified-procedure pilot", () => {
       repositoryRoot,
     })).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("reuses only explicitly frozen historical model evidence without changing the current-actor gate", async () => {
+    const fixture = await loadDevelopmentPilotFixture(repositoryRoot);
+    const ds0 = await writePassedDs0Observation(fixture);
+    const historicalHash = "4".repeat(64);
+    const content = {
+      ...Object.fromEntries(Object.entries(ds0.observation).filter(([key]) => key !== "observationSha256")),
+      configuration: {
+        codingSystemInstructionSha256: historicalHash,
+        actorConfigurationSha256: sha256Canonical({ codingSystemInstructionSha256: historicalHash,
+          model: "deepseek-v4-flash", policyProfile: "fal-ds0-deepseek-remote-v1",
+          protocolSha256: fixture.ds0ProtocolSha256, provider: "deepseek" }),
+      },
+    };
+    await writeFile(ds0.path, JSON.stringify({ ...content, observationSha256: sha256Canonical(content) }));
+    await expect(loadDevelopmentPilotQualificationFromDs0Observation(ds0.path, fixture)).rejects.toThrow();
+    await expect(loadHistoricalDs0ModelQualificationForActorPreflight(ds0.path, fixture, "5".repeat(64))).rejects.toThrow();
+    await expect(loadHistoricalDs0ModelQualificationForActorPreflight(ds0.path, fixture, historicalHash)).resolves.toMatchObject({
+      descriptor: { qualificationStatus: "passed", qualificationRequestCount: 6, qualificationUsageCapability: "complete" },
+    });
+    const wrongConfiguration = { ...content, configuration: { ...content.configuration, actorConfigurationSha256: "6".repeat(64) } };
+    await writeFile(ds0.path, JSON.stringify({ ...wrongConfiguration, observationSha256: sha256Canonical(wrongConfiguration) }));
+    await expect(loadHistoricalDs0ModelQualificationForActorPreflight(ds0.path, fixture, historicalHash)).rejects.toThrow();
+    const wrongUsage = { ...content, actor: { ...(ds0.observation.actor as Record<string, unknown>), backendMeterUsage: {
+      ...((ds0.observation.actor as Record<string, unknown>).backendMeterUsage as Record<string, unknown>), completeUsageEvents: 0,
+    } } };
+    await writeFile(ds0.path, JSON.stringify({ ...wrongUsage, observationSha256: sha256Canonical(wrongUsage) }));
+    await expect(loadHistoricalDs0ModelQualificationForActorPreflight(ds0.path, fixture, historicalHash)).rejects.toThrow();
   });
 });

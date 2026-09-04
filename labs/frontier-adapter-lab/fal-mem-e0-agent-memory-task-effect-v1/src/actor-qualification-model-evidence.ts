@@ -13,7 +13,7 @@ import { parseStrictJson } from "../../../../src/system/strict-json.js";
 import {
   developmentPilotQualificationDescriptorSchema,
   loadDevelopmentPilotFixture,
-  loadDevelopmentPilotQualificationFromDs0Observation,
+  loadHistoricalDs0ModelQualificationForActorPreflight,
 } from "../../fal-vp0-verified-procedure-utilization-v1/src/development-pilot-fixture.js";
 import {
   loadMemE0ActorQualificationFixture,
@@ -23,6 +23,12 @@ import {
 } from "./actor-qualification-fixture.js";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+// Frozen historical DS0 actor prompt, also retained by the fd34750 qualification
+// config. This is NOT the current actor prompt and does not qualify that actor.
+// All DS0 observation/record/configuration/usage/identity checks remain required.
+export const MEM_E0_REUSED_DS0_CODING_SYSTEM_INSTRUCTION_SHA256 =
+  "65be1cd030cb0e447ff634080d652e89ceb0978619eabff70cca38c12ceca04a";
 
 const developmentQualificationEvidenceSchema = z.object({
   descriptor: developmentPilotQualificationDescriptorSchema,
@@ -207,9 +213,10 @@ export async function loadMemE0ActorQualificationModelEvidence(
     loadDevelopmentPilotFixture(repositoryRoot),
   ]);
   const developmentEvidence =
-    await loadDevelopmentPilotQualificationFromDs0Observation(
+    await loadHistoricalDs0ModelQualificationForActorPreflight(
       input.ds0ObservationPath,
       developmentFixture,
+      MEM_E0_REUSED_DS0_CODING_SYSTEM_INSTRUCTION_SHA256,
     );
   const recordPath = resolveQualificationRecordPath(
     repositoryRoot,

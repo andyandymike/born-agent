@@ -42,6 +42,7 @@ export const MEM_E0_ACTOR_QUALIFICATION_PROTECTED_PATHS = Object.freeze([
   "labs/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1/tools/run-live-effect-child.ts",
   "labs/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1/tools/run-live-effect.ts",
   "labs/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1/tools/run-actor-qualification.ts",
+  "labs/frontier-adapter-lab/fal-vp0-verified-procedure-utilization-v1/src/development-pilot-fixture.ts",
   "src/agent/agent-execution-service.ts",
   "src/agent/system-instructions.ts",
   "src/cli/node-runtime.ts",
