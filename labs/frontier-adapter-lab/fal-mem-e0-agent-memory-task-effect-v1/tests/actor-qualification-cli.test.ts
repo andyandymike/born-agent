@@ -6,6 +6,9 @@ import {
   sha256Canonical,
 } from "../../../../src/completion/canonical-json.js";
 import {
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+} from "../src/actor-qualification.js";
+import {
   runMemE0ActorQualificationCli,
   type MemE0ActorQualificationCliDependencies,
 } from "../tools/run-actor-qualification.js";
@@ -55,7 +58,10 @@ function plannedResult(): Readonly<{
   });
   const task = Object.freeze({ taskSha256: "7".repeat(64) });
   const plan = selfHashed({
-    cost: Object.freeze({ maximumAuthorizedCostUsdMicros: 33_609 }),
+    cost: Object.freeze({
+      maximumAuthorizedCostUsdMicros:
+        MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+    }),
     ds0: Object.freeze({
       observationReferenceSha256: HASHES.ds0Reference,
       observationSha256: HASHES.ds0Observation,
@@ -177,7 +183,7 @@ function liveArguments(plan: Readonly<Record<string, unknown>>): readonly string
     "--confirm-ds0-record-sha256",
     HASHES.ds0Record,
     "--confirm-cost-usd-micros",
-    "33609",
+    String(MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS),
   ]);
 }
 
@@ -348,7 +354,8 @@ describe("MEM-E0 actor qualification CLI", () => {
         authorizeRemote: true,
         ds0ObservationReferenceSha256Confirmation: HASHES.ds0Reference,
         ds0ObservationSha256Confirmation: HASHES.ds0Observation,
-        maximumAuthorizedCostUsdMicros: 33_609,
+        maximumAuthorizedCostUsdMicros:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
         modelQualificationRecordSha256Confirmation: HASHES.ds0Record,
         planSha256Confirmation: saved.plan.planSha256,
         protectedTreeSha256Confirmation: HASHES.tree,
@@ -440,7 +447,8 @@ describe("MEM-E0 actor qualification CLI", () => {
     const { failureEnvelopeSha256, ...content } = envelope;
     expect(failureEnvelopeSha256).toBe(sha256Canonical(content));
     expect(envelope).toMatchObject({
-      accountedMaximumCostUsdMicros: 33_609,
+      accountedMaximumCostUsdMicros:
+        MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
       hygiene: {
         absolutePathsPersisted: false,
         rawErrorsPersisted: false,

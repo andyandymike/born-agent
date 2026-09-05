@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "experimentId": "fal-mem-e0-agent-memory-task-effect-v1",
   "qualificationId": "fal-mem-e0-deepseek-product-tool-actor-qualification-v1",
-  "qualificationRevision": 1,
+  "qualificationRevision": 2,
   "fixture": {
     "case": {
       "allowedChangedPaths": [
@@ -32,8 +32,8 @@
     "maximumAttemptsPerRun": 1,
     "mode": "remote_explicit",
     "profileId": "fal-mem-e0-deepseek-qualification-v1",
-    "profileSha256": "a7af6ff8b2702cd8bbe6f9237fb2c3ad767a189bb5b3404541763e6255ac31da",
-    "rawSha256": "2a2c2cad8052a9432f4e6def549aa430796ada1842fc443a42d8ec143c8f11d9",
+    "profileSha256": "58a2f950341b393a49ba3c637787b6200300d77fc8296121965c89fd2aad1f36",
+    "rawSha256": "4e36802b3efeb35dd15b0aea3b4f9eaeb68d46b2e6494ef5e33aa43c45e746fb",
     "relativePath": "qualification/remote-policy.json"
   },
   "actor": {
@@ -100,12 +100,12 @@
     "providerSource": "provider_network"
   },
   "budgets": {
-    "maximumAuthorizedCostUsdMicros": 33609,
+    "maximumAuthorizedCostUsdMicros": 54814,
     "maximumOutputTokensPerRequest": 2048,
-    "maximumOutputTokensTotal": 8192,
-    "maximumProviderRequests": 4,
-    "maximumReportedTotalTokens": 60000,
+    "maximumOutputTokensTotal": 12288,
+    "maximumProviderRequests": 6,
+    "maximumReportedTotalTokens": 100000,
     "retries": 0
   },
-  "configSha256": "593920f367e74b6283ecd238d8f9950c2fe02487fd27b8ce7ed2ad6f062aa2b8"
+  "configSha256": "68e0dc4832140a4616cd2d66bdabe3504160d0542182f87e43b936822fb584c6"
 }

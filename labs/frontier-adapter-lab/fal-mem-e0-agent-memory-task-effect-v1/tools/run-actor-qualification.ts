@@ -8,12 +8,16 @@ import {
 } from "../../../../src/completion/canonical-json.js";
 import { parseStrictJson } from "../../../../src/system/strict-json.js";
 import {
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+} from "../src/actor-qualification.js";
+import {
   createMemE0LiveActorQualificationAuthorization,
   planMemE0LiveActorQualification,
   runMemE0LiveActorQualificationRunner,
 } from "../src/live-actor-qualification-runner.js";
 
-const MAXIMUM_AUTHORIZED_COST_USD_MICROS = 33_609 as const;
+const MAXIMUM_AUTHORIZED_COST_USD_MICROS =
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const SAFE_CACHE_FILE = /^[a-z0-9][a-z0-9._-]{0,126}\.json$/u;
@@ -45,7 +49,7 @@ Authorized live qualification:
     --confirm-ds0-reference-sha256 <sha256> \\
     --confirm-ds0-observation-sha256 <sha256> \\
     --confirm-ds0-record-sha256 <sha256> \\
-    --confirm-cost-usd-micros 33609
+    --confirm-cost-usd-micros 54814
 
 The plan is not remote authorization. The qualification cost cap is separate
 from the later eight-attempt memory-effect batch.

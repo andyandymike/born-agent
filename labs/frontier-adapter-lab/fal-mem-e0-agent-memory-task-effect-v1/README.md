@@ -3,8 +3,8 @@
 This lab contains the **offline causal-mechanics harness** for the BornAgent
 memory product path plus a separate DeepSeek production tool-actor
 qualification lane. The retained result is still offline mechanics evidence:
-the qualification lane has two retained failed attempts, including one with
-four logical provider turns. Neither lane has measured a live model's memory
+the qualification lane has three retained failed attempts, including two that
+reached four logical provider turns. Neither lane has measured a live model's memory
 effect, and there is no passing production tool-actor qualification.
 
 ## Frozen offline design
@@ -58,8 +58,9 @@ source commit:
 2. `executeAgentThroughApplicationService`, the production AgentLoop, and V2
    session evidence rather than a domain harness or standalone model call;
 3. a `RestrictedToolRegistry` exposing exactly the production `read_file`,
-   `apply_patch`, `run_command`, and `finish_task` tools, with the expected
-   ordered successful trace and two exact approvals;
+   `apply_patch`, `run_command`, and `finish_task` tools, with a bounded
+   `read_file+ -> apply_patch -> run_command+ -> finish_task` trace and two
+   exact successful-effect approvals;
 4. complete per-request provider usage, no historical-memory context, exact
    workspace changes, the public verifier, and a fresh hidden verifier in a
    separate Host process after the Agent exits;
@@ -69,15 +70,15 @@ source commit:
 The qualification has its own authorization and cost boundary:
 
 ```text
-logical provider turns                    <= 4
+logical provider turns                    <= 6
 output tokens per request                 <= 2,048
-aggregate output tokens across requests   <= 8,192
-reported total tokens                     <= 60,000
+aggregate output tokens across requests   <= 12,288
+reported total tokens                     <= 100,000
 retries/fallback                          = 0
-maximumAuthorizedCostUsdMicros             = 33,609
+maximumAuthorizedCostUsdMicros             = 54,814
 ```
 
-`33,609` USD micros (`$0.033609`) covers only this qualification. It does not
+`54,814` USD micros (`$0.054814`) covers only this qualification. It does not
 include the later 8-attempt effect batch, and the effect-batch authorization
 cannot be reused for qualification or vice versa. Even a passing qualification
 would keep `effectClaimAllowed = false`; it proves actor fitness, not a memory
@@ -150,9 +151,34 @@ four tools and exact approvals with only the SDK stream replaced by scripted
 public-synthetic events. It exercises real patching, verification and completion
 with zero network activity, plus corrupt/orphan/unexpected-file counterfactuals.
 It is an offline regression, never a live qualification receipt. The public
-tasks, hidden verifiers, four-turn budget and v1 scorer are unchanged. The actor
-configuration rebinds the updated system-instruction hash; all old plans and
-authorizations are stale for this repaired source and cannot be reused.
+tasks and hidden verifiers are unchanged. The actor configuration rebinds the
+updated system-instruction hash; all old plans and authorizations are stale for
+this repaired source and cannot be reused.
+
+On 2026-09-05, a separately authorized attempt on clean commit
+`5562d5e379bfef30d52e3b347d8eac5dac063f26` used four complete logical turns
+and ended `failed / product_path_failed / bounded_stop`. Its trace was
+`read_file`, `read_file`, `apply_patch`, `run_command`; the command did not
+produce a successful public-verifier event and no `finish_task` turn remained.
+The fresh hidden verifier nevertheless passed the resulting target, so the
+solution bytes were correct even though the product completion protocol was
+not. Conservative peak accounting was `$0.020626` (not an invoice), with zero
+configured retries. The preserved receipt is
+`67a11c7ceb9a43b86e1c7527c3b1cc8bcd844dff9d29d783a2ac2aa68b8f6819`.
+
+Qualification revision 2 removes this four-turn experimental confound without
+weakening the final task gate. It allows at most six logical turns in the
+bounded topology above, so a normal second read and one pre-approval command
+argument correction can be observed. Exactly one patch and one successful
+public verifier still require the two approvals; the Agent must then call
+`finish_task`, and the independent hidden verifier must pass. Provider retries
+and fallbacks remain zero. The 100,000-token reserve yields a separately
+authorized qualification ceiling of `$0.054814`.
+
+The receipt parser retains the frozen revision-1 budget and exact four-tool
+scorer solely for historical audit. Existing revision-1 receipts remain
+self-hash and scorer verifiable, while every newly prepared qualification uses
+revision 2; a revision-1 plan or authorization cannot be reused for a new run.
 
 ## DeepSeek live-effect boundary
 
@@ -194,9 +220,11 @@ A same-source `not_run` qualification plan may also be used to exercise this
 zero-call preparation path, but its paired plan remains blocked from execution.
 After qualification passes, prepare a new plan bound to the passed receipt.
 The exact prepared plan hash authorizes all eight record disclosures and the
-whole batch. The integer-micro authorization ceiling is `$0.268872`, rounding
-the frozen mathematical bound `$0.26887168` upward. It is separate from the
-`$0.033609` qualification ceiling. See `pnpm lab:mem-e0:effect -- --help` for
+whole batch. Each arm has the same six-turn / 100,000-token reserve as
+qualification. The integer-micro authorization ceiling is `$0.438512`: each
+arm's mathematical `$0.05481344` bound is rounded upward to `$0.054814` before
+the eight receipt values are summed. It is separate from the `$0.054814`
+qualification ceiling. See `pnpm lab:mem-e0:effect -- --help` for
 the explicit live flags; a plan never supplies its own authorization.
 
 The paired lane remains blocked until the independent actor qualification

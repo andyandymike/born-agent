@@ -12,17 +12,17 @@ export const MEM_E0_LIVE_MODEL = "deepseek-v4-flash" as const;
 export const MEM_E0_LIVE_ENDPOINT = "https://api.deepseek.com" as const;
 export const MEM_E0_LIVE_PAIR_COUNT = 4 as const;
 export const MEM_E0_LIVE_EFFECT_ATTEMPT_COUNT = 8 as const;
-export const MEM_E0_LIVE_MAXIMUM_REQUESTS_PER_ATTEMPT = 4 as const;
-export const MEM_E0_LIVE_INPUT_RESERVE_TOKENS_PER_ATTEMPT = 51_808 as const;
-export const MEM_E0_LIVE_OUTPUT_RESERVE_TOKENS_PER_ATTEMPT = 8_192 as const;
-export const MEM_E0_LIVE_UPPER_BOUND_USD_MICROS = 268_872 as const;
+export const MEM_E0_LIVE_MAXIMUM_REQUESTS_PER_ATTEMPT = 6 as const;
+export const MEM_E0_LIVE_INPUT_RESERVE_TOKENS_PER_ATTEMPT = 87_712 as const;
+export const MEM_E0_LIVE_OUTPUT_RESERVE_TOKENS_PER_ATTEMPT = 12_288 as const;
+export const MEM_E0_LIVE_UPPER_BOUND_USD_MICROS = 438_512 as const;
 
 const TOKENS_PER_PRICING_UNIT = 1_000_000;
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const commitSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 
 const pricingSnapshotContentSchema = z.object({
-  checkedOn: z.literal("2026-09-01"),
+  checkedOn: z.literal("2026-09-05"),
   model: z.literal(MEM_E0_LIVE_MODEL),
   peakCacheMissInputUsdMicrosPerMillionTokens: z.literal(440_000),
   peakOutputUsdMicrosPerMillionTokens: z.literal(1_320_000),
@@ -207,17 +207,15 @@ function calculateUpperBoundUsdMicros(
       BigInt(pricing.peakCacheMissInputUsdMicrosPerMillionTokens) +
     BigInt(MEM_E0_LIVE_OUTPUT_RESERVE_TOKENS_PER_ATTEMPT) *
       BigInt(pricing.peakOutputUsdMicrosPerMillionTokens);
-  const batchNumerator =
-    perAttemptNumerator * BigInt(MEM_E0_LIVE_EFFECT_ATTEMPT_COUNT);
-  return Number(
-    (batchNumerator + BigInt(TOKENS_PER_PRICING_UNIT - 1)) /
-      BigInt(TOKENS_PER_PRICING_UNIT),
-  );
+  const perAttemptCeiling =
+    (perAttemptNumerator + BigInt(TOKENS_PER_PRICING_UNIT - 1)) /
+      BigInt(TOKENS_PER_PRICING_UNIT);
+  return Number(perAttemptCeiling * BigInt(MEM_E0_LIVE_EFFECT_ATTEMPT_COUNT));
 }
 
 export function createMemE0LivePricingSnapshot(): MemE0LivePricingSnapshot {
   const content = pricingSnapshotContentSchema.parse({
-    checkedOn: "2026-09-01",
+    checkedOn: "2026-09-05",
     model: MEM_E0_LIVE_MODEL,
     peakCacheMissInputUsdMicrosPerMillionTokens: 440_000,
     peakOutputUsdMicrosPerMillionTokens: 1_320_000,

@@ -9,13 +9,13 @@ export const MEM_E0_ACTOR_QUALIFICATION_PROVIDER = "deepseek" as const;
 export const MEM_E0_ACTOR_QUALIFICATION_MODEL = "deepseek-v4-flash" as const;
 export const MEM_E0_ACTOR_QUALIFICATION_ENDPOINT =
   "https://api.deepseek.com" as const;
-export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS = 4 as const;
-export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS = 60_000 as const;
+export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS = 6 as const;
+export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS = 100_000 as const;
 export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST =
   2_048 as const;
 export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL =
-  8_192 as const;
-export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS = 33_609 as const;
+  12_288 as const;
+export const MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS = 54_814 as const;
 export const MEM_E0_ACTOR_QUALIFICATION_PEAK_INPUT_USD_MICROS_PER_MILLION =
   440_000 as const;
 export const MEM_E0_ACTOR_QUALIFICATION_PEAK_OUTPUT_USD_MICROS_PER_MILLION =
@@ -31,6 +31,10 @@ export const MEM_E0_ACTOR_QUALIFICATION_PRODUCT_ENTRY_SHA256 = createHash(
 ).update("executeAgentThroughApplicationService", "utf8").digest("hex");
 
 const TOKENS_PER_PRICING_UNIT = 1_000_000;
+const LEGACY_V1_MAXIMUM_PROVIDER_REQUESTS = 4 as const;
+const LEGACY_V1_MAXIMUM_REPORTED_TOKENS = 60_000 as const;
+const LEGACY_V1_MAXIMUM_OUTPUT_TOKENS_TOTAL = 8_192 as const;
+const LEGACY_V1_MAXIMUM_COST_USD_MICROS = 33_609 as const;
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const commitSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const relativePathSchema = z.string().min(1).max(256).refine((value) =>
@@ -66,7 +70,7 @@ const sourceSchema = z.object({
 }).strict();
 export const memE0ActorQualificationSourceSchema = sourceSchema;
 
-const capsSchema = z.object({
+const currentCapsSchema = z.object({
   maximumAuthorizedCostUsdMicros: z.literal(
     MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
   ),
@@ -84,6 +88,27 @@ const capsSchema = z.object({
   ),
   retries: z.literal(0),
 }).strict();
+
+const legacyV1CapsSchema = z.object({
+  maximumAuthorizedCostUsdMicros: z.literal(
+    LEGACY_V1_MAXIMUM_COST_USD_MICROS,
+  ),
+  maximumOutputTokensPerRequest: z.literal(
+    MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST,
+  ),
+  maximumOutputTokensTotal: z.literal(
+    LEGACY_V1_MAXIMUM_OUTPUT_TOKENS_TOTAL,
+  ),
+  maximumProviderRequests: z.literal(
+    LEGACY_V1_MAXIMUM_PROVIDER_REQUESTS,
+  ),
+  maximumReportedTokens: z.literal(
+    LEGACY_V1_MAXIMUM_REPORTED_TOKENS,
+  ),
+  retries: z.literal(0),
+}).strict();
+
+const capsSchema = z.union([currentCapsSchema, legacyV1CapsSchema]);
 
 const actorFreezeContentSchema = z.object({
   adapterConfigSha256: sha256Schema,
@@ -246,9 +271,10 @@ const providerUsageSchema = z.object({
   completeUsageEvents: z.number().int().nonnegative().max(32),
   inputTokens: z.number().int().nonnegative().safe(),
   isProviderInvoice: z.literal(false),
-  maximumAuthorizedCostUsdMicros: z.literal(
-    MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
-  ),
+  maximumAuthorizedCostUsdMicros: z.union([
+    z.literal(MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS),
+    z.literal(LEGACY_V1_MAXIMUM_COST_USD_MICROS),
+  ]),
   maximumObservedOutputTokensPerRequest: z.number().int().nonnegative().safe(),
   outputTokens: z.number().int().nonnegative().safe(),
   partialUsageEvents: z.number().int().nonnegative().max(32),
@@ -381,15 +407,48 @@ export type MemE0ActorQualificationReceipt = Readonly<
   z.infer<typeof memE0ActorQualificationReceiptSchema>
 >;
 
-function exactToolSequence(values: readonly string[]): boolean {
+function exactLegacyV1ToolSequence(values: readonly string[]): boolean {
   return values.length === MEM_E0_ACTOR_QUALIFICATION_TOOL_SEQUENCE.length &&
     values.every(
       (value, index) => value === MEM_E0_ACTOR_QUALIFICATION_TOOL_SEQUENCE[index],
     );
 }
 
+function boundedSuccessfulToolFlow(
+  values: readonly string[],
+  maximumProviderRequests: number,
+): boolean {
+  if (
+    values.length < MEM_E0_ACTOR_QUALIFICATION_TOOL_SEQUENCE.length ||
+    values.length > maximumProviderRequests
+  ) {
+    return false;
+  }
+  const patchIndex = values.indexOf("apply_patch");
+  const finishIndex = values.indexOf("finish_task");
+  if (
+    patchIndex < 1 ||
+    finishIndex !== values.length - 1 ||
+    values.lastIndexOf("apply_patch") !== patchIndex ||
+    values.lastIndexOf("finish_task") !== finishIndex
+  ) {
+    return false;
+  }
+  return values.slice(0, patchIndex).every((value) => value === "read_file") &&
+    values.slice(patchIndex + 1, finishIndex).length >= 1 &&
+    values.slice(patchIndex + 1, finishIndex).every(
+      (value) => value === "run_command",
+    );
+}
+
 function sameSinglePath(values: readonly string[], expected: string): boolean {
   return values.length === 1 && values[0] === expected;
+}
+
+function isLegacyV1Caps(
+  caps: z.infer<typeof capsSchema>,
+): caps is z.infer<typeof legacyV1CapsSchema> {
+  return caps.maximumProviderRequests === LEGACY_V1_MAXIMUM_PROVIDER_REQUESTS;
 }
 
 function expectedPeakCostUsdMicros(
@@ -471,15 +530,26 @@ function scoreParsedCompleted(
       status: "failed",
     });
   }
+  const successfulReadCount = input.run.toolNames.filter(
+    (name) => name === "read_file",
+  ).length;
+  const toolFlowPassed = isLegacyV1Caps(input.freeze.caps)
+    ? exactLegacyV1ToolSequence(input.run.toolNames) &&
+      input.run.toolArgumentSha256s.length === 4 &&
+      new Set(input.run.toolArgumentSha256s).size === 4 &&
+      input.run.toolSuccessCount === 4
+    : boundedSuccessfulToolFlow(
+      input.run.toolNames,
+      input.freeze.caps.maximumProviderRequests,
+    ) &&
+      input.run.toolArgumentSha256s.length === input.run.toolNames.length &&
+      input.run.toolSuccessCount === successfulReadCount + 3;
   if (
-    !exactToolSequence(input.run.toolNames) ||
-    input.run.toolArgumentSha256s.length !== 4 ||
-    new Set(input.run.toolArgumentSha256s).size !== 4 ||
+    !toolFlowPassed ||
     input.run.approvalObservationSha256s.length !== 2 ||
     input.run.approvalDecisions.approved !== 2 ||
     input.run.approvalDecisions.cancelled !== 0 ||
     input.run.approvalDecisions.denied !== 0 ||
-    input.run.toolSuccessCount !== 4 ||
     !sameSinglePath(input.run.changedPaths, input.task.targetRelativePath) ||
     !input.run.publicVerifierPassed ||
     input.run.pendingEffectCount !== 0 ||
@@ -513,7 +583,7 @@ function scoreParsedCompleted(
   }
   if (
     input.providerUsage.requestsStarted >
-      MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS ||
+      input.freeze.caps.maximumProviderRequests ||
     input.providerUsage.retries !== 0 ||
     input.providerUsage.retryPolicyEvidence.configuredMaximumRetries !== 0 ||
     input.providerUsage.retryPolicyEvidence.transportRetriesObserved !== null ||
@@ -521,11 +591,13 @@ function scoreParsedCompleted(
       .frozenProductionImplementationIdentitySha256 !==
       input.freeze.productionPiRuntimeImplementationSha256 ||
     input.providerUsage.totalTokens >
-      MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS ||
+      input.freeze.caps.maximumReportedTokens ||
     input.providerUsage.maximumObservedOutputTokensPerRequest >
-      MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST ||
+      input.freeze.caps.maximumOutputTokensPerRequest ||
     input.providerUsage.outputTokens >
-      MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL ||
+      input.freeze.caps.maximumOutputTokensTotal ||
+    input.providerUsage.maximumAuthorizedCostUsdMicros !==
+      input.freeze.caps.maximumAuthorizedCostUsdMicros ||
     input.providerUsage.accountedPeakCostUsdMicros !==
       expectedPeakCostUsdMicros(input.providerUsage, input.freeze) ||
     input.providerUsage.accountedPeakCostUsdMicros >
@@ -612,7 +684,7 @@ export function createMemE0ActorQualificationFreeze(value: unknown):
     providerSource: true,
   }).strict();
   const input = inputSchema.parse(value);
-  const caps = capsSchema.parse({
+  const caps = currentCapsSchema.parse({
     maximumAuthorizedCostUsdMicros:
       MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
     maximumOutputTokensPerRequest:

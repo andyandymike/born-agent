@@ -11,7 +11,10 @@ import {
   createMemE0LiveEffectReceipt, memE0PreparedEffectPlanSchema, parseMemE0LiveEffectReceipt,
   scoreMemE0LiveEffect, sealMemE0PreparedEffectPlan, type MemE0EffectArmEvidence, type MemE0PreparedEffectPlan,
 } from "../src/live-effect-contract.js";
-import { createMemE0LivePlan } from "../src/live-preflight.js";
+import {
+  createMemE0LivePlan,
+  MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
+} from "../src/live-preflight.js";
 import { createMemE0LiveEffectRunnerForTesting } from "../src/live-effect-runner.js";
 import { qualificationCompletedInput } from "./effect-test-fixtures.js";
 
@@ -45,11 +48,11 @@ function evidenceFixture(plan: MemE0PreparedEffectPlan): MemE0EffectArmEvidence[
   return plan.arms.map((prepared, index) => {
     const pass = prepared.arm === "on" || prepared.caseId === "mem-e0-harm-control";
     const historical = prepared.arm === "on" ? 1 : 0;
-    const turns = pass ? 4 : 1;
+    const turns = pass ? 6 : 1;
     const usage = { ...structuredClone(plan.qualification.providerUsage!), completeUsageEvents: turns, requestsStarted: turns, requestsCompleted: turns,
       inputTokens: 250 * turns, outputTokens: 125 * turns, totalTokens: 375 * turns, accountedPeakCostUsdMicros: 275 * turns,
       maximumObservedOutputTokensPerRequest: 125, pricingSha256: plan.preflight.pricing.pricingSha256,
-      requestObservationSha256s: [H, H, H, H].slice(0, turns), usageObservationSha256s: [H, H, H, H].slice(0, turns) };
+      requestObservationSha256s: Array.from({ length: turns }, () => H), usageObservationSha256s: Array.from({ length: turns }, () => H) };
     const run = { ...plan.qualification.run!, agentExitCode: pass ? 0 : 7,
       memoryMode: prepared.arm === "on" ? "local" as const : "off" as const, historicalMemoryItemCount: historical * turns,
       remoteMemoryGrantRequested: historical === 1, observedAdapterConfigSha256: prepared.pairInvariantSha256,
@@ -57,8 +60,20 @@ function evidenceFixture(plan: MemE0PreparedEffectPlan): MemE0EffectArmEvidence[
       observedPublicVerifierSha256: prepared.publicVerifierSha256, logicalProviderTurnRequestCount: turns,
       modelRequestObservationSha256s: usage.requestObservationSha256s, publicVerifierPassed: pass,
       terminal: pass ? "verified_finish_task" as const : "bounded_stop" as const,
-      changedPaths: pass ? [prepared.targetPath] : [], toolNames: pass ? plan.qualification.run!.toolNames : ["read_file" as const],
-      toolSuccessCount: turns, approvalDecisions: { approved: pass ? 2 : 0, denied: 0, cancelled: 0 } };
+      changedPaths: pass ? [prepared.targetPath] : [],
+      toolArgumentSha256s: Array.from({ length: turns }, () => H),
+      toolNames: pass
+        ? [
+            "read_file" as const,
+            "read_file" as const,
+            "apply_patch" as const,
+            "run_command" as const,
+            "run_command" as const,
+            "finish_task" as const,
+          ]
+        : ["read_file" as const],
+      toolSuccessCount: pass ? 5 : 1,
+      approvalDecisions: { approved: pass ? 2 : 0, denied: 0, cancelled: 0 } };
     const verifier = { exitCode: pass ? 0 : 1, stderrSha256: H, stdoutSha256: pass ? prepared.hiddenVerifierStdoutSha256 : H };
     return { actor: { actorClass: "production_live", actorProcessId: 500 + index, grantSha256: historical === 1 ? H : null,
       providerUsage: usage, recall: Array.from({ length: turns }, () => ({ canonicalContextSha256: H, contextPlanSha256: H,
@@ -73,7 +88,7 @@ function evidenceFixture(plan: MemE0PreparedEffectPlan): MemE0EffectArmEvidence[
   });
 }
 function receiptFixture(plan: MemE0PreparedEffectPlan, evidence = evidenceFixture(plan)) {
-  return createMemE0LiveEffectReceipt({ authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: 268_872,
+  return createMemE0LiveEffectReceipt({ authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
     planSha256Confirmation: plan.planSha256, scope: "eight_attempt_effect_batch_only" }, evidence,
     evidenceClass: "agent_memory_task_effect_e2e", experimentId: "fal-mem-e0-agent-memory-task-effect-v1", plan,
     receiptType: "mem-e0-live-effect-receipt-v1", schemaVersion: 1, stopReason: "completed" });
@@ -132,7 +147,7 @@ describe("MEM-E0 live effect contract (synthetic unit evidence only)", () => {
     const run = createMemE0LiveEffectRunnerForTesting({ credential: () => { credentialReads += 1; return "sentinel"; },
       child: async () => { childCalls += 1; throw new Error("must not run"); } });
     await expect(run({ repositoryRoot: resolve("."), envelope: { ds0ObservationPath: "unused", plan, preparedRoot: "unused", schemaVersion: 1 },
-      authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: 268_872, planSha256Confirmation: plan.planSha256,
+      authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS, planSha256Confirmation: plan.planSha256,
         scope: "eight_attempt_effect_batch_only" } })).rejects.toThrow();
     expect({ credentialReads, childCalls }).toEqual({ credentialReads: 0, childCalls: 0 });
     const { planSha256: _hash, ...content } = plan; void _hash;

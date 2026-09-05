@@ -3,13 +3,21 @@ import { z } from "zod";
 import { sha256Canonical } from "../../../../src/completion/canonical-json.js";
 import { explicitMemoryRecordV1Schema } from "../../../../src/memory/core/memory-record-v1.js";
 import {
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS,
   MEM_E0_ACTOR_QUALIFICATION_PRODUCT_ENTRY_SHA256,
   memE0ActorQualificationProviderUsageSchema,
   memE0ActorQualificationReceiptSchema,
   memE0ActorQualificationRunSchema,
 } from "./actor-qualification.js";
 import { MEM_E0_CASE_IDS, MEM_E0_EXPERIMENT_ID } from "./fixture.js";
-import { memE0LivePlanSchema } from "./live-preflight.js";
+import {
+  MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
+  memE0LivePlanSchema,
+} from "./live-preflight.js";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const arm = z.enum(["off", "on"]);
@@ -80,7 +88,9 @@ export function sealMemE0PreparedEffectPlan(input: z.infer<typeof batchPlanConte
 
 export const memE0EffectAuthorizationSchema = z.object({
   authorizeRemote: z.literal(true),
-  maximumEstimatedCostUsdMicros: z.literal(268_872),
+  maximumEstimatedCostUsdMicros: z.literal(
+    MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
+  ),
   planSha256Confirmation: hash,
   scope: z.literal("eight_attempt_effect_batch_only"),
 }).strict();
@@ -97,7 +107,9 @@ export const memE0EffectActorObservationSchema = z.object({
   actorProcessId: z.number().int().positive(),
   grantSha256: hash.nullable(),
   providerUsage: memE0ActorQualificationProviderUsageSchema,
-  recall: z.array(memE0EffectRecallSchema).max(4),
+  recall: z.array(memE0EffectRecallSchema).max(
+    MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS,
+  ),
   run: memE0ActorQualificationRunSchema,
   schemaVersion: z.literal(1),
 }).strict();
@@ -176,11 +188,11 @@ function scoreArm(evidence: MemE0EffectArmEvidence, plan: MemE0PreparedEffectPla
     sha256Canonical(run.changedPaths) === sha256Canonical(evidence.changedPaths) &&
     run.approvalDecisions.denied === 0 && run.approvalDecisions.cancelled === 0 &&
     run.pendingEffectCount === 0 && run.unknownEffectCount === 0 &&
-    usage.requestsStarted > 0 && usage.requestsStarted <= 4 && usage.requestsCompleted === usage.requestsStarted &&
-    usage.completeUsageEvents === usage.requestsStarted && usage.partialUsageEvents === 0 && usage.totalTokens <= 60_000 &&
-    usage.outputTokens <= 8_192 && usage.maximumObservedOutputTokensPerRequest <= 2_048 && usage.retries === 0 &&
-    usage.accountedPeakCostUsdMicros <= 33_609 && usage.pricingSha256 === plan.preflight.pricing.pricingSha256 &&
-    usage.maximumAuthorizedCostUsdMicros === 33_609 &&
+    usage.requestsStarted > 0 && usage.requestsStarted <= MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS && usage.requestsCompleted === usage.requestsStarted &&
+    usage.completeUsageEvents === usage.requestsStarted && usage.partialUsageEvents === 0 && usage.totalTokens <= MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS &&
+    usage.outputTokens <= MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL && usage.maximumObservedOutputTokensPerRequest <= MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST && usage.retries === 0 &&
+    usage.accountedPeakCostUsdMicros <= MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS && usage.pricingSha256 === plan.preflight.pricing.pricingSha256 &&
+    usage.maximumAuthorizedCostUsdMicros === MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS &&
     usage.retryPolicyEvidence.configuredMaximumRetries === 0 &&
     usage.retryPolicyEvidence.frozenProductionImplementationIdentitySha256 === freeze.productionPiRuntimeImplementationSha256 &&
     usage.totalTokens === usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens &&
@@ -243,7 +255,9 @@ export function createMemE0LiveEffectReceipt(input: z.infer<typeof receiptConten
   const content = receiptContent.parse(input);
   if (content.authorization.planSha256Confirmation !== content.plan.planSha256) throw new Error("effect authorization mismatched plan");
   const score = scoreMemE0LiveEffect(content.plan, content.evidence);
-  const usage = content.evidence.reduce((sum, item) => sum + (item.actor?.providerUsage.accountedPeakCostUsdMicros ?? 33_609), 0);
+  const usage = content.evidence.reduce((sum, item) => sum +
+    (item.actor?.providerUsage.accountedPeakCostUsdMicros ??
+      MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS), 0);
   const providerCalls = content.evidence.reduce((sum, item) => sum + (item.actor?.providerUsage.requestsStarted ?? 0), 0);
   const derived = { ...content, ...score, accountedPeakCostUsdMicros: usage, providerCalls,
     providerCallsComplete: content.evidence.every((item) => item.actor !== null), isProviderInvoice: false };

@@ -35,6 +35,30 @@ function qualificationFreeze() {
   });
 }
 
+function legacyV1QualificationFreeze() {
+  const current = qualificationFreeze();
+  const currentContent = Object.fromEntries(
+    Object.entries(current).filter(([key]) => key !== "actorFreezeSha256"),
+  );
+  const caps = {
+    maximumAuthorizedCostUsdMicros: 33_609,
+    maximumOutputTokensPerRequest: 2_048,
+    maximumOutputTokensTotal: 8_192,
+    maximumProviderRequests: 4,
+    maximumReportedTokens: 60_000,
+    retries: 0,
+  } as const;
+  const content = {
+    ...currentContent,
+    budgetSha256: sha256Canonical(caps),
+    caps,
+  };
+  return {
+    ...content,
+    actorFreezeSha256: sha256Canonical(content),
+  };
+}
+
 function identityInput() {
   return {
     freeze: qualificationFreeze(),
@@ -246,6 +270,69 @@ describe("MEM-E0 exact DeepSeek actor qualification contract", () => {
     expect(parseMemE0ActorQualificationReceipt(receipt)).toEqual(receipt);
   });
 
+  it("accepts a bounded extra read and one corrected command before verified completion", () => {
+    const input = validCompletedInput();
+    input.providerUsage.accountedPeakCostUsdMicros = 1_320;
+    input.providerUsage.completeUsageEvents = 6;
+    input.providerUsage.inputTokens = 1_200;
+    input.providerUsage.outputTokens = 600;
+    input.providerUsage.requestsCompleted = 6;
+    input.providerUsage.requestsStarted = 6;
+    input.providerUsage.totalTokens = 1_800;
+    input.providerUsage.requestObservationSha256s = [
+      sha("0"), sha("1"), sha("2"), sha("3"), sha("4"), sha("5"),
+    ];
+    input.providerUsage.usageObservationSha256s = [
+      sha("6"), sha("7"), sha("8"), sha("9"), sha("a"), sha("b"),
+    ];
+    input.run.logicalProviderTurnRequestCount = 6;
+    input.run.modelRequestObservationSha256s = [
+      sha("0"), sha("1"), sha("2"), sha("3"), sha("4"), sha("5"),
+    ];
+    input.run.toolArgumentSha256s = [
+      sha("1"), sha("2"), sha("3"), sha("4"), sha("5"), sha("6"),
+    ];
+    input.run.toolNames = [
+      "read_file",
+      "read_file",
+      "apply_patch",
+      "run_command",
+      "run_command",
+      "finish_task",
+    ];
+    input.run.toolSuccessCount = 5;
+
+    expect(scoreMemE0ActorQualificationObservation(input)).toEqual({
+      reasonCode: "exact_product_tool_actor_passed",
+      status: "passed",
+    });
+  });
+
+  it("keeps legacy four-turn receipts parseable under their frozen scorer", () => {
+    const input = validCompletedInput();
+    const freeze = legacyV1QualificationFreeze();
+    const legacyInput = {
+      ...input,
+      freeze,
+      providerUsage: {
+        ...input.providerUsage,
+        maximumAuthorizedCostUsdMicros: 33_609,
+      },
+      run: {
+        ...input.run,
+        observedActorFreezeSha256: freeze.actorFreezeSha256,
+      },
+    };
+    const receipt = createMemE0ActorQualificationReceipt(legacyInput);
+
+    expect(receipt.freeze.caps).toEqual(freeze.caps);
+    expect(receipt.result).toEqual({
+      reasonCode: "exact_product_tool_actor_passed",
+      status: "passed",
+    });
+    expect(parseMemE0ActorQualificationReceipt(receipt)).toEqual(receipt);
+  });
+
   it("does not accept a caller-supplied result", () => {
     expect(() => createMemE0ActorQualificationReceipt({
       ...validCompletedInput(),
@@ -326,7 +413,7 @@ describe("MEM-E0 exact DeepSeek actor qualification contract", () => {
     });
   });
 
-  it("hard-gates exact read/apply/run/finish order and effect reconciliation", () => {
+  it("hard-gates bounded read/apply/run/finish topology and effect reconciliation", () => {
     const wrongOrder = validCompletedInput();
     wrongOrder.run.toolNames = [
       "read_file",

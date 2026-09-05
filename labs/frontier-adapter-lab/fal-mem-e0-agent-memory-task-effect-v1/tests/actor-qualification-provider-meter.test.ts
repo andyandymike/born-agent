@@ -274,17 +274,19 @@ describe("MEM-E0 actor qualification provider meter", () => {
     expect(meter().wrap(fixture.backend).prepareTurnRequest).toBeUndefined();
   });
 
-  it("accepts the exact 2048-per-request, 8192-output, and 60000-total boundary", async () => {
-    const fixture = backendFixture(successfulStream(completeUsage({
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      inputTokens: 12_952,
-      outputTokens: 2_048,
-      totalTokens: 15_000,
-    })));
+  it("accepts the exact six-request, 12288-output, and 100000-total boundary", async () => {
+    const fixture = backendFixture((requestIndex) => successfulStream(
+      completeUsage({
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        inputTokens: requestIndex <= 4 ? 14_619 : 14_618,
+        outputTokens: 2_048,
+        totalTokens: requestIndex <= 4 ? 16_667 : 16_666,
+      }),
+    )(requestIndex));
     const providerMeter = meter();
     const wrapped = providerMeter.wrap(fixture.backend);
-    for (let index = 1; index <= 4; index += 1) {
+    for (let index = 1; index <= 6; index += 1) {
       await collect(wrapped.runTurn(modelRequest(index), new AbortController().signal));
     }
 
@@ -292,12 +294,12 @@ describe("MEM-E0 actor qualification provider meter", () => {
       accountedPeakCostUsdMicros:
         MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
       maximumObservedOutputTokensPerRequest: 2_048,
-      outputTokens: 8_192,
-      totalTokens: 60_000,
+      outputTokens: 12_288,
+      totalTokens: 100_000,
     });
   });
 
-  it("blocks a fifth provider request before entering the backend and keeps a conservative snapshot", async () => {
+  it("blocks a seventh provider request before entering the backend and keeps a conservative snapshot", async () => {
     const fixture = backendFixture(successfulStream(completeUsage({
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
@@ -307,28 +309,28 @@ describe("MEM-E0 actor qualification provider meter", () => {
     })));
     const providerMeter = meter();
     const wrapped = providerMeter.wrap(fixture.backend);
-    for (let index = 1; index <= 4; index += 1) {
+    for (let index = 1; index <= 6; index += 1) {
       await collect(wrapped.runTurn(modelRequest(index), new AbortController().signal));
     }
 
     await expect(
-      collect(wrapped.runTurn(modelRequest(5), new AbortController().signal)),
+      collect(wrapped.runTurn(modelRequest(7), new AbortController().signal)),
     ).rejects.toMatchObject({
       failure: {
         code: "provider_request_ceiling_exceeded",
         kind: "cap",
-        limit: 4,
-        observed: 5,
+        limit: 6,
+        observed: 7,
         stage: "before_provider_request",
       },
     });
-    expect(fixture.calls.value).toBe(4);
+    expect(fixture.calls.value).toBe(6);
     expect(providerMeter.snapshot()).toMatchObject({
       providerUsage: {
         accountedPeakCostUsdMicros:
           MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
-        requestsCompleted: 4,
-        requestsStarted: 4,
+        requestsCompleted: 6,
+        requestsStarted: 6,
       },
     });
     expect(() => providerMeter.finalize()).toThrow(

@@ -23,7 +23,11 @@ import { listWorkspaceFiles } from "../src/live-actor-qualification-runner.js";
 import { createMemE0EffectActorForTesting } from "../src/live-effect-actor.js";
 import { memE0EffectSeedSchema, sealMemE0PreparedEffectPlan, type MemE0PreparedEffectArm } from "../src/live-effect-contract.js";
 import { inspectEffectHost } from "../src/live-effect-runner.js";
-import { createMemE0LivePlan, createMemE0LivePricingSnapshot } from "../src/live-preflight.js";
+import {
+  createMemE0LivePlan,
+  createMemE0LivePricingSnapshot,
+  MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
+} from "../src/live-preflight.js";
 import { createMemE0Workspace, memE0VerifierEnvironment, runMemE0HiddenVerifier } from "../src/workspace.js";
 import { qualificationCompletedInput } from "./effect-test-fixtures.js";
 
@@ -141,7 +145,7 @@ it("runs all eight real product seed/recall/tool paths with scripted PI response
         validateModelRecord: async () => undefined,
         createRuntime: (options) => ({ ...createNodeRuntime(options), createModelBackend: (request) => factory.create(request) }) }));
       const observed = await run({ phase: "effect", caseId: prepared.caseId, arm: prepared.arm, plan, seed: seeds[index],
-        authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: 268_872, planSha256Confirmation: plan.planSha256, scope: "eight_attempt_effect_batch_only" },
+        authorization: { authorizeRemote: true, maximumEstimatedCostUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS, planSha256Confirmation: plan.planSha256, scope: "eight_attempt_effect_batch_only" },
         actorInput: { freeze, repositoryRoot, source, stateRoot, workspace, schemaVersion: 1,
           modelEvidence: { backend: "deepseek", baseUrl: "https://api.deepseek.com", endpointScope: "remote_https", kind: "remote_live_qualified",
             model: actorFixture.config.provider.model, provider: "deepseek", qualificationCompletedRequestCount: 6,

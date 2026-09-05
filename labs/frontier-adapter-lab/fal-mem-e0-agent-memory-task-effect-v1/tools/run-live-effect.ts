@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { memE0RawSha256 } from "../src/fixture.js";
 import { memE0EffectPreparedEnvelopeSchema, prepareMemE0LiveEffect, runMemE0LiveEffect } from "../src/live-effect-runner.js";
+import { MEM_E0_LIVE_UPPER_BOUND_USD_MICROS } from "../src/live-preflight.js";
 import { parseStrictJson } from "../../../../src/system/strict-json.js";
 
 const CACHE = ".cache/frontier-adapter-lab/fal-mem-e0-agent-memory-task-effect-v1";
@@ -12,7 +13,7 @@ Plan and prepare eight isolated Session A records (zero provider calls):
   pnpm lab:mem-e0:effect -- plan --qualification <qualification receipt or plan> --ds0-observation <retained observation> --output ${CACHE}/effect/plans/<name>.json
 
 Separately authorized eight-attempt run (qualification must pass on the same commit):
-  pnpm lab:mem-e0:effect -- live --plan ${CACHE}/effect/plans/<name>.json --output ${CACHE}/effect/receipts/<name>.json --authorize-remote --confirm-plan-sha256 <sha256> --confirm-cost-usd-micros 268872
+  pnpm lab:mem-e0:effect -- live --plan ${CACHE}/effect/plans/<name>.json --output ${CACHE}/effect/receipts/<name>.json --authorize-remote --confirm-plan-sha256 <sha256> --confirm-cost-usd-micros ${MEM_E0_LIVE_UPPER_BOUND_USD_MICROS}
 No automatic retry. Planning never reads an API key.\n`;
 
 function parseArgs(argv: readonly string[]) {
@@ -31,7 +32,7 @@ function parseArgs(argv: readonly string[]) {
   }
   if (names.some((name) => !flags.has(name))) throw new Error("effect command omitted a required flag");
   if (mode === "live" && (flags.get("--authorize-remote") !== "true" ||
-    flags.get("--confirm-cost-usd-micros") !== "268872" || !/^[a-f0-9]{64}$/u.test(flags.get("--confirm-plan-sha256")!))) {
+    flags.get("--confirm-cost-usd-micros") !== String(MEM_E0_LIVE_UPPER_BOUND_USD_MICROS) || !/^[a-f0-9]{64}$/u.test(flags.get("--confirm-plan-sha256")!))) {
     throw new Error("effect command requires explicit exact batch authorization");
   }
   return { mode, flags };
@@ -69,11 +70,11 @@ export async function runMemE0LiveEffectCli(argv: readonly string[], repositoryR
       await output.sync();
       process.stdout.write(`${JSON.stringify({ planSha256: envelope.plan.planSha256, sourceCommit: envelope.plan.qualification.source.commit,
         qualificationStatus: envelope.plan.qualification.result.status, pairs: 4, attempts: 8, providerCalls: 0,
-        maximumEstimatedCostUsdMicros: 268_872, effectClaimAllowed: false })}\n`);
+        maximumEstimatedCostUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS, effectClaimAllowed: false })}\n`);
     } else {
       const envelope = memE0EffectPreparedEnvelopeSchema.parse(await readJson(repositoryRoot, cachePath(repositoryRoot, flags.get("--plan")!, "plans")));
       const receipt = await runMemE0LiveEffect({ repositoryRoot, envelope, authorization: {
-        authorizeRemote: true, maximumEstimatedCostUsdMicros: 268_872,
+        authorizeRemote: true, maximumEstimatedCostUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
         planSha256Confirmation: flags.get("--confirm-plan-sha256"), scope: "eight_attempt_effect_batch_only",
       } });
       await output.writeFile(`${JSON.stringify(receipt)}\n`);

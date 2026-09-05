@@ -99,7 +99,7 @@ it("finishes the exact four-tool production flow without provider transport or w
       },
       stream: async function* (context, options) {
         const call = calls[contexts.length];
-        if (call === undefined) throw new Error("offline script exceeded the frozen four turns");
+        if (call === undefined) throw new Error("offline script exceeded its four-tool fixture");
         contexts.push(context);
         expect(options.maxRetries).toBe(0);
         expect(context.tools?.map((tool) => tool.name).sort()).toEqual([...MEM_E0_ACTOR_QUALIFICATION_TOOL_SEQUENCE].sort());

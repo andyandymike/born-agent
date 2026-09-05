@@ -226,7 +226,7 @@ const actorQualificationConfigContentSchema = z.object({
   genericModelQualification: genericModelQualificationSchema,
   provider: providerSchema,
   qualificationId: z.literal(MEM_E0_ACTOR_QUALIFICATION_ID),
-  qualificationRevision: z.literal(1),
+  qualificationRevision: z.literal(2),
   remotePolicy: remotePolicySchema,
   schemaVersion: z.literal(1),
 }).strict();

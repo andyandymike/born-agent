@@ -20,9 +20,9 @@
         ],
         "credential_access": "selected_provider_only",
         "limits": {
-          "max_provider_requests_per_run": 4,
+          "max_provider_requests_per_run": 6,
           "max_output_tokens_per_request": 2048,
-          "max_reported_total_tokens_per_run": 60000
+          "max_reported_total_tokens_per_run": 100000
         }
       },
       "eval_access": {

@@ -81,7 +81,8 @@ export interface MemE0ActorQualificationProviderUsageObservation {
   readonly completeUsageEvents: number;
   readonly inputTokens: number;
   readonly isProviderInvoice: false;
-  readonly maximumAuthorizedCostUsdMicros: 33_609;
+  readonly maximumAuthorizedCostUsdMicros:
+    typeof MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS;
   readonly maximumObservedOutputTokensPerRequest: number;
   readonly outputTokens: number;
   readonly partialUsageEvents: number;

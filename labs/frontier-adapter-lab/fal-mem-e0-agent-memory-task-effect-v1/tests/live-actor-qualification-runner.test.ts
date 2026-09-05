@@ -11,7 +11,10 @@ import { dirname, join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MEM_E0_ACTOR_QUALIFICATION_PRODUCT_ENTRY_SHA256 } from "../src/actor-qualification.js";
+import {
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+  MEM_E0_ACTOR_QUALIFICATION_PRODUCT_ENTRY_SHA256,
+} from "../src/actor-qualification.js";
 import type { MemE0ActorQualificationModelEvidence } from "../src/actor-qualification-model-evidence.js";
 import { parseMemE0LiveActorQualificationOutput } from "../src/live-actor-qualification-executor.js";
 import {
@@ -144,7 +147,8 @@ function validActorOutput(
       completeUsageEvents: 4,
       inputTokens: 1_000,
       isProviderInvoice: false,
-      maximumAuthorizedCostUsdMicros: 33_609,
+      maximumAuthorizedCostUsdMicros:
+        MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
       maximumObservedOutputTokensPerRequest: 200,
       outputTokens: 500,
       partialUsageEvents: 0,
@@ -354,7 +358,10 @@ describe("MEM-E0 parent live actor qualification runner", () => {
         defaultOutcome: "not_run",
         remoteCallsAuthorizedByPlan: false,
       },
-      cost: { maximumAuthorizedCostUsdMicros: 33_609 },
+      cost: {
+        maximumAuthorizedCostUsdMicros:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+      },
       ds0: {
         observationSha256: modelEvidence().modelQualificationObservationSha256,
       },

@@ -13,6 +13,13 @@ import { describe, expect, it, vi } from "vitest";
 import { sha256Canonical } from "../../../../src/completion/canonical-json.js";
 import { parseStrictJson } from "../../../../src/system/strict-json.js";
 import {
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS,
+  MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS,
+} from "../src/actor-qualification.js";
+import {
   loadMemE0ActorQualificationFixture,
   MEM_E0_ACTOR_QUALIFICATION_CONFIG_RELATIVE_PATH,
   MEM_E0_ACTOR_QUALIFICATION_POLICY_RELATIVE_PATH,
@@ -108,11 +115,16 @@ describe("FAL MEM-E0 DeepSeek actor qualification fixture", () => {
         providerSource: "provider_network",
       });
       expect(loaded.config.budgets).toEqual({
-        maximumAuthorizedCostUsdMicros: 33_609,
-        maximumOutputTokensPerRequest: 2_048,
-        maximumOutputTokensTotal: 8_192,
-        maximumProviderRequests: 4,
-        maximumReportedTotalTokens: 60_000,
+        maximumAuthorizedCostUsdMicros:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_COST_USD_MICROS,
+        maximumOutputTokensPerRequest:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_PER_REQUEST,
+        maximumOutputTokensTotal:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_OUTPUT_TOKENS_TOTAL,
+        maximumProviderRequests:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_PROVIDER_REQUESTS,
+        maximumReportedTotalTokens:
+          MEM_E0_ACTOR_QUALIFICATION_MAXIMUM_REPORTED_TOKENS,
         retries: 0,
       });
       expect(loaded.config.genericModelQualification).toMatchObject({
@@ -170,7 +182,7 @@ describe("FAL MEM-E0 DeepSeek actor qualification fixture", () => {
     })).toThrow();
     expect(() => parseMemE0ActorQualificationConfig({
       ...config,
-      qualificationRevision: 2,
+      qualificationRevision: 3,
     })).toThrow();
 
     const reordered = structuredClone(config);
@@ -196,7 +208,7 @@ describe("FAL MEM-E0 DeepSeek actor qualification fixture", () => {
     )).toThrow();
 
     const widerBudget = structuredClone(config);
-    asRecord(widerBudget.budgets).maximumProviderRequests = 5;
+    asRecord(widerBudget.budgets).maximumProviderRequests = 7;
     expect(() => parseMemE0ActorQualificationConfig(
       resealConfig(widerBudget),
     )).toThrow();

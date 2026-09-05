@@ -276,7 +276,7 @@ describe("MEM-E0 live paid preflight", () => {
     });
     expect(plan.cost).toMatchObject({
       scope: "effect_batch_only_excludes_actor_qualification",
-      upperBoundUsdMicros: 268_872,
+      upperBoundUsdMicros: MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
     });
     expect(plan.cost.upperBoundUsdMicros).toBe(
       MEM_E0_LIVE_UPPER_BOUND_USD_MICROS,
